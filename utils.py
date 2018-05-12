@@ -4,6 +4,8 @@ import os
 import inspect
 from pickle import load, dump
 
+is_torch4 = torch.__version__ == '0.4.0'
+
 
 def generate_samples(generator, gen_input):
     out = generator.forward(gen_input)
@@ -85,7 +87,7 @@ def generic_arg_parse(x, hinttype=None):
         __special_tmp = eval(x, {}, {})
     except:  # the string contained some name - probably path, treat as string
         __special_tmp = x  # treat as string
-        print('Treating value: {} as str.'.format(x))
+        # print('Treating value: {} as str.'.format(x))
     return __special_tmp
 
 

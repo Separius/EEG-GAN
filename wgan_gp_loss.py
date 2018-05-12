@@ -54,7 +54,7 @@ def wgan_gp_D_loss(D, G, real_images_in, fake_latents_in,
     D_real_loss = -D_real + D_real ** 2 * iwass_epsilon
 
     # train with fake
-    noisev = Variable(fake_latents_in, volatile=True)  # totally freeze netG
+    noisev = Variable(fake_latents_in, volatile=True, requires_grad=False)  # totally freeze netG
     fake = Variable(G(noisev).data)
     inputv = fake
     D_fake = D(inputv)

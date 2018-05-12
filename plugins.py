@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
-from utils import generate_samples, cudize
+from utils import generate_samples, cudize, is_torch4
 
 
 class DepthManager(Plugin):
@@ -108,6 +108,8 @@ class EfficientLossMonitor(LossMonitor):
 
     def _get_value(self, iteration, *args):
         val = args[self.loss_no] if self.loss_no < 2 else args[self.loss_no].mean()
+        if is_torch4:
+            return val.item()
         return val.data[0]
 
 
@@ -191,27 +193,6 @@ class OutputGenerator(Plugin):
 
     def end(self, *args):
         self.epoch(*args)
-
-
-class CometPlugin(Plugin):
-
-    def __init__(self, experiment, fields):
-        super().__init__([(1, 'epoch')])
-
-        self.experiment = experiment
-        self.fields = fields
-
-    def register(self, trainer):
-        self.trainer = trainer
-
-    def epoch(self, epoch_index):
-        for field in self.fields:
-            steps = field.split('.')
-            stat = self.trainer.stats[steps[0]]
-            for i in range(1, len(steps)):
-                stat = stat[steps[i]]
-            self.experiment.log_metric(field, stat)
-        self.experiment.log_epoch_end(epoch_index)
 
 
 class TeeLogger(Logger):

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from utils import cudize
+from utils import cudize, is_torch4
 
 
 class PGConv2d(nn.Module):
@@ -11,10 +11,13 @@ class PGConv2d(nn.Module):
         super(PGConv2d, self).__init__()
 
         if wscale:
-            init = lambda x: nn.init.kaiming_normal(x)
+            if is_torch4:
+                init = lambda x: nn.init.kaiming_normal_(x)
+            else:
+                init = lambda x: nn.init.kaiming_normal(x)
         else:
             init = lambda x: x
-        self.conv = nn.Conv2d(ch_in, ch_out, ksize, stride, pad)
+        self.conv = nn.Conv1d(ch_in, ch_out, ksize, stride, pad)
         init(self.conv.weight)
         if wscale:
             self.c = np.sqrt(torch.mean(self.conv.weight.data ** 2))
@@ -48,7 +51,6 @@ class GFirstBlock(nn.Module):
         self.c1 = PGConv2d(ch_in, ch_out, 4, 1, 3, **layer_settings)
         self.c2 = PGConv2d(ch_out, ch_out, **layer_settings)
         self.toRGB = PGConv2d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None)
-        # print('no elo', num_channels)
 
     def forward(self, x, last=False):
         x = self.c1(x)
@@ -63,7 +65,7 @@ class GBlock(nn.Module):
         super(GBlock, self).__init__()
         self.c1 = PGConv2d(ch_in, ch_out, **layer_settings)
         self.c2 = PGConv2d(ch_out, ch_out, **layer_settings)
-        self.toRGB = PGConv2d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None)
+        self.toRGB = nn.Sequential(PGConv2d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None), nn.Tanh())
 
     def forward(self, x, last=False):
         x = self.c1(x)
@@ -75,11 +77,11 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self,
-                 dataset_shape,  # Overriden based on the dataset
-                 fmap_base=4096,
+                 dataset_shape,  # Overriden based on the dataset ((77, 1, 512, 512))
+                 fmap_base=2048,
                  fmap_decay=1.0,
-                 fmap_max=512,
-                 latent_size=512,
+                 fmap_max=256,
+                 latent_size=256,
                  normalize_latents=True,
                  wscale=True,
                  pixelnorm=True,
@@ -88,7 +90,7 @@ class Generator(nn.Module):
 
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        print(dataset_shape)
+        print('dataset_shape:', dataset_shape)
         R = int(np.log2(resolution))
         assert resolution == 2 ** R and resolution >= 4
 
@@ -116,13 +118,15 @@ class Generator(nn.Module):
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
 
-    def forward(self, x):
-        h = x.unsqueeze(2).unsqueeze(3)
+    def forward(self, x):  # input: (bs, 512)
+        # print('gen_in:', x.shape)
+        h = x.unsqueeze(2)  # (bs, 512, 1)
         if self.normalize_latents:
             mean = torch.mean(h * h, 1, keepdim=True)
             dom = torch.rsqrt(mean + self.eps)
             h = h * dom
         h = self.block0(h, self.depth == 0)
+        # print('gen_blk0:', h.shape)
         if self.depth > 0:
             for i in range(self.depth - 1):
                 h = F.upsample(h, scale_factor=2)
@@ -137,6 +141,7 @@ class Generator(nn.Module):
             else:
                 preult_rgb = 0
             h = preult_rgb * (1 - self.alpha) + ult * self.alpha
+        # print('gen_out:', h.shape)
         return h
 
 
@@ -183,7 +188,7 @@ class MinibatchStddev(nn.Module):
 
     def forward(self, x):
         stddev_mean = Tstdeps(x)
-        new_channel = stddev_mean.expand(x.size(0), 1, x.size(2), x.size(3))
+        new_channel = stddev_mean.expand(x.size(0), 1, x.size(2))
         h = torch.cat((x, new_channel), dim=1)
         return h
 
@@ -191,9 +196,9 @@ class MinibatchStddev(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self,
                  dataset_shape,  # Overriden based on dataset
-                 fmap_base=4096,
+                 fmap_base=2048,
                  fmap_decay=1.0,
-                 fmap_max=512,
+                 fmap_max=256,
                  wscale=True,
                  pixelnorm=False,
                  leakyrelu=True):
@@ -225,18 +230,21 @@ class Discriminator(nn.Module):
         self.max_depth = len(self.blocks) - 1
 
     def forward(self, x):
+        # print('d_input:', x.shape)
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
-            h = F.avg_pool2d(h, 2)
+            h = F.avg_pool1d(h, 2)
             if self.alpha < 1.0:
-                xlowres = F.avg_pool2d(xhighres, 2)
+                xlowres = F.avg_pool1d(xhighres, 2)
                 preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
                 h = h * self.alpha + (1 - self.alpha) * preult_rgb
 
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
-                h = F.avg_pool2d(h, 2)
-        h = self.linear(h.squeeze(-1).squeeze(-1))
+                h = F.avg_pool1d(h, 2)
+        # print('d_logit:', h.shape)
+        h = self.linear(h.squeeze(-1))
+        # print('d_output:', h.shape)
         return h

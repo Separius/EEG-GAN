@@ -1,7 +1,3 @@
-try:
-    import comet_ml
-except ImportError as e:
-    print('Unable to load comet_ml: {}'.format(e))
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
 from network import Generator, Discriminator
@@ -11,7 +7,6 @@ from trainer import Trainer
 import dataset
 from dataset import *
 import output_postprocess
-from output_postprocess import *
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler
 from plugins import *
@@ -33,11 +28,9 @@ default_params = OrderedDict(
     image_snapshot_ticks=3,
     resume_network='',
     resume_time=0,
-    num_data_workers=16,
+    num_data_workers=2,
     random_seed=1337,
     progressive_growing=True,
-    comet_key='',
-    comet_project_name='None',
     iwass_lambda=10.0,
     iwass_epsilon=0.001,
     iwass_target=1.0,
@@ -65,29 +58,6 @@ def load_models(resume_network, result_dir, logger):
     return G, D
 
 
-def init_comet(params, trainer):
-    if params['comet_key']:
-        from comet_ml import Experiment
-        experiment = Experiment(api_key=params['comet_key'], project_name=params['comet_project_name'], log_code=False)
-        hyperparams = {
-            name: str(params[name]) for name in params
-        }
-        experiment.log_multiple_params(hyperparams)
-        trainer.register_plugin(CometPlugin(
-            experiment, [
-                            'G_loss.epoch_mean',
-                            'D_loss.epoch_mean',
-                            'D_real.epoch_mean',
-                            'D_fake.epoch_mean',
-                            'sec.kimg',
-                            'sec.tick',
-                            'kimg_stat'
-                        ] + (['depth', 'alpha'] if params['progressive_growing'] else [])
-        ))
-    else:
-        print('Comet_ml logging disabled.')
-
-
 def main(params):
     if params['load_dataset']:
         dataset = load_pkl(params['load_dataset'])
@@ -108,7 +78,6 @@ def main(params):
         stats_to_log.extend([
             'depth',
             'alpha',
-            'lod',
             'minibatch_size'
         ])
     stats_to_log.extend([
@@ -117,7 +86,7 @@ def main(params):
                             'sec.kimg'
                         ] + losses)
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
-    logger.log(params_to_str(params))
+    # logger.log(params_to_str(params))
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
@@ -129,12 +98,12 @@ def main(params):
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
 
-    logger.log(str(G))
-    logger.log('Total nuber of parameters in Generator: {}'.format(
+    # logger.log(str(G))
+    logger.log('Total number of parameters in Generator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), G.parameters()))
     ))
-    logger.log(str(D))
-    logger.log('Total nuber of parameters in Discriminator: {}'.format(
+    # logger.log(str(D))
+    logger.log('Total number of parameters in Discriminator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), D.parameters()))
     ))
 
@@ -184,7 +153,6 @@ def main(params):
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)
-    init_comet(params, trainer)
     trainer.run(params['total_kimg'])
     dataset.close()
 
