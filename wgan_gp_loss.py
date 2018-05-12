@@ -13,13 +13,20 @@ def mul_rowwise(a, b):
 def calc_gradient_penalty(D, real_data, fake_data, iwass_lambda, iwass_target):
     global mixing_factors, grad_outputs
     if mixing_factors is None or real_data.size(0) != mixing_factors.size(0):
-        mixing_factors = torch.cuda.FloatTensor(real_data.size(0), 1)
+        if torch.cuda.is_available():
+            mixing_factors = torch.cuda.FloatTensor(real_data.size(0), 1)
+        else:
+            mixing_factors = torch.FloatTensor(real_data.size(0), 1)
     mixing_factors.uniform_()
 
-    mixed_data = Variable(mul_rowwise(real_data, 1 - mixing_factors) + mul_rowwise(fake_data, mixing_factors), requires_grad=True)
+    mixed_data = Variable(mul_rowwise(real_data, 1 - mixing_factors) + mul_rowwise(fake_data, mixing_factors),
+                          requires_grad=True)
     mixed_scores = D(mixed_data)
     if grad_outputs is None or mixed_scores.size(0) != grad_outputs.size(0):
-        grad_outputs = torch.cuda.FloatTensor(mixed_scores.size())
+        if torch.cuda.is_available():
+            grad_outputs = torch.cuda.FloatTensor(mixed_scores.size())
+        else:
+            grad_outputs = torch.FloatTensor(mixed_scores.size())
         grad_outputs.fill_(1.)
 
     gradients = grad(outputs=mixed_scores, inputs=mixed_data,
@@ -34,11 +41,10 @@ def calc_gradient_penalty(D, real_data, fake_data, iwass_lambda, iwass_target):
 
 
 def wgan_gp_D_loss(D, G, real_images_in, fake_latents_in,
-    iwass_lambda    = 10.0,
-    iwass_epsilon   = 0.001,
-    iwass_target    = 1.0,
-    return_all      = True):
-
+                   iwass_lambda=10.0,
+                   iwass_epsilon=0.001,
+                   iwass_target=1.0,
+                   return_all=True):
     D.zero_grad()
     G.zero_grad()
 

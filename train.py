@@ -18,6 +18,7 @@ from plugins import *
 from utils import *
 from argparse import ArgumentParser
 from collections import OrderedDict
+
 torch.manual_seed(1337)
 
 default_params = OrderedDict(
@@ -74,14 +75,14 @@ def init_comet(params, trainer):
         experiment.log_multiple_params(hyperparams)
         trainer.register_plugin(CometPlugin(
             experiment, [
-                'G_loss.epoch_mean',
-                'D_loss.epoch_mean',
-                'D_real.epoch_mean',
-                'D_fake.epoch_mean',
-                'sec.kimg',
-                'sec.tick',
-                'kimg_stat'
-            ] + (['depth', 'alpha'] if params['progressive_growing'] else [])
+                            'G_loss.epoch_mean',
+                            'D_loss.epoch_mean',
+                            'D_real.epoch_mean',
+                            'D_fake.epoch_mean',
+                            'sec.kimg',
+                            'sec.tick',
+                            'kimg_stat'
+                        ] + (['depth', 'alpha'] if params['progressive_growing'] else [])
         ))
     else:
         print('Comet_ml logging disabled.')
@@ -111,10 +112,10 @@ def main(params):
             'minibatch_size'
         ])
     stats_to_log.extend([
-        'time',
-        'sec.tick',
-        'sec.kimg'
-    ] + losses)
+                            'time',
+                            'sec.tick',
+                            'sec.kimg'
+                        ] + losses)
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
     logger.log(params_to_str(params))
     if params['resume_network']:
@@ -124,17 +125,17 @@ def main(params):
         D = Discriminator(dataset.shape, **params['Discriminator'])
     if params['progressive_growing']:
         assert G.max_depth == D.max_depth
-    G.cuda()
-    D.cuda()
+    G = cudize(G)
+    D = cudize(D)
     latent_size = params['Generator']['latent_size']
 
     logger.log(str(G))
     logger.log('Total nuber of parameters in Generator: {}'.format(
-        sum(map(lambda x: reduce(lambda a, b: a*b, x.size()), G.parameters()))
+        sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), G.parameters()))
     ))
     logger.log(str(D))
     logger.log('Total nuber of parameters in Discriminator: {}'.format(
-        sum(map(lambda x: reduce(lambda a, b: a*b, x.size()), D.parameters()))
+        sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), D.parameters()))
     ))
 
     def get_dataloader(minibatch_size):
@@ -154,6 +155,7 @@ def main(params):
             return np.exp(-p * p * 5.0)
         else:
             return 1.0
+
     lr_scheduler_d = LambdaLR(opt_d, rampup)
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
@@ -174,8 +176,9 @@ def main(params):
     trainer.register_plugin(SaverPlugin(checkpoints_dir, **params['SaverPlugin']))
 
     def subsitute_samples_path(d):
-        return {k:(os.path.join(result_dir, v) if k == 'samples_path' else v) for k,v in d.items()}
-    postprocessors = [ globals()[x](**subsitute_samples_path(params[x])) for x in params['postprocessors'] ]
+        return {k: (os.path.join(result_dir, v) if k == 'samples_path' else v) for k, v in d.items()}
+
+    postprocessors = [globals()[x](**subsitute_samples_path(params[x])) for x in params['postprocessors']]
     trainer.register_plugin(OutputGenerator(lambda x: random_latents(x, latent_size),
                                             postprocessors, **params['OutputGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))

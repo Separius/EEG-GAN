@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+from utils import cudize
 
 
 class PGConv2d(nn.Module):
@@ -27,7 +28,7 @@ class PGConv2d(nn.Module):
             self.act = nn.LeakyReLU(0.2) if act == 'lrelu' else nn.ReLU()
         else:
             self.act = None
-        self.conv.cuda()
+        self.conv = cudize(self.conv)
 
     def forward(self, x):
         h = x * self.c
@@ -74,15 +75,15 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self,
-        dataset_shape, # Overriden based on the dataset
-        fmap_base           = 4096,
-        fmap_decay          = 1.0,
-        fmap_max            = 512,
-        latent_size         = 512,
-        normalize_latents   = True,
-        wscale          = True,
-        pixelnorm       = True,
-        leakyrelu       = True):
+                 dataset_shape,  # Overriden based on the dataset
+                 fmap_base=4096,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 latent_size=512,
+                 normalize_latents=True,
+                 wscale=True,
+                 pixelnorm=True,
+                 leakyrelu=True):
         super(Generator, self).__init__()
 
         resolution = dataset_shape[-1]
@@ -105,7 +106,7 @@ class Generator(nn.Module):
         }
         self.block0 = GFirstBlock(latent_size, nf(1), num_channels, **layer_settings)
         self.blocks = nn.ModuleList([
-            GBlock(nf(i-1), nf(i), num_channels, **layer_settings)
+            GBlock(nf(i - 1), nf(i), num_channels, **layer_settings)
             for i in range(2, R)
         ])
 
@@ -135,7 +136,7 @@ class Generator(nn.Module):
                     preult_rgb = self.block0.toRGB(h)
             else:
                 preult_rgb = 0
-            h = preult_rgb * (1-self.alpha) + ult * self.alpha
+            h = preult_rgb * (1 - self.alpha) + ult * self.alpha
         return h
 
 
@@ -172,7 +173,7 @@ class DLastBlock(nn.Module):
 
 
 def Tstdeps(val):
-    return torch.sqrt(((val - val.mean())**2).mean() + 1.0e-8)
+    return torch.sqrt(((val - val.mean()) ** 2).mean() + 1.0e-8)
 
 
 class MinibatchStddev(nn.Module):
@@ -189,13 +190,13 @@ class MinibatchStddev(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self,
-        dataset_shape, # Overriden based on dataset
-        fmap_base           = 4096,
-        fmap_decay          = 1.0,
-        fmap_max            = 512,
-        wscale          = True,
-        pixelnorm       = False,
-        leakyrelu       = True):
+                 dataset_shape,  # Overriden based on dataset
+                 fmap_base=4096,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 wscale=True,
+                 pixelnorm=False,
+                 leakyrelu=True):
         super(Discriminator, self).__init__()
 
         resolution = dataset_shape[-1]
@@ -206,15 +207,16 @@ class Discriminator(nn.Module):
 
         def nf(stage):
             return min(int(fmap_base / (2.0 ** (stage * fmap_decay))), fmap_max)
+
         layer_settings = {
             'wscale': wscale,
             'pixelnorm': pixelnorm,
             'act': 'lrelu' if leakyrelu else 'relu'
         }
         self.blocks = nn.ModuleList([
-            DBlock(nf(i), nf(i-1), num_channels, **layer_settings)
-            for i in range(R-1, 1, -1)
-        ] + [DLastBlock(nf(1), nf(0), num_channels, **layer_settings)])
+                                        DBlock(nf(i), nf(i - 1), num_channels, **layer_settings)
+                                        for i in range(R - 1, 1, -1)
+                                    ] + [DLastBlock(nf(1), nf(0), num_channels, **layer_settings)])
 
         self.linear = nn.Linear(nf(0), 1)
         self.depth = 0

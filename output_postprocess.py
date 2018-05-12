@@ -1,6 +1,7 @@
 import os
 import utils
 import numpy as np
+
 try:
     import PIL.Image
 except ImportError as e:
@@ -19,10 +20,9 @@ class Postprocessor(object):
 
 
 class ImageSaver(Postprocessor):
-
     output_file_format = 'fakes_{}.png'
 
-    def __init__(self, samples_path='.', drange=(-1,1), resolution=512, create_subdirs=True):
+    def __init__(self, samples_path='.', drange=(-1, 1), resolution=512, create_subdirs=True):
         super(ImageSaver, self).__init__(samples_path)
         self.samples_path = samples_path
         if create_subdirs:
@@ -72,7 +72,6 @@ class ImageSaver(Postprocessor):
 
 
 class SoundSaver(Postprocessor):
-
     output_file_format = 'fakes_sound_{}_{}.wav'
 
     def __init__(self, samples_path='.', drange=(-1, 1), resolution=512, mode='abslog', sample_rate=16000,
@@ -96,7 +95,7 @@ class SoundSaver(Postprocessor):
             stft_rec = lbr.stft(x, n_fft=n_fft, hop_length=self.hop_length)
             angle = np.angle(stft_rec)
             my_stft = stft_mag * np.exp(1.0j * angle)
-            if self.verbose: # and i == it - 1:
+            if self.verbose:  # and i == it - 1:
                 prev_x = x
             x = lbr.istft(my_stft, hop_length=self.hop_length)
             if self.verbose:  # and i == it - 1:

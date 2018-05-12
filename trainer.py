@@ -1,4 +1,5 @@
 import heapq
+from utils import cudize
 
 
 # Based on torch.utils.trainer.Trainer code.
@@ -34,14 +35,14 @@ class Trainer(object):
         self.cur_tick = 0
         self.time = 0
         self.stats = {
-            'kimg_stat': { 'val': self.cur_nimg / 1000., 'log_epoch_fields': ['{val:8.3f}'], 'log_name': 'kimg' },
-            'tick_stat': { 'val': self.cur_tick, 'log_epoch_fields': ['{val:5}'], 'log_name': 'tick'}
+            'kimg_stat': {'val': self.cur_nimg / 1000., 'log_epoch_fields': ['{val:8.3f}'], 'log_name': 'kimg'},
+            'tick_stat': {'val': self.cur_tick, 'log_epoch_fields': ['{val:5}'], 'log_name': 'tick'}
         }
         self.plugin_queues = {
             'iteration': [],
             'epoch': [],
-            's':    [],
-            'end':  []
+            's': [],
+            'end': []
         }
 
     def register_plugin(self, plugin):
@@ -83,13 +84,13 @@ class Trainer(object):
         self.call_plugins('end', 1)
 
     def train(self):
-        fake_latents_in = self.random_latents_generator().cuda()
+        fake_latents_in = cudize(self.random_latents_generator())
 
         # Calculate loss and optimize
         d_losses = [0, 0, 0]
         for i in range(self.D_training_repeats):
             # get real images
-            real_images_expr = next(self.dataiter).cuda()
+            real_images_expr = cudize(next(self.dataiter))
             self.cur_nimg += real_images_expr.size(0)
             # calculate loss
             d_losses = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in)
@@ -100,7 +101,7 @@ class Trainer(object):
             self.optimizer_d.step()
             # get new fake latents for next iterations or the generator
             # in the original implementation if separate_funcs were True, generator optimized on different fake_latents
-            fake_latents_in = self.random_latents_generator().cuda()
+            fake_latents_in = cudize(self.random_latents_generator())
 
         g_losses = self.G_loss(self.G, self.D, fake_latents_in)
         if type(g_losses) is list:
@@ -113,4 +114,3 @@ class Trainer(object):
 
         self.iterations += 1
         self.call_plugins('iteration', self.iterations, *(g_losses + d_losses))
-

@@ -63,7 +63,7 @@ def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}
     fnames = os.listdir(results_dir)
     max_num = max(map(int, filter(lambda x: all(y.isdigit() for y in x), (x.split('-')[0] for x in fnames))),
                   default=0)
-    path = os.path.join(results_dir, dir_pattern.format(new_num=max_num+1, exp_name=experiment_name))
+    path = os.path.join(results_dir, dir_pattern.format(new_num=max_num + 1, exp_name=experiment_name))
     os.makedirs(
         path,
         exist_ok=False
@@ -101,7 +101,7 @@ def create_params(classes, excludes=None, overrides=None):
             k: (v.default if nm not in overrides or k not in overrides[nm] else overrides[nm][k])
             for k, v in dict(inspect.signature(cls.__init__).parameters).items()
             if v.default != inspect._empty and
-            (nm not in excludes or k not in excludes[nm])
+               (nm not in excludes or k not in excludes[nm])
         }
     return params
 
@@ -125,3 +125,9 @@ def params_to_str(params):
         s += '\t\'{}\': {},\n'.format(k, repr(v))
     s += '}'
     return s
+
+
+def cudize(thing):
+    if torch.cuda.is_available():
+        return thing.cuda()
+    return thing

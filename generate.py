@@ -1,11 +1,8 @@
-import torch
 import output_postprocess
 from torch.autograd import Variable
 from utils import *
 from argparse import ArgumentParser
 from functools import partial
-from output_postprocess import *
-
 
 default_params = {
     'generator_path': '',
@@ -17,10 +14,10 @@ default_params = {
 
 def output_samples(generator_path, num_samples, postprocessors, description):
     G = torch.load(generator_path)
-    G.cuda()
+    G = cudize(G)
     latent_size = getattr(G, 'latent_size', 512)  # yup I just want to use old checkpoints
     print('Sampling noise...')
-    gen_input = Variable(random_latents(num_samples, latent_size)).cuda()
+    gen_input = cudize(Variable(random_latents(num_samples, latent_size)))
     print('Generating...')
     output = generate_samples(G, gen_input)
     print('Done.')
@@ -44,5 +41,5 @@ if __name__ == '__main__':
             default_params[name] = auto_args[cls][k]
     parser.set_defaults(**default_params)
     params = get_structured_params(vars(parser.parse_args()))
-    postprocessors = [ globals()[x](**params[x]) for x in params['postprocessors'] ]
+    postprocessors = [globals()[x](**params[x]) for x in params['postprocessors']]
     output_samples(params['generator_path'], params['num_samples'], postprocessors, params['description'])

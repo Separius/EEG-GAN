@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
-from utils import generate_samples
+from utils import generate_samples, cudize
 
 
 class DepthManager(Plugin):
@@ -17,11 +17,11 @@ class DepthManager(Plugin):
                  create_rlg,
                  max_depth,
                  minibatch_default=16,
-                 minibatch_overrides={6:14, 7:6,  8:3},
+                 minibatch_overrides={6: 14, 7: 6, 8: 3},
                  tick_kimg_default=20,
-                 tick_kimg_overrides={3:10, 4:10, 5:5, 6:2, 7:2, 8:1},
-                 lod_training_nimg=100*1000,
-                 lod_transition_nimg=100*1000,
+                 tick_kimg_overrides={3: 10, 4: 10, 5: 5, 6: 2, 7: 2, 8: 1},
+                 lod_training_nimg=100 * 1000,
+                 lod_transition_nimg=100 * 1000,
                  max_lod=None,  # calculate and put values if you want to compare to original impl lod
                  depth_offset=None):
         super(DepthManager, self).__init__([(1, 'iteration')])
@@ -112,7 +112,6 @@ class EfficientLossMonitor(LossMonitor):
 
 
 class AbsoluteTimeMonitor(Plugin):
-
     stat_name = 'time'
 
     def __init__(self, base_time=0):
@@ -140,7 +139,6 @@ class AbsoluteTimeMonitor(Plugin):
 
 
 class SaverPlugin(Plugin):
-
     last_pattern = 'network-snapshot-{}-{}.dat'
 
     def __init__(self, checkpoints_path, keep_old_checkpoints=False, network_snapshot_ticks=40):
@@ -161,7 +159,7 @@ class SaverPlugin(Plugin):
                 os.path.join(
                     self.checkpoints_path,
                     self.last_pattern.format(name,
-                        '{:06}'.format(self.trainer.cur_nimg // 1000))
+                                             '{:06}'.format(self.trainer.cur_nimg // 1000))
                 )
             )
 
@@ -186,7 +184,7 @@ class OutputGenerator(Plugin):
         self.trainer = trainer
 
     def epoch(self, epoch_index):
-        gen_input = Variable(self.sample_fn(self.samples_count)).cuda()
+        gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
         for proc in self.output_postprocessors:
             proc(out, self.trainer.cur_nimg // 1000)
@@ -210,7 +208,7 @@ class CometPlugin(Plugin):
         for field in self.fields:
             steps = field.split('.')
             stat = self.trainer.stats[steps[0]]
-            for i in range(1,len(steps)):
+            for i in range(1, len(steps)):
                 stat = stat[steps[i]]
             self.experiment.log_metric(field, stat)
         self.experiment.log_epoch_end(epoch_index)
