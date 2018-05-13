@@ -98,11 +98,11 @@ def main(params):
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
 
-    # logger.log(str(G))
+    logger.log(str(G))
     logger.log('Total number of parameters in Generator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), G.parameters()))
     ))
-    # logger.log(str(D))
+    logger.log(str(D))
     logger.log('Total number of parameters in Discriminator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), D.parameters()))
     ))
@@ -158,6 +158,9 @@ def main(params):
 
 
 if __name__ == "__main__":
+    if torch.cuda.is_available():
+        torch.cuda.set_device(1)
+        print('cuda device:', torch.cuda.current_device())
     parser = ArgumentParser()
     needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam]
     needarg_classes += get_all_classes(dataset)

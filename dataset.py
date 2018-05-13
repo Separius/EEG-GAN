@@ -77,10 +77,10 @@ class MyDataset(DepthDataset):
                  range_out=(-1, 1)):
         super(MyDataset, self).__init__(model_dataset_depth_offset, model_initial_depth, alpha, range_in, range_out)
         self.dir_path = dir_path
-        self.all_files = sorted(list(map(lambda x: os.path.join(dir_path, x), os.listdir(dir_path))))[:5]
+        self.all_files = sorted(list(map(lambda x: os.path.join(dir_path, x), os.listdir(dir_path))))[:200]
         num_files = len(self.all_files)
-        self.seq_len = 1024
-        self.stride = 512
+        self.seq_len = 256
+        self.stride = 128
         sizes = []
         for i in range(num_files):
             with open(self.all_files[i]) as f:
