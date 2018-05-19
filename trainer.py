@@ -1,16 +1,12 @@
 import heapq
-from utils import cudize
+from utils import cudize, is_torch4
+import torch
 
 
-# Based on torch.utils.trainer.Trainer code.
 class Trainer(object):
 
-    def __init__(self, D, G, D_loss, G_loss,
-                 optimizer_d, optimizer_g, dataset, dataiter,
-                 random_latents_generator,
-                 D_training_repeats=1,  # trainer
-                 tick_nimg_default=2 * 1000,  # trainer
-                 resume_nimg=0):
+    def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, dataiter, random_latents_generator,
+                 grad_clip=None, D_training_repeats=1, tick_nimg_default=2 * 1000, resume_nimg=0):
         self.D = D
         self.G = G
         self.D_loss = D_loss
@@ -27,6 +23,7 @@ class Trainer(object):
         self.iterations = 0
         self.cur_tick = 0
         self.time = 0
+        self.grad_clip = grad_clip
         self.stats = {
             'kimg_stat': {'val': self.cur_nimg / 1000., 'log_epoch_fields': ['{val:8.3f}'], 'log_name': 'kimg'},
             'tick_stat': {'val': self.cur_tick, 'log_epoch_fields': ['{val:5}'], 'log_name': 'tick'}
@@ -75,34 +72,26 @@ class Trainer(object):
                 self.call_plugins('epoch', self.cur_tick)
         self.call_plugins('end', 1)
 
+    def _clip(self, model):
+        if self.grad_clip:
+            if is_torch4:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+            else:
+                torch.nn.utils.clip_grad_norm(model.parameters(), self.grad_clip)
+
     def train(self):
         fake_latents_in = cudize(self.random_latents_generator())
-
-        # Calculate loss and optimize
-        d_losses = [0, 0, 0]
         for i in range(self.D_training_repeats):
-            # get real images
             real_images_expr = cudize(next(self.dataiter))
             self.cur_nimg += real_images_expr.size(0)
-            # calculate loss
-            d_losses = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in)
-            d_losses = tuple(d_losses)
-            D_loss = d_losses[0]
+            D_loss = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in)
             D_loss.backward()
-            # backprop through D
+            self._clip(self.D)
             self.optimizer_d.step()
-            # get new fake latents for next iterations or the generator
-            # in the original implementation if separate_funcs were True, generator optimized on different fake_latents
             fake_latents_in = cudize(self.random_latents_generator())
-
-        g_losses = self.G_loss(self.G, self.D, fake_latents_in)
-        if type(g_losses) is list:
-            g_losses = tuple(g_losses)
-        elif type(g_losses) is not tuple:
-            g_losses = (g_losses,)
-        G_loss = g_losses[0]
+        G_loss = self.G_loss(self.G, self.D, fake_latents_in)
         G_loss.backward()
+        self._clip(self.G)
         self.optimizer_g.step()
-
         self.iterations += 1
-        self.call_plugins('iteration', self.iterations, *(g_losses + d_losses))
+        self.call_plugins('iteration', self.iterations, *(G_loss, D_loss))

@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 import os
 import inspect
 from pickle import load, dump
@@ -21,15 +20,6 @@ def save_pkl(fname, obj):
 def load_pkl(fname):
     with open(fname, 'rb') as f:
         return load(f)
-
-
-def adjust_dynamic_range(data, range_in, range_out):
-    if range_in != range_out:
-        (min_in, max_in) = range_in
-        (min_out, max_out) = range_out
-        scale_factor = (max_out - min_out) / (max_in - min_in)
-        data = (data - min_in) * scale_factor + min_out
-    return data
 
 
 def random_latents(num_latents, latent_size):
@@ -103,3 +93,11 @@ def params_to_str(params):
 
 def cudize(thing):
     return thing.cuda() if torch.cuda.is_available() else thing
+
+
+def var(tensor):
+    return torch.autograd.Variable(cudize(tensor), requires_grad=False)
+
+
+def ll(loss):
+    return loss.data.cpu().item() if is_torch4 else loss.data.cpu()[0]

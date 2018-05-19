@@ -2,24 +2,22 @@ from torch.utils.data import Dataset
 import numpy as np
 import torch
 import math
-from utils import adjust_dynamic_range
 import os
+import glob
 
 
 class MyDataset(Dataset):
-    def __init__(self, dir_path='../MADSYN/data/eeg', num_files=200,
+    def __init__(self, dir_path='../MADSYN/data/eeg', num_files=200, seq_len=256, stride=0.5,
                  model_dataset_depth_offset=2,  # we start with 4x4 resolution instead of 1x1
-                 model_initial_depth=0, alpha=1.0, range_in=(-1, 1), range_out=(-1, 1)):
+                 model_initial_depth=0, alpha=1.0, num_channels=1):
         self.model_depth = model_initial_depth
         self.alpha = alpha
-        self.range_out = range_out
         self.model_dataset_depth_offset = model_dataset_depth_offset
-        self.range_in = range_in
         self.dir_path = dir_path
-        self.all_files = sorted(list(map(lambda x: os.path.join(dir_path, x), os.listdir(dir_path))))[:num_files]
-        num_files = len(self.all_files)
-        self.seq_len = 256
-        self.stride = 128
+        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))[:num_files]
+        self.seq_len = seq_len
+        self.stride = int(seq_len * stride)
+        self.num_channels = num_channels
         sizes = []
         for i in range(num_files):
             with open(self.all_files[i]) as f:
@@ -28,11 +26,12 @@ class MyDataset(Dataset):
         self.sizes = sizes
         self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
         num_points = [(self.sizes[i] - 1) * self.stride + self.seq_len for i in range(num_files)]
-        self.datas = [np.zeros((1, num_points[i]), dtype=np.float32) for i in range(num_files)]
+        self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
         for i in range(num_files):
-            with open('{}_1.txt'.format(self.all_files[i][:-6])) as f:
-                tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
-                self.datas[i][0, :] = ((tmp - tmp.min()) / (tmp.max() - tmp.min())) * 2.0 - 1.0
+            for j in range(num_channels):
+                with open('{}_{}.txt'.format(self.all_files[i][:-6], j+1)) as f:
+                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
+                    self.datas[i][j, :] = ((tmp - tmp.min()) / (tmp.max() - tmp.min())) * 2.0 - 1.0
         self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.description = {
@@ -43,7 +42,7 @@ class MyDataset(Dataset):
 
     @property
     def data(self):
-        raise AttributeError('FolderDataset.data property only accessible if preload is on.')
+        return self.datas
 
     @property
     def shape(self):
@@ -60,7 +59,7 @@ class MyDataset(Dataset):
     def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
         datapoint = datapoint.astype(np.float32)
         depthdiff = (datapoint_depth - target_depth)
-        return datapoint[:, ::(2**depthdiff)]
+        return datapoint[:, ::(2 ** depthdiff)]
 
     def load_file(self, item):
         i, k = self.data_pointers[item]
@@ -76,7 +75,6 @@ class MyDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
-        datapoint = adjust_dynamic_range(datapoint, self.range_in, self.range_out)
         return torch.from_numpy(datapoint.astype('float32'))
 
     def alpha_fade(self, datapoint):

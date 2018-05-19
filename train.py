@@ -1,7 +1,7 @@
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
 from network import Generator, Discriminator
-from wgan_gp_loss import wgan_gp_G_loss, wgan_gp_D_loss
+from wgan_gp_loss import G_loss, D_loss
 from functools import partial
 from trainer import Trainer
 import dataset
@@ -31,7 +31,7 @@ default_params = OrderedDict(
     num_data_workers=2,
     random_seed=1337,
     progressive_growing=True,
-    iwass_lambda=10.0,
+    grad_lambda=10.0,
     iwass_epsilon=0.001,
     iwass_target=1.0,
     save_dataset='',
@@ -39,6 +39,11 @@ default_params = OrderedDict(
     dataset_class='',
     postprocessors=[],
     checkpoints_dir='',
+    loss_type='heuristic',
+    label_smoothing=0.05,
+    loss_of_mean=False,
+    use_mixup=False,
+    apply_sigmoid=False
 )
 
 
@@ -85,7 +90,7 @@ def main(params):
     G = cudize(G)
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
-
+    logger.log('dataset shape: {}'.format(dataset.shape))
     logger.log(str(G))
     logger.log('Total number of parameters in Generator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), G.parameters()))
@@ -117,9 +122,11 @@ def main(params):
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
     mb_def = params['minibatch_size']
-    D_loss_fun = partial(wgan_gp_D_loss, return_all=True, iwass_lambda=params['iwass_lambda'],
-                         iwass_epsilon=params['iwass_epsilon'], iwass_target=params['iwass_target'])
-    G_loss_fun = wgan_gp_G_loss
+    D_loss_fun = partial(D_loss, params['loss_type'], params['iwass_epsilon'], params['iwass_target'],
+                         params['grad_lambda'], params['label_smoothing'], params['loss_of_mean'],
+                         params['use_mixup'], params['apply_sigmoid'])
+    G_loss_fun = partial(G_loss, params['loss_type'], params['label_smoothing'], params['loss_of_mean'],
+                         params['apply_sigmoid'])
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun,
                       opt_d, opt_g, dataset, iter(get_dataloader(mb_def)), rl(mb_def), **params['Trainer'])
     # plugins
