@@ -5,11 +5,15 @@ from torch.nn import functional as F
 from utils import cudize, is_torch4
 
 
-class PGConv2d(nn.Module):
-    def __init__(self, ch_in, ch_out, ksize=3, stride=1, pad=1,
-                 pixelnorm=True, wscale=True, act='lrelu'):
-        super(PGConv2d, self).__init__()
+def pixel_norm(h):
+    mean = torch.mean(h * h, dim=1, keepdim=True)
+    dom = torch.rsqrt(mean + 1e-8)
+    return h * dom
 
+
+class PGConv1d(nn.Module):
+    def __init__(self, ch_in, ch_out, ksize=3, stride=1, pad=1, pixelnorm=True, wscale=True, act='lrelu'):
+        super(PGConv1d, self).__init__()
         if wscale:
             if is_torch4:
                 init = lambda x: nn.init.kaiming_normal_(x)
@@ -24,8 +28,6 @@ class PGConv2d(nn.Module):
             self.conv.weight.data /= self.c
         else:
             self.c = 1.
-        self.eps = 1e-8
-
         self.pixelnorm = pixelnorm
         if act is not None:
             self.act = nn.LeakyReLU(0.2) if act == 'lrelu' else nn.ReLU()
@@ -39,55 +41,41 @@ class PGConv2d(nn.Module):
         if self.act is not None:
             h = self.act(h)
         if self.pixelnorm:
-            mean = torch.mean(h * h, 1, keepdim=True)
-            dom = torch.rsqrt(mean + self.eps)
-            h = h * dom
+            h = pixel_norm(h)
         return h
 
 
 class GFirstBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, **layer_settings):
         super(GFirstBlock, self).__init__()
-        self.c1 = PGConv2d(ch_in, ch_out, 4, 1, 3, **layer_settings)
-        self.c2 = PGConv2d(ch_out, ch_out, **layer_settings)
-        self.toRGB = PGConv2d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None)
+        self.c1 = PGConv1d(ch_in, ch_out, ksize=4, pad=3, **layer_settings)
+        self.c2 = PGConv1d(ch_out, ch_out, **layer_settings)
+        self.toRGB = PGConv1d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None)
 
     def forward(self, x, last=False):
         x = self.c1(x)
         x = self.c2(x)
-        if last:
-            return self.toRGB(x)
-        return x
+        return self.toRGB(x) if last else x
 
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, **layer_settings):
         super(GBlock, self).__init__()
-        self.c1 = PGConv2d(ch_in, ch_out, **layer_settings)
-        self.c2 = PGConv2d(ch_out, ch_out, **layer_settings)
-        self.toRGB = nn.Sequential(PGConv2d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None), nn.Tanh())
+        self.c1 = PGConv1d(ch_in, ch_out, **layer_settings)
+        self.c2 = PGConv1d(ch_out, ch_out, **layer_settings)
+        self.toRGB = nn.Sequential(PGConv1d(ch_out, num_channels, ksize=1, pad=0, pixelnorm=False, act=None), nn.Tanh())
 
     def forward(self, x, last=False):
         x = self.c1(x)
         x = self.c2(x)
-        if last:
-            x = self.toRGB(x)
-        return x
+        return self.toRGB(x) if last else x
 
 
 class Generator(nn.Module):
-    def __init__(self,
-                 dataset_shape,  # Overriden based on the dataset ((77, 1, 512, 512))
-                 fmap_base=2048,
-                 fmap_decay=1.0,
-                 fmap_max=256,
-                 latent_size=256,
-                 normalize_latents=True,
-                 wscale=True,
-                 pixelnorm=True,
-                 leakyrelu=True):
+    def __init__(self, dataset_shape,  # Overriden based on the dataset ((77, 1, 512, 512))
+                 fmap_base=2048, fmap_decay=1.0, fmap_max=256, latent_size=256,
+                 normalize_latents=True, wscale=True, pixelnorm=True, leakyrelu=True):
         super(Generator, self).__init__()
-
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
         print('dataset_shape:', dataset_shape)
@@ -99,34 +87,20 @@ class Generator(nn.Module):
 
         if latent_size is None:
             latent_size = nf(0)
-
         self.normalize_latents = normalize_latents
-        layer_settings = {
-            'wscale': wscale,
-            'pixelnorm': pixelnorm,
-            'act': 'lrelu' if leakyrelu else 'relu'
-        }
+        layer_settings = {'wscale': wscale, 'pixelnorm': pixelnorm, 'act': 'lrelu' if leakyrelu else 'relu'}
         self.block0 = GFirstBlock(latent_size, nf(1), num_channels, **layer_settings)
-        self.blocks = nn.ModuleList([
-            GBlock(nf(i - 1), nf(i), num_channels, **layer_settings)
-            for i in range(2, R)
-        ])
-
+        self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, **layer_settings) for i in range(2, R)])
         self.depth = 0
         self.alpha = 1.0
-        self.eps = 1e-8
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
 
-    def forward(self, x):  # input: (bs, 512)
-        # print('gen_in:', x.shape)
-        h = x.unsqueeze(2)  # (bs, 512, 1)
+    def forward(self, x):  # input: (bs, latent_size)
+        h = x.unsqueeze(2)  # (bs, latent_size, 1)
         if self.normalize_latents:
-            mean = torch.mean(h * h, 1, keepdim=True)
-            dom = torch.rsqrt(mean + self.eps)
-            h = h * dom
+            h = pixel_norm(h)
         h = self.block0(h, self.depth == 0)
-        # print('gen_blk0:', h.shape)
         if self.depth > 0:
             for i in range(self.depth - 1):
                 h = F.upsample(h, scale_factor=2)
@@ -141,16 +115,15 @@ class Generator(nn.Module):
             else:
                 preult_rgb = 0
             h = preult_rgb * (1 - self.alpha) + ult * self.alpha
-        # print('gen_out:', h.shape)
         return h
 
 
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, **layer_settings):
         super(DBlock, self).__init__()
-        self.fromRGB = PGConv2d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
-        self.c1 = PGConv2d(ch_in, ch_in, **layer_settings)
-        self.c2 = PGConv2d(ch_in, ch_out, **layer_settings)
+        self.fromRGB = PGConv1d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
+        self.c1 = PGConv1d(ch_in, ch_in, **layer_settings)
+        self.c2 = PGConv1d(ch_in, ch_out, **layer_settings)
 
     def forward(self, x, first=False):
         if first:
@@ -163,10 +136,10 @@ class DBlock(nn.Module):
 class DLastBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, **layer_settings):
         super(DLastBlock, self).__init__()
-        self.fromRGB = PGConv2d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
+        self.fromRGB = PGConv1d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
         self.stddev = MinibatchStddev()
-        self.c1 = PGConv2d(ch_in + 1, ch_in, **layer_settings)
-        self.c2 = PGConv2d(ch_in, ch_out, 4, 1, 0, **layer_settings)
+        self.c1 = PGConv1d(ch_in + 1, ch_in, **layer_settings)
+        self.c2 = PGConv1d(ch_in, ch_out, 4, 1, 0, **layer_settings)
 
     def forward(self, x, first=False):
         if first:
@@ -177,33 +150,22 @@ class DLastBlock(nn.Module):
         return x
 
 
-def Tstdeps(val):
-    return torch.sqrt(((val - val.mean()) ** 2).mean() + 1.0e-8)
-
-
 class MinibatchStddev(nn.Module):
     def __init__(self):
         super(MinibatchStddev, self).__init__()
-        self.eps = 1.0
 
     def forward(self, x):
-        stddev_mean = Tstdeps(x)
+        stddev_mean = torch.sqrt(((x - x.mean()) ** 2).mean() + 1.0e-8)
         new_channel = stddev_mean.expand(x.size(0), 1, x.size(2))
         h = torch.cat((x, new_channel), dim=1)
         return h
 
 
 class Discriminator(nn.Module):
-    def __init__(self,
-                 dataset_shape,  # Overriden based on dataset
-                 fmap_base=2048,
-                 fmap_decay=1.0,
-                 fmap_max=256,
-                 wscale=True,
-                 pixelnorm=False,
-                 leakyrelu=True):
+    def __init__(self, dataset_shape,  # Overriden based on dataset
+                 fmap_base=2048, fmap_decay=1.0, fmap_max=256,
+                 wscale=True, pixelnorm=False, leakyrelu=True):
         super(Discriminator, self).__init__()
-
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
         R = int(np.log2(resolution))
@@ -213,24 +175,17 @@ class Discriminator(nn.Module):
         def nf(stage):
             return min(int(fmap_base / (2.0 ** (stage * fmap_decay))), fmap_max)
 
-        layer_settings = {
-            'wscale': wscale,
-            'pixelnorm': pixelnorm,
-            'act': 'lrelu' if leakyrelu else 'relu'
-        }
-        self.blocks = nn.ModuleList([
-                                        DBlock(nf(i), nf(i - 1), num_channels, **layer_settings)
-                                        for i in range(R - 1, 1, -1)
-                                    ] + [DLastBlock(nf(1), nf(0), num_channels, **layer_settings)])
+        layer_settings = {'wscale': wscale, 'pixelnorm': pixelnorm, 'act': 'lrelu' if leakyrelu else 'relu'}
+        self.blocks = nn.ModuleList(
+            [DBlock(nf(i), nf(i - 1), num_channels, **layer_settings) for i in range(R - 1, 1, -1)] + [
+                DLastBlock(nf(1), nf(0), num_channels, **layer_settings)])
 
         self.linear = nn.Linear(nf(0), 1)
         self.depth = 0
         self.alpha = 1.0
-        self.eps = 1e-8
         self.max_depth = len(self.blocks) - 1
 
     def forward(self, x):
-        # print('d_input:', x.shape)
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
@@ -239,12 +194,9 @@ class Discriminator(nn.Module):
                 xlowres = F.avg_pool1d(xhighres, 2)
                 preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
                 h = h * self.alpha + (1 - self.alpha) * preult_rgb
-
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
                 h = F.avg_pool1d(h, 2)
-        # print('d_logit:', h.shape)
         h = self.linear(h.squeeze(-1))
-        # print('d_output:', h.shape)
         return h

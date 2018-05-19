@@ -2,7 +2,6 @@ import os
 import time
 from datetime import timedelta
 from glob import glob
-
 import torch
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger

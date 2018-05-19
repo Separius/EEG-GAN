@@ -32,50 +32,22 @@ def adjust_dynamic_range(data, range_in, range_out):
     return data
 
 
-def numpy_upsample_nearest(x, n_last_dims, size=None, scale_factor=None):
-    try:
-        shape = x.shape[-n_last_dims:]
-        if size is not None:
-            if type(size) is int:
-                size = (size,) * n_last_dims
-            for i in range(n_last_dims):
-                if size[i] % shape[i] != 0:
-                    raise Exception('Incompatible sizes: {} and {}.'.format(x.shape, size))
-            scale_factor = tuple((target_s // source_s for source_s, target_s in zip(shape, size)))
-        if scale_factor is None:
-            raise Exception('Either size or scale_factor must be specified.')
-        if type(scale_factor) is int:
-            scale_factor = (scale_factor,) * n_last_dims
-        for i in range(n_last_dims):
-            if scale_factor[i] > 1:
-                x = x.repeat(scale_factor[i], axis=-n_last_dims + i)
-        return x
-    except Exception as e:
-        print('Args or shapes in numpy_upsample: x {} size {} scale_factor {}'.format(x.shape, size, scale_factor))
-        raise e
-
-
 def random_latents(num_latents, latent_size):
-    return torch.from_numpy(np.random.randn(num_latents, latent_size).astype(np.float32))
+    return torch.randn(num_latents, latent_size)
 
 
 def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}-{exp_name}'):
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
     fnames = os.listdir(results_dir)
-    max_num = max(map(int, filter(lambda x: all(y.isdigit() for y in x), (x.split('-')[0] for x in fnames))),
-                  default=0)
+    max_num = max(map(int, filter(lambda x: all(y.isdigit() for y in x), (x.split('-')[0] for x in fnames))), default=0)
     path = os.path.join(results_dir, dir_pattern.format(new_num=max_num + 1, exp_name=experiment_name))
-    os.makedirs(
-        path,
-        exist_ok=False
-    )
+    os.makedirs(path, exist_ok=False)
     return path
 
 
 def get_all_classes(module):
-    return [getattr(module, name) for name in dir(module)
-            if inspect.isclass(getattr(module, name, 0))]
+    return [getattr(module, name) for name in dir(module) if inspect.isclass(getattr(module, name, 0))]
 
 
 def generic_arg_parse(x, hinttype=None):
@@ -130,6 +102,4 @@ def params_to_str(params):
 
 
 def cudize(thing):
-    if torch.cuda.is_available():
-        return thing.cuda()
-    return thing
+    return thing.cuda() if torch.cuda.is_available() else thing

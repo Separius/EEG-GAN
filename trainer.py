@@ -5,15 +5,8 @@ from utils import cudize
 # Based on torch.utils.trainer.Trainer code.
 class Trainer(object):
 
-    def __init__(self,
-                 D,
-                 G,
-                 D_loss,
-                 G_loss,
-                 optimizer_d,
-                 optimizer_g,
-                 dataset,
-                 dataiter,
+    def __init__(self, D, G, D_loss, G_loss,
+                 optimizer_d, optimizer_g, dataset, dataiter,
                  random_latents_generator,
                  D_training_repeats=1,  # trainer
                  tick_nimg_default=2 * 1000,  # trainer
@@ -47,7 +40,6 @@ class Trainer(object):
 
     def register_plugin(self, plugin):
         plugin.register(self)
-
         intervals = plugin.trigger_interval
         if not isinstance(intervals, list):
             intervals = [intervals]

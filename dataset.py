@@ -3,81 +3,20 @@ import numpy as np
 import torch
 import math
 from utils import adjust_dynamic_range
-
-try:
-    from scipy.misc import imread
-except ImportError as e:
-    print('Unable to load scipy: {}\nDefaultImageFolderDataset won\'t work.'.format(e))
-from functools import reduce
 import os
 
-LIBROSA_LOADED = False
-try:
-    import librosa as lbr
 
-    sound_load_fun = lambda path, freq, dtype: lbr.load(path, freq, dtype=dtype)
-    LIBROSA_LOADED = True
-except ImportError as e:
-    print('Unable to load librosa: {}.\nSoundImageDataset may work only in raw mode.')
-try:
-    import soundfile as sf
-
-    sound_load_fun = lambda path, _, dtype: sf.read(path, dtype=dtype)  # sf does not support sr in read, but infers
-except ImportError as e:
-    errstr = 'Switching sound loading to librosa.load' if LIBROSA_LOADED else 'SoundImageDataset won\'t work at all.'
-    print('Unable to load soundfile: {}.\n{}'.format(e, errstr))
-
-
-class DepthDataset(Dataset):
-
-    def __init__(self,
+class MyDataset(Dataset):
+    def __init__(self, dir_path='../MADSYN/data/eeg', num_files=200,
                  model_dataset_depth_offset=2,  # we start with 4x4 resolution instead of 1x1
-                 model_initial_depth=0,
-                 alpha=1.0,
-                 range_in=(0, 255),
-                 range_out=(-1, 1)):
+                 model_initial_depth=0, alpha=1.0, range_in=(-1, 1), range_out=(-1, 1)):
         self.model_depth = model_initial_depth
         self.alpha = alpha
         self.range_out = range_out
         self.model_dataset_depth_offset = model_dataset_depth_offset
         self.range_in = range_in
-
-    @property
-    def data(self):
-        raise NotImplementedError()
-
-    @property
-    def shape(self):
-        return self.data[-1].shape
-
-    def alpha_fade(self, data):
-        raise NotImplementedError()
-
-    def __len__(self):
-        raise NotImplementedError()
-
-    def __getitem__(self, item):
-        datapoint = self.data[self.model_depth + self.model_dataset_depth_offset][item]
-        if self.alpha < 1.0:
-            datapoint = self.alpha_fade(datapoint)
-        datapoint = adjust_dynamic_range(datapoint, self.range_in, self.range_out)
-        return torch.from_numpy(datapoint.astype('float32'))
-
-    def close(self):
-        pass
-
-
-class MyDataset(DepthDataset):
-    def __init__(self,
-                 dir_path='../MADSYN/data/eeg',
-                 model_dataset_depth_offset=2,  # we start with 4x4 resolution instead of 1x1
-                 model_initial_depth=0,
-                 alpha=1.0,
-                 range_in=(-1, 1),
-                 range_out=(-1, 1)):
-        super(MyDataset, self).__init__(model_dataset_depth_offset, model_initial_depth, alpha, range_in, range_out)
         self.dir_path = dir_path
-        self.all_files = sorted(list(map(lambda x: os.path.join(dir_path, x), os.listdir(dir_path))))[:200]
+        self.all_files = sorted(list(map(lambda x: os.path.join(dir_path, x), os.listdir(dir_path))))[:num_files]
         num_files = len(self.all_files)
         self.seq_len = 256
         self.stride = 128
@@ -128,8 +67,8 @@ class MyDataset(DepthDataset):
         res = self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
         return res
 
-    def infer_max_dataset_depth(self, datapoint):
-        print('infer_max_dataset_depth', datapoint.shape)
+    @staticmethod
+    def infer_max_dataset_depth(datapoint):
         return int(math.log(datapoint.shape[-1], 2))
 
     def __getitem__(self, item):
@@ -142,6 +81,6 @@ class MyDataset(DepthDataset):
 
     def alpha_fade(self, datapoint):
         c, t = datapoint.shape
-        t = datapoint.reshape(c, t // 2, 2).mean((2)).repeat(2, 1)
+        t = datapoint.reshape(c, t // 2, 2).mean(axis=2).repeat(2, 1)
         datapoint = (datapoint + (t - datapoint) * (1 - self.alpha))
         return datapoint

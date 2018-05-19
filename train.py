@@ -6,11 +6,11 @@ from functools import partial
 from trainer import Trainer
 import dataset
 from dataset import *
-import output_postprocess
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler
 from plugins import *
 from utils import *
+from functools import reduce
 from argparse import ArgumentParser
 from collections import OrderedDict
 
@@ -70,23 +70,11 @@ def main(params):
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss', 'D_real', 'D_fake']
-    stats_to_log = [
-        'tick_stat',
-        'kimg_stat',
-    ]
+    stats_to_log = ['tick_stat', 'kimg_stat']
     if params['progressive_growing']:
-        stats_to_log.extend([
-            'depth',
-            'alpha',
-            'minibatch_size'
-        ])
-    stats_to_log.extend([
-                            'time',
-                            'sec.tick',
-                            'sec.kimg'
-                        ] + losses)
+        stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
+    stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
-    # logger.log(params_to_str(params))
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
@@ -160,11 +148,9 @@ def main(params):
 if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.set_device(1)
-        print('cuda device:', torch.cuda.current_device())
     parser = ArgumentParser()
     needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam]
     needarg_classes += get_all_classes(dataset)
-    needarg_classes += get_all_classes(output_postprocess)
     excludes = {'Adam': {'lr'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(needarg_classes, excludes, default_overrides)
