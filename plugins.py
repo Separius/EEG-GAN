@@ -199,7 +199,7 @@ class OutputGenerator(Plugin):
         num_channels = generated.shape[1]
         seq_len = generated.shape[2]
         t = np.linspace(0, seq_len / frequency, seq_len)
-        f = np.fft.fftfreq(seq_len // 2 + 1, d=1. / frequency)
+        f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         for index in range(len(generated)):
             fig, (axs) = plt.subplots(num_channels, 2)
             if num_channels == 1:
