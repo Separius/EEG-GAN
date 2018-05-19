@@ -48,7 +48,6 @@ class EqualizedConv1d(nn.Module):
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
         self.scale = (torch.mean(self.conv.weight.data ** 2)) ** 0.5
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
-        self.scale = cudize(self.scale)
 
     def forward(self, x):
         x = self.conv(x.mul(self.scale))

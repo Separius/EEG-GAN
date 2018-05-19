@@ -21,7 +21,7 @@ class DepthManager(Plugin):
                  create_dataloader_fun,
                  create_rlg,
                  max_depth,
-                 minibatch_default=16,
+                 minibatch_default=32,
                  minibatch_overrides={6: 14, 7: 6, 8: 3},
                  tick_kimg_default=20,
                  tick_kimg_overrides={3: 10, 4: 10, 5: 5, 6: 2, 7: 2, 8: 1},
@@ -185,7 +185,7 @@ class OutputGenerator(Plugin):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
-        self.res_len=res_len
+        self.res_len = res_len
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
         self.max_freq = 80
@@ -194,10 +194,8 @@ class OutputGenerator(Plugin):
         self.trainer = trainer
 
     @staticmethod
-    def save_plot(res_len, frequency, epoch, checkpoints_dir, generated_):
-        generated = generated_[:, :, :res_len].data.cpu().numpy()
+    def save_plot(seq_len, frequency, epoch, checkpoints_dir, generated):
         num_channels = generated.shape[1]
-        seq_len = generated.shape[2]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         for index in range(len(generated)):
@@ -223,7 +221,9 @@ class OutputGenerator(Plugin):
     def epoch(self, epoch_index):
         gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
-        self.save_plot(self.res_len, int(self.max_freq*out.shape[2]/self.seq_len), epoch_index, self.checkpoints_dir, out)
+        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        res_len = min(self.res_len, out.shape[2])
+        self.save_plot(res_len, frequency, epoch_index, self.checkpoints_dir, out[:, :, :res_len])
 
     def end(self, *args):
         self.epoch(*args)

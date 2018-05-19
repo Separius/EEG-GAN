@@ -80,7 +80,7 @@ def cross_entropy(pred, target, apply_sigmoid):
 
 
 def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label_smoothing, loss_of_mean, use_mixup,
-                  apply_sigmoid, iwass_epsilon, given_gp):
+                  apply_sigmoid, iwass_epsilon):
     d_fake = mean_time_series(d_fake, loss_of_mean)
     d_real = mean_time_series(d_real, loss_of_mean)
     if loss_type == 'square':
@@ -107,7 +107,7 @@ def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label
     else:
         D_real_loss = -d_real + d_real ** 2 * iwass_epsilon
         D_fake_loss = d_fake
-        d_loss = (D_fake_loss + D_real_loss + given_gp).mean()
+        d_loss = (D_fake_loss + D_real_loss).mean()
     if is_torch4:
         d_loss = d_loss.unsqueeze(0)
     return d_loss
@@ -115,7 +115,6 @@ def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label
 
 def disc_loss(d_fake, d_real, disc, real, fake, loss_type, iwass_epsilon, iwass_target, grad_lambda, label_smoothing,
               loss_of_mean, use_mixup, apply_sigmoid):
-    given_gp = None
     if loss_type == 'dragan':
         alpha = cudize(torch.rand(real.size(0), 1, 1).expand(real.size()))
         x_hat = Variable(
@@ -129,11 +128,11 @@ def disc_loss(d_fake, d_real, disc, real, fake, loss_type, iwass_epsilon, iwass_
     else:
         x_hat = None
         pred_hat = None
+    loss = per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label_smoothing, loss_of_mean, use_mixup, apply_sigmoid, iwass_epsilon)
     if loss_type == 'wgan_theirs':
         given_gp = calc_gradient_penalty(disc, real.data, fake.data, grad_lambda, iwass_target)
-    return per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label_smoothing, loss_of_mean,
-                         use_mixup, apply_sigmoid, iwass_epsilon, given_gp)
-
+        loss = given_gp.mean() + loss
+    return loss
 
 def per_gen_loss(d_fake, loss_type, label_smoothing, loss_of_mean, apply_sigmoid):
     d_fake = mean_time_series(d_fake, loss_of_mean)
@@ -168,10 +167,10 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, iwas
     d_real = D(x_real)
     if is_torch4:
         with torch.no_grad():
-            z = Variable(fake_latents_in, requires_grad=False)
+            z = Variable(fake_latents_in)
     else:
-        z = Variable(fake_latents_in, volatile=True, requires_grad=False)
-    g_ = G(z).detach()
+        z = Variable(fake_latents_in, volatile=True)
+    g_ = Variable(G(z).data)
     d_fake = D(g_)
     return disc_loss(d_fake, d_real, D, x_real, g_, loss_type, iwass_epsilon, iwass_target, grad_lambda,
                      label_smoothing, loss_of_mean, use_mixup, apply_sigmoid)
