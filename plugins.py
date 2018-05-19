@@ -3,10 +3,16 @@ import time
 from datetime import timedelta
 from glob import glob
 import torch
+import numpy as np
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
 from utils import generate_samples, cudize, is_torch4
+from scipy import misc
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
 class DepthManager(Plugin):
@@ -175,20 +181,49 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, output_postprocessors, samples_count=6, output_snapshot_ticks=3):
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, samples_count=6, output_snapshot_ticks=3, res_len=256):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
-        self.output_postprocessors = output_postprocessors
         self.samples_count = samples_count
+        self.res_len=res_len
+        self.checkpoints_dir = checkpoints_dir
+        self.seq_len = seq_len
+        self.max_freq = 80
 
     def register(self, trainer):
         self.trainer = trainer
 
+    @staticmethod
+    def save_plot(res_len, frequency, epoch, checkpoints_dir, generated_):
+        generated = generated_[:, :, :res_len].data.cpu().numpy()
+        num_channels = generated.shape[1]
+        seq_len = generated.shape[2]
+        t = np.linspace(0, seq_len / frequency, seq_len)
+        f = np.fft.fftfreq(seq_len // 2 + 1, d=1. / frequency)
+        for index in range(len(generated)):
+            fig, (axs) = plt.subplots(num_channels, 2)
+            if num_channels == 1:
+                axs = axs.reshape(1, -1)
+            fig.set_figheight(20)
+            fig.set_figwidth(20)
+            for ch in range(num_channels):
+                data = generated[index, ch, :]
+                axs[ch][0].plot(t, data, color=(0.8, 0, 0, 0.5), label='fake')
+                axs[ch][1].plot(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='fake_fft')
+                axs[ch][0].set_ylim([-1.1, 1.1])
+                axs[ch][0].legend()
+                axs[ch][1].legend()
+            fig.suptitle('epoch: {}, sample: {}'.format(epoch, index))
+            fig.canvas.draw()
+            image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+            image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            misc.imsave(os.path.join(checkpoints_dir, '{epoch}_{index}.png'.format(epoch=epoch, index=index)), image)
+            plt.close(fig)
+
     def epoch(self, epoch_index):
         gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
-        for proc in self.output_postprocessors:
-            proc(out, self.trainer.cur_nimg // 1000)
+        self.save_plot(self.res_len, int(self.max_freq*out.shape[2]/self.seq_len), epoch_index, self.checkpoints_dir, out)
 
     def end(self, *args):
         self.epoch(*args)

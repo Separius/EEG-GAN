@@ -166,8 +166,12 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, iwas
     G.zero_grad()
     x_real = Variable(real_images_in)
     d_real = D(x_real)
-    noisev = Variable(fake_latents_in, volatile=True, requires_grad=False)
-    g_ = G(noisev).detach()
+    if is_torch4:
+        with torch.no_grad():
+            z = Variable(fake_latents_in, requires_grad=False)
+    else:
+        z = Variable(fake_latents_in, volatile=True, requires_grad=False)
+    g_ = G(z).detach()
     d_fake = D(g_)
     return disc_loss(d_fake, d_real, D, x_real, g_, loss_type, iwass_epsilon, iwass_target, grad_lambda,
                      label_smoothing, loss_of_mean, use_mixup, apply_sigmoid)

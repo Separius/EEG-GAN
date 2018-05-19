@@ -5,7 +5,7 @@ from wgan_gp_loss import G_loss, D_loss
 from functools import partial
 from trainer import Trainer
 import dataset
-from dataset import *
+from dataset import MyDataset
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler
 from plugins import *
@@ -36,14 +36,13 @@ default_params = OrderedDict(
     iwass_target=1.0,
     save_dataset='',
     load_dataset='',
-    dataset_class='',
-    postprocessors=[],
     checkpoints_dir='',
     loss_type='heuristic',
     label_smoothing=0.05,
     loss_of_mean=False,
     use_mixup=False,
-    apply_sigmoid=False
+    apply_sigmoid=False,
+    cuda_device=0
 )
 
 
@@ -66,15 +65,13 @@ def load_models(resume_network, result_dir, logger):
 def main(params):
     if params['load_dataset']:
         dataset = load_pkl(params['load_dataset'])
-    elif params['dataset_class']:
-        dataset = globals()[params['dataset_class']](**params[params['dataset_class']])
+    else:
+        dataset = MyDataset(**params['MyDataset'])
         if params['save_dataset']:
             save_pkl(params['save_dataset'], dataset)
-    else:
-        raise Exception('One of either load_dataset (path to pkl) or dataset_class needs to be specified.')
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
-    losses = ['G_loss', 'D_loss', 'D_real', 'D_fake']
+    losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
     if params['progressive_growing']:
         stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
@@ -91,11 +88,11 @@ def main(params):
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
     logger.log('dataset shape: {}'.format(dataset.shape))
-    logger.log(str(G))
+    # logger.log(str(G))
     logger.log('Total number of parameters in Generator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), G.parameters()))
     ))
-    logger.log(str(D))
+    # logger.log(str(D))
     logger.log('Total number of parameters in Discriminator: {}'.format(
         sum(map(lambda x: reduce(lambda a, b: a * b, x.size()), D.parameters()))
     ))
@@ -122,11 +119,12 @@ def main(params):
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
     mb_def = params['minibatch_size']
-    D_loss_fun = partial(D_loss, params['loss_type'], params['iwass_epsilon'], params['iwass_target'],
-                         params['grad_lambda'], params['label_smoothing'], params['loss_of_mean'],
-                         params['use_mixup'], params['apply_sigmoid'])
-    G_loss_fun = partial(G_loss, params['loss_type'], params['label_smoothing'], params['loss_of_mean'],
-                         params['apply_sigmoid'])
+    D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
+                         iwass_target=params['iwass_target'], grad_lambda=params['grad_lambda'],
+                         label_smoothing=params['label_smoothing'], loss_of_mean=params['loss_of_mean'],
+                         use_mixup=params['use_mixup'], apply_sigmoid=params['apply_sigmoid'])
+    G_loss_fun = partial(G_loss, loss_type=params['loss_type'], label_smoothing=params['label_smoothing'],
+                         loss_of_mean=params['loss_of_mean'], apply_sigmoid=params['apply_sigmoid'])
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun,
                       opt_d, opt_g, dataset, iter(get_dataloader(mb_def)), rl(mb_def), **params['Trainer'])
     # plugins
@@ -139,12 +137,8 @@ def main(params):
     checkpoints_dir = params['checkpoints_dir'] if params['checkpoints_dir'] else result_dir
     trainer.register_plugin(SaverPlugin(checkpoints_dir, **params['SaverPlugin']))
 
-    def subsitute_samples_path(d):
-        return {k: (os.path.join(result_dir, v) if k == 'samples_path' else v) for k, v in d.items()}
-
-    postprocessors = [globals()[x](**subsitute_samples_path(params[x])) for x in params['postprocessors']]
-    trainer.register_plugin(OutputGenerator(lambda x: random_latents(x, latent_size),
-                                            postprocessors, **params['OutputGenerator']))
+    trainer.register_plugin(OutputGenerator(lambda x: random_latents(x, latent_size), checkpoints_dir,
+                                            params['MyDataset']['seq_len'], **params['OutputGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)
@@ -153,8 +147,6 @@ def main(params):
 
 
 if __name__ == "__main__":
-    if torch.cuda.is_available():
-        torch.cuda.set_device(1)
     parser = ArgumentParser()
     needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam]
     needarg_classes += get_all_classes(dataset)
@@ -171,4 +163,6 @@ if __name__ == "__main__":
             default_params[name] = auto_args[cls][k]
     parser.set_defaults(**default_params)
     params = get_structured_params(vars(parser.parse_args()))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(params['cuda_device'])
     main(params)

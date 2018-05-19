@@ -13,7 +13,7 @@ def pixel_norm(h):
 
 class DownSample(nn.Module):
     def __init__(self, scale_factor=1):
-        super().__init__()
+        super(DownSample, self).__init__()
         self.scale_factor = scale_factor
 
     def forward(self, input):
@@ -30,7 +30,7 @@ class PixelNorm(nn.Module):
 
 class ScaledTanh(nn.Tanh):
     def __init__(self, scale=0.5):
-        super().__init__()
+        super(ScaledTanh, self).__init__()
         self.scale = scale
 
     def forward(self, x):
@@ -39,7 +39,7 @@ class ScaledTanh(nn.Tanh):
 
 class EqualizedConv1d(nn.Module):
     def __init__(self, c_in, c_out, k_size, stride=1, padding=0):
-        super(EqualizedConv1d).__init__()
+        super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
         if is_torch4:
             torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
@@ -62,7 +62,7 @@ class GDropLayer(nn.Module):
     """
 
     def __init__(self, mode='mul', strength=0.2, axes=(0, 1), normalize=False):
-        super().__init__()
+        super(GDropLayer, self).__init__()
         self.mode = mode.lower()
         assert self.mode in ['mul', 'drop', 'prop'], 'Invalid GDropLayer mode' % mode
         self.strength = strength
