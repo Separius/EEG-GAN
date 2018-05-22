@@ -22,10 +22,10 @@ class DepthManager(Plugin):
                  create_rlg,
                  max_depth,
                  minibatch_default=32,
-                 minibatch_overrides={6: 14, 7: 6, 8: 3},
+                 minibatch_overrides={6: 32, 7: 32, 8: 32},
                  tick_kimg_default=20,
-                 tick_kimg_overrides={3: 10, 4: 10, 5: 5, 6: 2, 7: 2, 8: 1},
-                 lod_training_nimg=100 * 1000,
+                 tick_kimg_overrides={3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4},
+                 lod_training_nimg=400 * 1000,
                  lod_transition_nimg=100 * 1000,
                  max_lod=None,  # calculate and put values if you want to compare to original impl lod
                  depth_offset=None):

@@ -20,10 +20,10 @@ default_params = OrderedDict(
     result_dir='results',
     exp_name='specs512',
     minibatch_size=16,
-    lr_rampup_kimg=40,
+    lr_rampup_kimg=50,
     G_lr_max=0.001,
     D_lr_max=0.001,
-    total_kimg=3000,
+    total_kimg=4000,
     tick_kimg_default=20,
     image_snapshot_ticks=3,
     resume_network='',
@@ -143,7 +143,6 @@ def main(params):
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)
     trainer.run(params['total_kimg'])
-    dataset.close()
 
 
 if __name__ == "__main__":
