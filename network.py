@@ -236,8 +236,8 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, fmap_base=2048, fmap_decay=1.0, fmap_max=256, downsample='average',
-                 apply_sigmoid=False, pixelnorm=False, activation='lrelu', dropout=0, batchnorm=False):
+    def __init__(self, dataset_shape, apply_sigmoid, fmap_base=2048, fmap_decay=1.0, fmap_max=256, downsample='average',
+                 pixelnorm=False, activation='lrelu', dropout=0, batchnorm=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]

@@ -1,0 +1,32 @@
+Low Freq & Seq Length(Hard):
+    progressive  dilated RNN :: Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred
+    progressive Wavenet
+    self attention :: AddToWhichLayer&When?
+Multi Channel:
+    Increase to 16 channels
+    Channel Embedding(generator, discriminator)
+Validation:
+    show that Disc(concatenated parts) == fake
+    train on real test on fake (abnormal / 6 classes / seizure)
+    train on fake test on real
+    Connection Network (restore Z from data ||z-C(D(z))|| )
+    use the easy classifier(validation) results for both D and (G, D)
+    stats MMD: https://github.com/ratschlab/RGAN
+Differential Privacy
+    https://github.com/alps-lab/dpgan
+    https://github.com/greenelab/SPRINT_gan
+    https://github.com/ratschlab/RGAN
+    https://github.com/tensorflow/models/tree/master/research/differential_privacy
+Condition:
+    User Embedding
+    Easy meta-data(age, sex)
+    SemiSupervised InfoGAN: https://github.com/spurra/ss-infogan
+    AcGan: https://github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py
+    Activation Maximization: https://github.com/ZhimingZhou/AM-GAN
+    Class Splitting GAN: https://github.com/CIFASIS/splitting_gan
+    Projection(yW . x): https://github.com/pfnet-research/sngan_projection
+Misc:
+    Quantization => RL loss
+    Wavenet for prediction: https://github.com/r9y9/wavenet_vocoder
+    SampleRNN for prediction: https://github.com/deepsound-project/samplernn-pytorch
+    Test on audio(vs wavegan): https://github.com/chrisdonahue/wavegan

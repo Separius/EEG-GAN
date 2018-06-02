@@ -4,3 +4,6 @@ piano/
 results/
 .ropeproject/
 data.gen
+*.yml
+!defaults.yml
+!test.yml
