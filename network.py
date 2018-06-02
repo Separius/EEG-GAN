@@ -277,32 +277,6 @@ class ToRGB(nn.Module):
         return torch.cat(ans, dim=2)
 
 
-class PGConv1d(nn.Module):
-    def __init__(self, ch_in, ch_out, ksize=3, stride=1, pad=1, pixelnorm=True, act='lrelu', bn=False, do=0):
-        super(PGConv1d, self).__init__()
-        self.net = [EqualizedConv1d(ch_in, ch_out, ksize, stride, pad)]
-        if bn:
-            self.net.append(nn.BatchNorm1d(num_features=ch_out))
-        if act == 'prelu':
-            self.net.append(nn.PReLU(num_parameters=ch_out))
-        elif act == 'lrelu':
-            self.net.append(nn.LeakyReLU(0.2, inplace=True))
-        elif act == 'relu':
-            self.net.append(nn.ReLU(inplace=True))
-        elif act == 'relu6':
-            self.net.append(nn.ReLU6(inplace=True))
-        elif act == 'elu':
-            self.net.append(nn.ELU(inplace=True))
-        if pixelnorm:
-            self.net.append(PixelNorm())
-        if do != 0:
-            self.net.append(GDropLayer(strength=do))
-        self.net = nn.Sequential(*self.net)
-
-    def forward(self, x):
-        return self.net(x)
-
-
 class NeoPGConv1d(nn.Module):
     def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True,
                  act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0):
@@ -409,29 +383,54 @@ class Generator(nn.Module):
         return h
 
 
+class FromRGB(nn.Module):
+    def __init__(self, num_channels, ch_out, recurrent=None, equalized=True, spectral=False):
+        super(FromRGB, self).__init__()
+        self.num_channels = num_channels
+        if recurrent is None:
+            self.rnn = None
+        else:
+            self.rnn = get_recurrent_layer(recurrent, num_channels, ch_out // 4)
+        self.fromRGB = NeoPGConv1d(num_channels if recurrent is None else ch_out // 4, ch_out, ksize=1, pixelnorm=False,
+                                   equalized=equalized, spectral=spectral)
+
+    def forward(self, x):
+        if self.rnn is None:
+            return self.fromRGB(x)
+        return self.fromRGB(self.rnn(x))
+
+
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, ksize=3, from_recurrent=None, layer_recurrent=None,
+                 equalized=True, spectral=False, **layer_settings):
         super(DBlock, self).__init__()
-        self.fromRGB = PGConv1d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
-        self.c1 = PGConv1d(ch_in, ch_in, **layer_settings)
-        self.c2 = PGConv1d(ch_in, ch_out, **layer_settings)
+        self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
+        c1 = NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, **layer_settings)
+        if layer_recurrent is None:
+            c2 = NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, **layer_settings)
+        else:
+            c2 = get_recurrent_layer(layer_recurrent, ch_in, ch_out)
+        self.net = nn.Sequential(c1, c2)
 
     def forward(self, x, first=False):
         if first:
             x = self.fromRGB(x)
-        x = self.c1(x)
-        x = self.c2(x)
-        return x
+        return self.net(x)
 
 
 class DLastBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, apply_sigmoid=False, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, initial_size=2, temporal=False, num_stat_channels=1, ksize=3,
+                 from_recurrent=None, layer_recurrent=None, equalized=True, spectral=False, **layer_settings):
         super(DLastBlock, self).__init__()
-        self.fromRGB = PGConv1d(num_channels, ch_in, ksize=1, pad=0, pixelnorm=False)
-        self.net = [MinibatchStddev(), PGConv1d(ch_in + 1, ch_in, **layer_settings),
-                    PGConv1d(ch_in, ch_out, 4, 1, 0, **layer_settings)]
-        if apply_sigmoid:
-            self.net.append(nn.Sigmoid())
+        self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
+        self.net = [MinibatchStddev(temporal, num_stat_channels)]
+        if layer_recurrent is None:
+            self.net.append(
+                NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, **layer_settings))
+        else:
+            self.net.append(get_recurrent_layer(layer_recurrent, ch_in + num_stat_channels, ch_in))
+        self.net.append(
+            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size, pad=0, equalized=equalized, **layer_settings))
         self.net = nn.Sequential(*self.net)
 
     def forward(self, x, first=False):
@@ -441,41 +440,71 @@ class DLastBlock(nn.Module):
 
 
 class MinibatchStddev(nn.Module):
-    def __init__(self):
+    def __init__(self, temporal=False, out_channels=1):
         super(MinibatchStddev, self).__init__()
+        self.temporal = temporal
+        self.out_channels = out_channels
+
+    def calc_mean(self, x, expand=True):
+        mean = torch.mean(x, dim=0, keepdim=True)
+        if not self.temporal:
+            mean = torch.mean(mean, dim=2, keepdim=True)
+        c = mean.size(1)
+        if self.out_channels == c:
+            return mean
+        if self.out_channels == 1:
+            return torch.mean(mean, dim=1, keepdim=True)
+        else:
+            step = c // self.out_channels
+            if expand:
+                return torch.cat(
+                    [torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True).expand(-1, step, -1) for i in
+                     range(self.out_channels)], dim=1)
+            return torch.cat([torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True) for i in
+                              range(self.out_channels)], dim=1)
 
     def forward(self, x):
-        stddev_mean = torch.sqrt(((x - x.mean()) ** 2).mean() + 1.0e-8)
-        new_channel = stddev_mean.expand(x.size(0), 1, x.size(2))
-        h = torch.cat((x, new_channel), dim=1)
-        return h
+        mean = self.calc_mean(x).expand(x.size())
+        y = torch.sqrt(self.calc_mean((x - mean) ** 2, False)).expand(x.size(0), -1, x.size(2))
+        return torch.cat((x, y), dim=1)
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, apply_sigmoid, fmap_base=2048, fmap_decay=1.0, fmap_max=256, downsample='average',
-                 pixelnorm=False, activation='lrelu', dropout=0, batchnorm=False):
+    def __init__(self, dataset_shape, apply_sigmoid, initial_size=2, fmap_base=2048, fmap_max=256, fmap_min=64,
+                 downsample='average', pixelnorm=False, activation='lrelu', dropout=0, do_mode='mul', equalized=True,
+                 spectral_norm=False, kernel_size=3, recurrent_from_rgb=None, layer_recurrent=None, phase_shuffle=0,
+                 temporal_stats=False, num_stat_channels=1):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
         R = int(np.log2(resolution))
-        assert resolution == 2 ** R and resolution >= 4
+        assert resolution == 2 ** R and resolution >= initial_size ** 2
         self.R = R
 
         def nf(stage):
-            return min(int(fmap_base / (2.0 ** (stage * fmap_decay))), fmap_max)
+            return max(min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max), 2)
 
-        layer_settings = {'pixelnorm': pixelnorm, 'act': activation, 'do': dropout, 'bn': batchnorm}
-        self.blocks = nn.ModuleList(
-            [DBlock(nf(i), nf(i - 1), num_channels, **layer_settings) for i in range(R - 1, 1, -1)] + [
-                DLastBlock(nf(1), nf(0), num_channels, apply_sigmoid, **layer_settings)])
-
-        self.linear = nn.Linear(nf(0), 1)
+        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
+                              phase_shuffle=phase_shuffle)
+        last_block = DLastBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
+                                temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
+                                from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent, equalized=equalized,
+                                spectral=spectral_norm, **layer_settings)
+        self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size,
+                                            from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent,
+                                            equalized=equalized, spectral=spectral_norm, **layer_settings) for i in
+                                     range(R - 1, initial_size - 1, -1)] + [last_block])
+        self.linear = nn.Linear(nf(initial_size - 2), 1)
+        if spectral_norm:
+            self.linear = SpectralNorm(self.linear)
+        if apply_sigmoid:
+            self.linear = nn.Sequential(self.linear, nn.Sigmoid())
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
         if downsample == 'average':
             self.downsampler = nn.AvgPool1d(kernel_size=2)
-        else:
+        elif downsample == 'stride':
             self.downsampler = DownSample(scale_factor=2)
 
     def set_depth(self, depth):
