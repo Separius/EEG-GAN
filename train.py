@@ -97,15 +97,15 @@ def main(params):
             params['load_dataset'] = ds_path
         else:
             params['save_dataset'] = ds_path
-    if params['load_dataset']:
+    if params['load_dataset'] and os.path.exists(params['load_dataset']):
         print('loading dataset from file')
         dataset = load_pkl(params['load_dataset'])
     else:
         print('loading dataset from scratch')
         dataset = MyDataset(**params['MyDataset'])
-        if params['save_dataset']:
+        if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')
-            save_pkl(params['save_dataset'], dataset)
+            save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss']

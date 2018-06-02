@@ -1,7 +1,7 @@
-# python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data5.pkl
+# python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data5.pkl --cuda_device 1
 
-cuda_device: 0
 validation_split: 0
+#cuda_device: 0
 #test_mode: false
 #result_dir: 'results'
 #exp_name: 'default'
