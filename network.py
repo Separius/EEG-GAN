@@ -405,9 +405,9 @@ class DBlock(nn.Module):
                  equalized=True, spectral=False, **layer_settings):
         super(DBlock, self).__init__()
         self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
-        c1 = NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, **layer_settings)
+        c1 = NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings)
         if layer_recurrent is None:
-            c2 = NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, **layer_settings)
+            c2 = NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings)
         else:
             c2 = get_recurrent_layer(layer_recurrent, ch_in, ch_out)
         self.net = nn.Sequential(c1, c2)
@@ -426,11 +426,13 @@ class DLastBlock(nn.Module):
         self.net = [MinibatchStddev(temporal, num_stat_channels)]
         if layer_recurrent is None:
             self.net.append(
-                NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, **layer_settings))
+                NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, spectral=spectral,
+                            **layer_settings))
         else:
             self.net.append(get_recurrent_layer(layer_recurrent, ch_in + num_stat_channels, ch_in))
         self.net.append(
-            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size, pad=0, equalized=equalized, **layer_settings))
+            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size, pad=0, equalized=equalized, spectral=spectral,
+                        **layer_settings))
         self.net = nn.Sequential(*self.net)
 
     def forward(self, x, first=False):
@@ -484,7 +486,7 @@ class Discriminator(nn.Module):
         def nf(stage):
             return max(min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max), 2)
 
-        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
+        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode,
                               phase_shuffle=phase_shuffle)
         last_block = DLastBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
                                 temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
