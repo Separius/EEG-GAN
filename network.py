@@ -3,8 +3,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from utils import cudize
-from torch.nn import Parameter
 from torch.nn.init import calculate_gain
+from torch.nn.modules.utils import _single
 
 
 class PhaseShuffle(nn.Module):
@@ -91,70 +91,65 @@ def l2normalize(v, eps=1e-12):
     return v / (v.norm() + eps)
 
 
-class SpectralNorm(nn.Module):
-    def __init__(self, module, name='weight', power_iterations=1):
-        super(SpectralNorm, self).__init__()
-        self.module = module
-        self.name = name
-        self.power_iterations = power_iterations
-        if not self._made_params():
-            self._make_params()
+def max_singular_value(W, u=None, Ip=1):
+    if u is None:
+        u = cudize(torch.FloatTensor(1, W.size(0)).normal_(0, 1))
+    _u = u
+    for _ in range(Ip):
+        _v = l2normalize(torch.matmul(_u, W.data), eps=1e-12)
+        _u = l2normalize(torch.matmul(_v, torch.transpose(W.data, 0, 1)), eps=1e-12)
+    sigma = torch.sum(F.linear(_u, torch.transpose(W.data, 0, 1)) * _v)
+    return sigma, _u
 
-    def _update_u_v(self):
-        u = getattr(self.module, self.name + "_u")
-        v = getattr(self.module, self.name + "_v")
-        w = getattr(self.module, self.name + "_bar")
 
-        height = w.data.shape[0]
-        for _ in range(self.power_iterations):
-            v.data = l2normalize(torch.mv(torch.t(w.view(height, -1).data), u.data))
-            u.data = l2normalize(torch.mv(w.view(height, -1).data, v.data))
+class SNLinear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True):
+        super(SNLinear, self).__init__(in_features, out_features, bias)
+        self.register_buffer('u', cudize(torch.Tensor(1, out_features).normal_()))
 
-        sigma = u.dot(w.view(height, -1).mv(v))
-        setattr(self.module, self.name, w / sigma.expand_as(w))
+    @property
+    def W_(self):
+        w_mat = self.weight.view(self.weight.size(0), -1)
+        sigma, _u = max_singular_value(w_mat, self.u)
+        self.u.copy_(_u)
+        return self.weight / sigma
 
-    def _made_params(self):
-        try:
-            u = getattr(self.module, self.name + "_u")
-            v = getattr(self.module, self.name + "_v")
-            w = getattr(self.module, self.name + "_bar")
-            return True
-        except AttributeError:
-            return False
+    def forward(self, input):
+        return F.linear(input, self.W_, self.bias)
 
-    def _make_params(self):
-        w = getattr(self.module, self.name)
 
-        height = w.data.shape[0]
-        width = w.view(height, -1).data.shape[1]
+class SNConv1d(torch.nn.modules.conv._ConvNd):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True):
+        kernel_size = _single(kernel_size)
+        stride = _single(stride)
+        padding = _single(padding)
+        dilation = _single(dilation)
+        super(SNConv1d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, False,
+                                       _single(0), groups, bias)
+        self.register_buffer('u', cudize(torch.Tensor(1, out_channels).normal_()))
 
-        u = Parameter(w.data.new(height).normal_(0, 1), requires_grad=False)
-        v = Parameter(w.data.new(width).normal_(0, 1), requires_grad=False)
-        u.data = l2normalize(u.data)
-        v.data = l2normalize(v.data)
-        w_bar = Parameter(w.data)
+    @property
+    def W_(self):
+        w_mat = self.weight.view(self.weight.size(0), -1)
+        sigma, _u = max_singular_value(w_mat, self.u)
+        self.u.copy_(_u)
+        return self.weight / sigma
 
-        del self.module._parameters[self.name]
-
-        self.module.register_parameter(self.name + "_u", u)
-        self.module.register_parameter(self.name + "_v", v)
-        self.module.register_parameter(self.name + "_bar", w_bar)
-
-    def forward(self, *args):
-        self._update_u_v()
-        return self.module.forward(*args)
+    def forward(self, input):
+        return F.conv1d(input, self.W_, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
 class EqualizedConv1d(nn.Module):
     def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False):
         super(EqualizedConv1d, self).__init__()
-        self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
+        if is_spectral:
+            self.conv = SNConv1d(c_in, c_out, k_size, stride, padding, bias=False)
+        else:
+            self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
         self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
-        if is_spectral:
-            self.conv = SpectralNorm(self.conv)
 
     def forward(self, x):
         x = self.conv(x * self.scale)
@@ -287,9 +282,10 @@ class NeoPGConv1d(nn.Module):
         if equalized:
             conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral)
         else:
-            conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
             if spectral:
-                conv = SpectralNorm(conv)
+                conv = SNConv1d(ch_in, ch_out, ksize, 1, pad)
+            else:
+                conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
         self.net = [conv]
         if act:
             if act == 'prelu':
@@ -502,9 +498,10 @@ class Discriminator(nn.Module):
                                             from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent,
                                             equalized=equalized, spectral=spectral_norm, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
-        self.linear = nn.Linear(nf(initial_size - 2), 1)
         if spectral_norm:
-            self.linear = SpectralNorm(self.linear)
+            self.linear = SNLinear(nf(initial_size - 2), 1)
+        else:
+            self.linear = nn.Linear(nf(initial_size - 2), 1)
         if apply_sigmoid:
             self.linear = nn.Sequential(self.linear, nn.Sigmoid())
         self.depth = 0

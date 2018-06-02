@@ -46,7 +46,7 @@ OutputGenerator.output_snapshot_ticks: 5
 Generator.upsample: 'linear' #linear, nearest
 Generator.dropout: 0.1
 Generator.do_mode: 'mul' #mul, drop, prop
-Generator.spectral_norm: false
+#Generator.spectral_norm: false
 #Generator.ch_by_ch: false
 #Generator.fmap_base: 2048
 #Generator.fmap_max: 256
@@ -63,7 +63,7 @@ Generator.spectral_norm: false
 
 Discriminator.dropout: 0.1
 Discriminator.do_mode: 'mul' #mul, drop, prop
-Discriminator.spectral_norm: false
+#Discriminator.spectral_norm: false
 #Discriminator.fmap_base: 2048
 #Discriminator.fmap_max: 256
 #Discriminator.fmap_min: 64
