@@ -36,7 +36,7 @@ default_params = OrderedDict(
     iwass_epsilon=0.001,
     save_dataset='',
     load_dataset='',
-    loss_type='wgan_theirs',
+    loss_type='wgan_gp',
     label_smoothing=0.05,
     use_mixup=False,
     apply_sigmoid=False,
@@ -129,11 +129,9 @@ def main(params):
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
-        # G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
-        G = Generator(dataset.shape, **params['Generator'])
-        D = Discriminator(dataset.shape, params['apply_sigmoid'], **params['Discriminator'])
-        # D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], params['apply_sigmoid'],
-        #                   **params['Discriminator'])
+        G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
+        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], params['apply_sigmoid'],
+                          **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
@@ -190,7 +188,7 @@ def main(params):
 
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
                          grad_lambda=params['grad_lambda'], label_smoothing=params['label_smoothing'],
-                         use_mixup=params['use_mixup'], apply_sigmoid=params['apply_sigmoid'])
+                         use_mixup=params['use_mixup'], apply_sigmoid=params['apply_sigmoid'], LAMBDA_2=params['LAMBDA_2'])
     G_loss_fun = partial(G_loss, loss_type=params['loss_type'], label_smoothing=params['label_smoothing'],
                          apply_sigmoid=params['apply_sigmoid'])
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun,

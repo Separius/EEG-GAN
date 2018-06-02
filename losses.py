@@ -59,7 +59,7 @@ def calc_grad(x_hat, pred_hat):
 
 
 def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label_smoothing, use_mixup,
-                  apply_sigmoid, iwass_epsilon):
+                  apply_sigmoid, iwass_epsilon, d_last_real, d_real2, d_last_real2, LAMBDA_2):
     if loss_type == 'square':
         x, y = merge_data(d_real, d_fake, label_smoothing)
         d_loss = d_loss_helper(x, y, lambda pred, target: torch.mean((pred - target) ** 2), use_mixup)
@@ -72,28 +72,32 @@ def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label
         gradients = calc_grad(x_hat, pred_hat)
         gp = grad_lambda * ((gradients.norm(2, dim=1) - 1.0) ** 2).mean()
         d_loss = d_loss + gp
-    elif loss_type == 'wgan_gp':
+    elif loss_type == 'hinge':
+        x, y = merge_data(d_real, d_fake, label_smoothing)
+        y = 2 * y - 1.0
+        d_loss = d_loss_helper(x, y, lambda pred, target: -2.0 * torch.mean(torch.clamp(x * y - 1.0, max=0.0)), use_mixup)
+    else:
         d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_epsilon
         g = calc_grad(x_hat, pred_hat).view(x_hat.size(0), -1)
         gp = ((g.norm(p=2, dim=1) - 1) ** 2).mean() * grad_lambda
         d_loss = d_loss + gp
-    elif loss_type == 'hinge':
-        x, y = merge_data(d_real, d_fake, label_smoothing)
-        y = 2 * y - 1.0
-        d_loss = d_loss_helper(x, y, lambda pred, target: -2.0 * torch.mean(torch.clamp(x * y - 1.0, max=0.0)),
-                               use_mixup)
+        if loss_type == 'wgan_ct' and d_real2 is not None:
+            CT = LAMBDA_2 * (d_real - d_real2) ** 2
+            CT = CT + LAMBDA_2 * 0.1 * torch.mean((d_last_real - d_last_real2) ** 2, dim=1)
+            # Factor_M = 0; CT = CT - Factor_M
+            d_loss = d_loss + torch.mean(torch.clamp(CT, min=0))
     return d_loss.unsqueeze(0)
 
 
 def disc_loss(d_fake, d_real, disc, real, fake, loss_type, iwass_epsilon, grad_lambda, label_smoothing, use_mixup,
-              apply_sigmoid):
+              apply_sigmoid, d_last_real, d_real2, d_last_real2, LAMBDA_2):
     if loss_type == 'dragan':
         alpha = get_mixing_factor(real.size(0))
         x_hat = Variable(
             alpha * real.data + (1.0 - alpha) * (real.data + 0.5 * real.data.std() * torch.rand(real.size())),
             requires_grad=True)
         pred_hat, _ = disc(x_hat)
-    elif loss_type == 'wgan_gp':
+    elif loss_type == 'wgan_gp' or loss_type == 'wgan_ct':
         alpha = get_mixing_factor(real.size(0))
         x_hat = Variable(alpha * real.data + (1.0 - alpha) * fake.data, requires_grad=True)
         pred_hat, _ = disc(x_hat)
@@ -101,7 +105,7 @@ def disc_loss(d_fake, d_real, disc, real, fake, loss_type, iwass_epsilon, grad_l
         x_hat = None
         pred_hat = None
     loss = per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label_smoothing, use_mixup,
-                         apply_sigmoid, iwass_epsilon)
+                         apply_sigmoid, iwass_epsilon, d_last_real, d_real2, d_last_real2, LAMBDA_2)
     return loss
 
 
@@ -128,14 +132,18 @@ def G_loss(G, D, fake_latents_in, loss_type, label_smoothing, apply_sigmoid):
 
 
 def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad_lambda, label_smoothing, use_mixup,
-           apply_sigmoid):
+           apply_sigmoid, LAMBDA_2):
     D.zero_grad()
     G.zero_grad()
     x_real = Variable(real_images_in)
-    d_real, _ = D(x_real)
+    d_real, d_last_real = D(x_real)
+    if D.training and loss_type == 'wgan_ct':
+        d_real2, d_last_real2 = D(x_real)
+    else:
+        d_real2, d_last_real2 = None, None
     with torch.no_grad():
         z = Variable(fake_latents_in)
     g_ = Variable(G(z).data)
     d_fake, _ = D(g_)
     return disc_loss(d_fake, d_real, D, x_real, g_, loss_type, iwass_epsilon, grad_lambda, label_smoothing, use_mixup,
-                     apply_sigmoid)
+                     apply_sigmoid, d_last_real, d_real2, d_last_real2, LAMBDA_2)

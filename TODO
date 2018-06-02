@@ -3,6 +3,7 @@ Low Freq & Seq Length(Hard):
     progressive Wavenet
     self attention :: AddToWhichLayer&When?
 Multi Channel:
+    Gang Mode
     Increase to 16 channels
     Channel Embedding(generator, discriminator)
 Validation:

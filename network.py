@@ -327,7 +327,7 @@ class GBlock(nn.Module):  # TODO work on the recurrent mode
 
 
 class Generator(nn.Module):
-    def __init__(self, dataset_shape, initial_size=2, fmap_base=2048, fmap_max=256, fmap_min=16, latent_size=256,
+    def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=16, latent_size=256,
                  upsample='nearest', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0,
                  do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3,
                  recurrent_to_rgb=None, layer_recurrent=None, phase_shuffle=0):
@@ -472,7 +472,7 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, apply_sigmoid, initial_size=2, fmap_base=2048, fmap_max=256, fmap_min=64,
+    def __init__(self, dataset_shape, initial_size, apply_sigmoid, fmap_base=2048, fmap_max=256, fmap_min=64,
                  downsample='average', pixelnorm=False, activation='lrelu', dropout=0, do_mode='mul', equalized=True,
                  spectral_norm=False, kernel_size=3, recurrent_from_rgb=None, layer_recurrent=None, phase_shuffle=0,
                  temporal_stats=False, num_stat_channels=1):
