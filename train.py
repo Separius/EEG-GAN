@@ -46,7 +46,8 @@ default_params = OrderedDict(
     LAMBDA_2=2,
     weight_decay=0,
     optimizer='adam',  # or amsgrad or asgd or rmsprop or ttur
-    config_file=None
+    config_file=None,
+    loss_of_mean=False
 )
 
 
