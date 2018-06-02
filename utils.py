@@ -3,9 +3,6 @@ import os
 import inspect
 from pickle import load, dump
 
-is_torch4 = torch.__version__ == '0.4.0'
-
-
 def generate_samples(generator, gen_input):
     out = generator.forward(gen_input)
     out = out.cpu().data.numpy()
@@ -100,4 +97,4 @@ def var(tensor):
 
 
 def ll(loss):
-    return loss.data.cpu().item() if is_torch4 else loss.data.cpu()[0]
+    return loss.data.cpu().item()

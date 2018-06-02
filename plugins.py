@@ -7,7 +7,7 @@ import numpy as np
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
-from utils import generate_samples, cudize, is_torch4
+from utils import generate_samples, cudize
 from scipy import misc
 import matplotlib
 
@@ -113,9 +113,7 @@ class EfficientLossMonitor(LossMonitor):
 
     def _get_value(self, iteration, *args):
         val = args[self.loss_no] if self.loss_no < 2 else args[self.loss_no].mean()
-        if is_torch4:
-            return val.item()
-        return val.data[0]
+        return val.item()
 
 
 class AbsoluteTimeMonitor(Plugin):

@@ -1,8 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
-from utils import cudize, is_torch4
-from torch.nn.init import kaiming_normal, calculate_gain
+from torch.nn.init import calculate_gain
 
 
 def pixel_norm(h):
@@ -41,16 +40,13 @@ class EqualizedConv1d(nn.Module):
     def __init__(self, c_in, c_out, k_size, stride=1, padding=0):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
-        if is_torch4:
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
-        else:
-            kaiming_normal(self.conv.weight, a=calculate_gain('conv1d'))
+        torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
-        self.scale = (torch.mean(self.conv.weight.data ** 2)) ** 0.5
+        self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
 
     def forward(self, x):
-        x = self.conv(x.mul(self.scale))
+        x = self.conv(x * self.scale)
         return x + self.bias.view(1, -1, 1).expand_as(x)
 
 

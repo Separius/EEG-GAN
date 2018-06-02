@@ -1,7 +1,7 @@
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
 from network import Generator, Discriminator
-from wgan_gp_loss import G_loss, D_loss
+from losses import G_loss, D_loss
 from functools import partial
 from trainer import Trainer
 import dataset

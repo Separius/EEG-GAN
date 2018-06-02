@@ -1,5 +1,5 @@
 import heapq
-from utils import cudize, is_torch4
+from utils import cudize
 import torch
 
 
@@ -74,10 +74,7 @@ class Trainer(object):
 
     def _clip(self, model):
         if self.grad_clip:
-            if is_torch4:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
-            else:
-                torch.nn.utils.clip_grad_norm(model.parameters(), self.grad_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
 
     def train(self):
         fake_latents_in = cudize(self.random_latents_generator())

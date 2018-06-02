@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Variable, grad
-from utils import var, is_torch4, cudize, ll
+from utils import var, cudize, ll
 import numpy as np
 import torch.nn.functional as F
 
@@ -108,9 +108,7 @@ def per_disc_loss(d_fake, d_real, pred_hat, x_hat, loss_type, grad_lambda, label
         D_real_loss = -d_real + d_real ** 2 * iwass_epsilon
         D_fake_loss = d_fake
         d_loss = (D_fake_loss + D_real_loss).mean()
-    if is_torch4:
-        d_loss = d_loss.unsqueeze(0)
-    return d_loss
+    return d_loss.unsqueeze(0)
 
 
 def disc_loss(d_fake, d_real, disc, real, fake, loss_type, iwass_epsilon, iwass_target, grad_lambda, label_smoothing,
@@ -146,9 +144,7 @@ def per_gen_loss(d_fake, loss_type, label_smoothing, loss_of_mean, apply_sigmoid
         g_loss = cross_entropy(d_fake, var(torch.ones(d_fake.size(0))), apply_sigmoid)
     else:
         g_loss = -d_fake.mean()
-    if is_torch4:
-        g_loss = g_loss.unsqueeze(0)
-    return g_loss
+    return g_loss.unsqueeze(0)
 
 
 def G_loss(G, D, fake_latents_in, loss_type, label_smoothing, loss_of_mean, apply_sigmoid):
@@ -165,11 +161,8 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, iwas
     G.zero_grad()
     x_real = Variable(real_images_in)
     d_real = D(x_real)
-    if is_torch4:
-        with torch.no_grad():
-            z = Variable(fake_latents_in)
-    else:
-        z = Variable(fake_latents_in, volatile=True)
+    with torch.no_grad():
+        z = Variable(fake_latents_in)
     g_ = Variable(G(z).data)
     d_fake = D(g_)
     return disc_loss(d_fake, d_real, D, x_real, g_, loss_type, iwass_epsilon, iwass_target, grad_lambda,
