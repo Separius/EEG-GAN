@@ -1,12 +1,12 @@
 import heapq
-from utils import cudize
+from utils import cudize, trainable_params
 import torch
 
 
 class Trainer(object):
 
     def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, dataiter, random_latents_generator,
-                 grad_clip=None, D_training_repeats=1, tick_nimg_default=2 * 1000, resume_nimg=0):
+                 grad_clip=None, D_training_repeats=1, tick_kimg_default=2, resume_nimg=0):
         self.D = D
         self.G = G
         self.D_loss = D_loss
@@ -19,7 +19,7 @@ class Trainer(object):
         self.cur_nimg = resume_nimg
         self.random_latents_generator = random_latents_generator
         self.tick_start_nimg = self.cur_nimg
-        self.tick_duration_nimg = tick_nimg_default
+        self.tick_duration_nimg = int(tick_kimg_default * 1000)
         self.iterations = 0
         self.cur_tick = 0
         self.time = 0
@@ -61,20 +61,23 @@ class Trainer(object):
     def run(self, total_kimg=1):
         for q in self.plugin_queues.values():
             heapq.heapify(q)
-
-        while self.cur_nimg < total_kimg * 1000:
-            self.train()
-            if self.cur_nimg >= self.tick_start_nimg + self.tick_duration_nimg or self.cur_nimg >= total_kimg * 1000:
-                self.cur_tick += 1
-                self.tick_start_nimg = self.cur_nimg
-                self.stats['kimg_stat']['val'] = self.cur_nimg / 1000.
-                self.stats['tick_stat']['val'] = self.cur_tick
-                self.call_plugins('epoch', self.cur_tick)
+        total_nimg = int(total_kimg * 1000)
+        try:
+            while self.cur_nimg < total_nimg:
+                self.train()
+                if self.cur_nimg >= self.tick_start_nimg + self.tick_duration_nimg or self.cur_nimg >= total_nimg:
+                    self.cur_tick += 1
+                    self.tick_start_nimg = self.cur_nimg
+                    self.stats['kimg_stat']['val'] = self.cur_nimg / 1000.
+                    self.stats['tick_stat']['val'] = self.cur_tick
+                    self.call_plugins('epoch', self.cur_tick)
+        except KeyboardInterrupt:
+            return
         self.call_plugins('end', 1)
 
     def _clip(self, model):
         if self.grad_clip:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+            torch.nn.utils.clip_grad_norm_(trainable_params(model), self.grad_clip)
 
     def train(self):
         fake_latents_in = cudize(self.random_latents_generator())

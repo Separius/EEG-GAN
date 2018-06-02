@@ -7,9 +7,10 @@ import numpy as np
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
-from utils import generate_samples, cudize
+from utils import generate_samples, cudize, get_features, get_accuracy, ll
 from scipy import misc
 import matplotlib
+import imageio
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -21,14 +22,15 @@ class DepthManager(Plugin):
                  create_dataloader_fun,
                  create_rlg,
                  max_depth,
+                 tick_kimg_default,
+                 depth_offset=0,
                  minibatch_default=32,
-                 minibatch_overrides={6: 32, 7: 32, 8: 32},
-                 tick_kimg_default=20,
-                 tick_kimg_overrides={3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4},
-                 lod_training_nimg=400 * 1000,
-                 lod_transition_nimg=100 * 1000,
-                 max_lod=None,  # calculate and put values if you want to compare to original impl lod
-                 depth_offset=None):
+                 minibatch_overrides={6: 32, 7: 32, 8: 32},  # starts from depth_offset+1
+                 tick_kimg_overrides={3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4},  # starts from depth_offset+1
+                 lod_training_kimg=400,
+                 lod_training_kimg_overrides={2: 20, 4: 40, 5: 80, 6: 200},  # starts from depth_offset+1
+                 lod_transition_kimg=100,
+                 lod_transition_kimg_overrides={2: 5, 4: 8, 5: 16, 6: 40}):  # starts from depth_offset+1
         super(DepthManager, self).__init__([(1, 'iteration')])
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
@@ -36,61 +38,74 @@ class DepthManager(Plugin):
         self.tick_kimg_overrides = tick_kimg_overrides
         self.create_dataloader_fun = create_dataloader_fun
         self.create_rlg = create_rlg
-        self.lod_training_nimg = lod_training_nimg
-        self.lod_transition_nimg = lod_transition_nimg
         self.trainer = None
         self.depth = -1
         self.alpha = -1
-        self.max_depth = max_depth
-        self.max_lod = max_lod
         self.depth_offset = depth_offset
+        self.max_depth = max_depth
+        self.alpha_map = self.pre_compute_alpha_map(depth_offset, max_depth, lod_training_kimg,
+                                                    lod_training_kimg_overrides, lod_transition_kimg,
+                                                    lod_transition_kimg_overrides)
 
     def register(self, trainer):
         self.trainer = trainer
         self.trainer.stats['minibatch_size'] = self.minibatch_default
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
-        if self.max_lod is not None and self.depth_offset is not None:
-            self.trainer.stats['lod'] = {'log_name': 'lod', 'log_epoch_fields': ['{val:.2f}'], 'val': self.lod}
         self.iteration()
 
-    @property
-    def lod(self):
-        if self.max_lod is not None and self.depth_offset is not None:
-            return self.max_lod - self.depth_offset - self.depth - self.alpha + 1
-        return -1
+    @staticmethod
+    def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
+                              lod_transition_kimg, lod_transition_kimg_overrides):
+        points = []
+        pointer = 0
+        for i in range(start_depth, max_depth):
+            pointer += int(lod_training_kimg_overrides.get(i + 1, lod_training_kimg) * 1000)
+            points.append(pointer)
+            pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
+            points.append(pointer)
+        return points
+
+    def calc_progress(self):
+        cur_nimg = self.trainer.cur_nimg
+        depth = self.depth_offset
+        alpha = 1.0
+        for i, point in enumerate(self.alpha_map):
+            if cur_nimg == point:
+                break
+            if cur_nimg > point and i % 2 == 0:
+                depth += 1
+            if cur_nimg < point and i % 2 == 1:
+                alpha = (cur_nimg - self.alpha_map[i - 1]) / (point - self.alpha_map[i - 1])
+                break
+            if cur_nimg < point:
+                break
+        depth = min(self.max_depth, depth)
+        return depth, alpha
 
     def iteration(self, *args):
-        cur_nimg = self.trainer.cur_nimg
-        full_passes, remaining_nimg = divmod(cur_nimg, self.lod_training_nimg + self.lod_transition_nimg)
-        train_passes_rem, remaining_nimg = divmod(remaining_nimg, self.lod_training_nimg)
-        depth = min(self.max_depth, full_passes + train_passes_rem)
-        alpha = remaining_nimg / self.lod_transition_nimg \
-            if train_passes_rem > 0 and full_passes + train_passes_rem == depth else 1.0
+        depth, alpha = self.calc_progress()
         dataset = self.trainer.dataset
         if depth != self.depth:
-            self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
+            self.trainer.D.set_depth(depth)
+            self.trainer.G.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth, self.minibatch_default)
             self.trainer.dataiter = iter(self.create_dataloader_fun(minibatch_size))
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
-            # print(self.trainer.random_latents_generator().size())
             tick_duration_kimg = self.tick_kimg_overrides.get(depth, self.tick_kimg_default)
-            self.trainer.tick_duration_nimg = tick_duration_kimg * 1000
+            self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
-            self.trainer.D.alpha = self.trainer.G.alpha = dataset.alpha = alpha
+            self.trainer.D.set_alpha(alpha)
+            self.trainer.G.alpha = dataset.alpha = alpha
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
-        if self.max_lod is not None and self.depth_offset is not None:
-            self.trainer.stats['lod']['val'] = self.lod
 
 
 class LRScheduler(Plugin):
 
-    def __init__(self,
-                 lr_scheduler_d,
-                 lr_scheduler_g):
+    def __init__(self, lr_scheduler_d, lr_scheduler_g):
         super(LRScheduler, self).__init__([(1, 'iteration')])
         self.lrs_d = lr_scheduler_d
         self.lrs_g = lr_scheduler_g
@@ -150,7 +165,7 @@ class SaverPlugin(Plugin):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
-        self._best_val_loss = float('+inf')
+        self._best_val_loss = float('+inf')  # TODO use the validator's loss for this
 
     def register(self, trainer):
         self.trainer = trainer
@@ -163,8 +178,7 @@ class SaverPlugin(Plugin):
                 model,
                 os.path.join(
                     self.checkpoints_path,
-                    self.last_pattern.format(name,
-                                             '{:06}'.format(self.trainer.cur_nimg // 1000))
+                    self.last_pattern.format(name, '{:06}'.format(self.trainer.cur_nimg // 1000))
                 )
             )
 
@@ -179,23 +193,25 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, samples_count=6, output_snapshot_ticks=3, res_len=256):
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, samples_count=6, output_snapshot_ticks=3,
+                 res_len=256):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
-        self.max_freq = 80
+        self.max_freq = max_freq
 
     def register(self, trainer):
         self.trainer = trainer
 
-    @staticmethod
-    def save_plot(seq_len, frequency, epoch, checkpoints_dir, generated):
+    def get_images(self, seq_len, frequency, epoch, generated):
+        generated = self.trainer.dataset.inverse_transform(generated)
         num_channels = generated.shape[1]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
+        images = []
         for index in range(len(generated)):
             fig, (axs) = plt.subplots(num_channels, 2)
             if num_channels == 1:
@@ -213,15 +229,114 @@ class OutputGenerator(Plugin):
             fig.canvas.draw()
             image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
             image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-            misc.imsave(os.path.join(checkpoints_dir, '{epoch}_{index}.png'.format(epoch=epoch, index=index)), image)
+            images.append(image)
             plt.close(fig)
+        return images
 
     def epoch(self, epoch_index):
         gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        self.save_plot(res_len, frequency, epoch_index, self.checkpoints_dir, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        for i, image in enumerate(images):
+            misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
+
+    def end(self, *args):
+        self.epoch(*args)
+
+
+class FixedNoise(OutputGenerator):
+    def __init__(self, *args, **kwargss):
+        super(FixedNoise, self).__init__(*args, **kwargss)
+        self.gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
+
+    def epoch(self, epoch_index):
+        out = generate_samples(self.trainer.G, self.gen_input)
+        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        res_len = min(self.res_len, out.shape[2])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        for i, image in enumerate(images):
+            misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
+
+
+class GifGenerator(OutputGenerator):
+
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, num_frames=50,
+                 fps=5):
+        super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, num_frames,
+                                           output_snapshot_ticks, res_len)
+        self.fps = fps
+
+    def epoch(self, epoch_index):
+        gen_input = self.sample_fn(2).numpy()
+        gen_input = self.slerp(np.arange(self.samples_count) / self.samples_count, gen_input[0], gen_input[1])
+        gen_input = cudize(Variable(torch.from_numpy(gen_input.astype(np.float32))))
+        out = generate_samples(self.trainer.G, gen_input)
+        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        res_len = min(self.res_len, out.shape[2])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        imageio.mimsave(os.path.join(self.checkpoints_dir, '{}.gif'.format(epoch_index)), images, fps=self.fps)
+
+    @staticmethod
+    def slerp(val, low, high):
+        omega = np.arccos(np.clip(np.dot(low / np.linalg.norm(low), high / np.linalg.norm(high)), -1, 1))
+        so = np.sin(omega)
+        if so == 0:
+            return np.outer(1.0 - val, low) + np.outer(val, high)
+        return np.outer(np.sin((1.0 - val) * omega) / so, low) + np.outer(np.sin(val * omega) / so, high)
+
+
+class Validator(Plugin):
+    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=4):
+        super(Validator, self).__init__([(1, 'epoch'), (1, 'end')])
+        self.sample_fn = sample_fn
+        self.valid_set = valid_set
+        self.real_features = None
+        self.last_depth = None
+        self.output_snapshot_ticks = output_snapshot_ticks
+
+    def get_real_features(self):
+        if self.last_depth == self.trainer.D.depth:
+            return self.real_features
+        self.real_features = get_features(torch.cat([batch for batch in self.valid_set], dim=0))
+        self.last_depth = self.trainer.D.depth
+        return self.real_features
+
+    def register(self, trainer):
+        self.trainer = trainer
+        self.trainer.stats['validation'] = {'log_format': ':.4f'}
+
+    def update_stats(self, new_dict):
+        self.stats = new_dict
+        for k, v in new_dict.items():
+            self.trainer.stats['validation'][k] = v
+
+    def epoch(self, epoch):
+        if len(self.valid_set) == 0:
+            return
+        if (epoch - 1) % self.output_snapshot_ticks != 0:
+            self.update_stats(self.stats)
+            return
+        self.trainer.G.eval()
+        self.trainer.D.eval()
+        fakes = []
+        d_loss = 0.0
+        for batch in self.valid_set:
+            x_real = cudize(batch)
+            x_fake = self.trainer.G(cudize(Variable(self.sample_fn(x_real.shape[0])))).detach()
+            fakes.append(x_fake)
+            d_loss += ll(
+                self.trainer.D_loss(self.trainer.D, self.trainer.G, x_real, cudize(self.sample_fn(x_real.shape[0]))))
+            del x_real, x_fake
+        d_loss /= len(self.valid_set)
+        fakes = get_features(torch.cat(fakes, dim=0).data)
+        reals = self.get_real_features()
+        self.trainer.G.train()
+        self.trainer.D.train()
+        valid_dict = {'d_loss': d_loss}
+        valid_dict.update(get_accuracy(reals, fakes))
+        self.update_stats(valid_dict)
 
     def end(self, *args):
         self.epoch(*args)
