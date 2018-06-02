@@ -528,5 +528,5 @@ class Discriminator(nn.Module):
             h = self.blocks[-i](h)
             if i > 1:
                 h = self.downsampler(h)
-        h = self.linear(h.squeeze(-1))
-        return h
+        h = h.squeeze(-1)
+        return self.linear(h), h

@@ -46,8 +46,7 @@ default_params = OrderedDict(
     LAMBDA_2=2,
     weight_decay=0,
     optimizer='adam',  # or amsgrad or asgd or rmsprop or ttur
-    config_file=None,
-    loss_of_mean=False
+    config_file=None
 )
 
 
@@ -191,10 +190,9 @@ def main(params):
 
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
                          grad_lambda=params['grad_lambda'], label_smoothing=params['label_smoothing'],
-                         use_mixup=params['use_mixup'], apply_sigmoid=params['apply_sigmoid'],
-                         loss_of_mean=params['loss_of_mean'], iwass_target=1.0)
+                         use_mixup=params['use_mixup'], apply_sigmoid=params['apply_sigmoid'])
     G_loss_fun = partial(G_loss, loss_type=params['loss_type'], label_smoothing=params['label_smoothing'],
-                         apply_sigmoid=params['apply_sigmoid'], loss_of_mean=params['loss_of_mean'])
+                         apply_sigmoid=params['apply_sigmoid'])
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun,
                       opt_d, opt_g, dataset, iter(get_dataloader(mb_def)), rl(mb_def), **params['Trainer'])
     max_depth = min(G.max_depth, D.max_depth)
