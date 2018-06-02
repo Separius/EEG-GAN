@@ -19,8 +19,6 @@ import yaml
 from argparse import ArgumentParser
 from collections import OrderedDict
 
-torch.manual_seed(1337)
-
 default_params = OrderedDict(
     result_dir='results',
     exp_name='exp_name',
@@ -242,6 +240,8 @@ if __name__ == "__main__":
         params.update(yaml.load(open(params['config_file'], 'r')))
     # yaml.dump(params, open('{}.yml'.format(params['exp_name']), 'w'))
     params = get_structured_params(params)
+    torch.manual_seed(params['random_seed'])
     if torch.cuda.is_available():
         torch.cuda.set_device(params['cuda_device'])
+        torch.cuda.manual_seed_all(params['random_seed'])
     main(params)
