@@ -29,9 +29,11 @@ class MyDataset(Dataset):
         self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
         for i in range(num_files):
             for j in range(num_channels):
-                with open('{}_{}.txt'.format(self.all_files[i][:-6], j+1)) as f:
+                with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
                     tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
-                    self.datas[i][j, :] = ((tmp - tmp.min()) / (tmp.max() - tmp.min())) * 2.0 - 1.0
+                    self.datas[i][j, :] = tmp
+                self.datas[i] = ((self.datas[i] - self.datas[i].min()) / (
+                            self.datas[i].max() - self.datas[i].min())) * 2.0 - 1.0
         self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.description = {
