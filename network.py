@@ -146,13 +146,15 @@ class SpectralNorm(nn.Module):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, stride=1, padding=0):
+    def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
         self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
+        if is_spectral:
+            self.conv = SpectralNorm(self.conv)
 
     def forward(self, x):
         x = self.conv(x * self.scale)
@@ -282,9 +284,13 @@ class NeoPGConv1d(nn.Module):
                  act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
-        conv = EqualizedConv1d if equalized else nn.Conv1d
-        conv = conv(ch_in, ch_out, ksize, 1, pad)
-        self.net = [SpectralNorm(conv) if spectral else conv]
+        if equalized:
+            conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral)
+        else:
+            conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
+            if spectral:
+                conv = SpectralNorm(conv)
+        self.net = [conv]
         if act:
             if act == 'prelu':
                 self.net.append(nn.PReLU(num_parameters=ch_out))
