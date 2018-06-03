@@ -1,33 +1,23 @@
-Low Freq & Seq Length(Hard):
-    progressive  dilated RNN :: Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred
-    progressive Wavenet
-    self attention :: AddToWhichLayer&When?
-Multi Channel:
-    Gang Mode
-    Increase to 16 channels
-    Channel Embedding(generator, discriminator)
-Validation:
-    show that Disc(concatenated parts) == fake
-    train on real test on fake (abnormal / 6 classes / seizure)
-    train on fake test on real
-    Connection Network (restore Z from data ||z-C(D(z))|| )
-    use the easy classifier(validation) results for both D and (G, D)
-    stats MMD: https://github.com/ratschlab/RGAN
-Differential Privacy
-    https://github.com/alps-lab/dpgan
-    https://github.com/greenelab/SPRINT_gan
-    https://github.com/ratschlab/RGAN
-    https://github.com/tensorflow/models/tree/master/research/differential_privacy
-Condition:
-    User Embedding
-    Easy meta-data(age, sex)
-    SemiSupervised InfoGAN: https://github.com/spurra/ss-infogan
-    AcGan: https://github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py
-    Activation Maximization: https://github.com/ZhimingZhou/AM-GAN
-    Class Splitting GAN: https://github.com/CIFASIS/splitting_gan
-    Projection(yW . x): https://github.com/pfnet-research/sngan_projection
-Misc:
-    Quantization => RL loss
-    Wavenet for prediction: https://github.com/r9y9/wavenet_vocoder
-    SampleRNN for prediction: https://github.com/deepsound-project/samplernn-pytorch
-    Test on audio(vs wavegan): https://github.com/chrisdonahue/wavegan
+SpectralNorm => no when double backprop, test it on hinge and heuristic
+Losses => fully test wgan_gp, wgan_ct, hinge, heuristic; enhance them with mixup(with custom alpha) and label smoothing, mean_loss vs loss_mean
+PhaseShift => make it work
+BatchNorm => must implement conditional batch norm in G (even with SN)
+Validation => use the result in saver and early stopping?, add differentiable matlab features?
+SeqLen => play with depth manager's initial depth, play with ds'initial depth
+Config => better config reader and also experiment manager and hyper param search, better test_mode(print everything)
+Optimizer => which optimizer to use with what lr and scheduler and how much weight decay, ttur config from self attention paper
+Sizes => batch size heuristics, feature number of G/D(force their equality), latent size
+Training => training and transition size for each stage heuristics
+Resize => find the best upsampler, find the best down sampler
+Dropout => what dropout for D, how much dropout for D, what dropout for G, how much dropout for G
+KernelSize => best kernel size for D/G
+I/O => channel by channel output, recurrent to rgb, recurrent from rgb
+Recurrent => each layer as a multi-layer rnn, initial layer of G as rnn, initial layer of D as rnn, must change data reader then(dynamic length), which cell type?
+DataSet => increase to 16 channels, per_user or global, none or pca or ica, use_abs or max-min
+Attention => add self attention to D, add self attention to G, where to add them?
+MiscI => connection network(restore Z from data ||z-C(D(G(z)))||), dp training(github.com/ratschlab/RGAN)
+MiscII => d(concatenated parts) == fake, mixed classifiers(abnormal / 6 classes), stats mmd(github.com/ratschlab/RGAN)
+MiscIII => wavenet or samplernn + trained d as semantic loss, test same net on audio(4x the freq at each stage)
+Stats => temporal or not, num of channels
+progressive dilated RNN or Wavenet/TCN ==> Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred + AutoRegressive ; what is alpha in here? -> two things, at last layer(repeat vs get output of net) and at first layer, get z directly or from the new layer
+Condition ==> on User Embedding or Easy meta-data(age, sex) or all ; with SemiSupervised InfoGAN(github.com/spurra/ss-infogan) or AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py) or Activation Maximization(github.com/ZhimingZhou/AM-GAN) or Class Splitting GAN(github.com/CIFASIS/splitting_gan) or Projection(yW . x)(github.com/pfnet-research/sngan_projection)

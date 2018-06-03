@@ -3,7 +3,8 @@ __pycache__/
 piano/
 results/
 .ropeproject/
-data.gen
 *.yml
 !defaults.yml
-!test.yml
+data/
+configs/
+*.pkl
