@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 from utils import cudize
 from torch.nn.init import calculate_gain
-from torch.nn.modules.utils import _single
+from spectral_norm import spectral_norm as spectral_norm_wrapper
 
 
 class PhaseShuffle(nn.Module):
@@ -87,65 +87,12 @@ class ScaledTanh(nn.Tanh):
         return super().forward(x * self.scale)
 
 
-def l2normalize(v, eps=1e-12):
-    return v / (v.norm() + eps)
-
-
-def max_singular_value(W, u=None, Ip=1):
-    if u is None:
-        u = cudize(torch.FloatTensor(1, W.size(0)).normal_(0, 1))
-    _u = u
-    for _ in range(Ip):
-        _v = l2normalize(torch.matmul(_u, W.data), eps=1e-12)
-        _u = l2normalize(torch.matmul(_v, torch.transpose(W.data, 0, 1)), eps=1e-12)
-    sigma = torch.sum(F.linear(_u, torch.transpose(W.data, 0, 1)) * _v)
-    return sigma, _u
-
-
-class SNLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True):
-        super(SNLinear, self).__init__(in_features, out_features, bias)
-        self.register_buffer('u', cudize(torch.Tensor(1, out_features).normal_()))
-
-    @property
-    def W_(self):
-        w_mat = self.weight.view(self.weight.size(0), -1)
-        sigma, _u = max_singular_value(w_mat, self.u)
-        self.u.copy_(_u)
-        return self.weight / sigma
-
-    def forward(self, input):
-        return F.linear(input, self.W_, self.bias)
-
-
-class SNConv1d(torch.nn.modules.conv._ConvNd):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True):
-        kernel_size = _single(kernel_size)
-        stride = _single(stride)
-        padding = _single(padding)
-        dilation = _single(dilation)
-        super(SNConv1d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, False,
-                                       _single(0), groups, bias)
-        self.register_buffer('u', cudize(torch.Tensor(1, out_channels).normal_()))
-
-    @property
-    def W_(self):
-        w_mat = self.weight.view(self.weight.size(0), -1)
-        sigma, _u = max_singular_value(w_mat, self.u)
-        self.u.copy_(_u)
-        return self.weight / sigma
-
-    def forward(self, input):
-        return F.conv1d(input, self.W_, self.bias, self.stride, self.padding, self.dilation, self.groups)
-
-
 class EqualizedConv1d(nn.Module):
     def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False):
         super(EqualizedConv1d, self).__init__()
+        self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
         if is_spectral:
-            self.conv = SNConv1d(c_in, c_out, k_size, stride, padding, bias=False)
-        else:
-            self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
+            self.conv = spectral_norm_wrapper(self.conv)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
         self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
@@ -282,10 +229,9 @@ class NeoPGConv1d(nn.Module):
         if equalized:
             conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral)
         else:
+            conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
             if spectral:
-                conv = SNConv1d(ch_in, ch_out, ksize, 1, pad)
-            else:
-                conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
+                conv = spectral_norm_wrapper(conv)
         self.net = [conv]
         if act:
             if act == 'prelu':
@@ -425,7 +371,10 @@ class DLastBlock(nn.Module):
                  from_recurrent=None, layer_recurrent=None, equalized=True, spectral=False, **layer_settings):
         super(DLastBlock, self).__init__()
         self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
-        self.net = [MinibatchStddev(temporal, num_stat_channels)]
+        if num_stat_channels > 0:
+            self.net = [MinibatchStddev(temporal, num_stat_channels)]
+        else:
+            self.net = []
         if layer_recurrent is None:
             self.net.append(
                 NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, spectral=spectral,
@@ -490,18 +439,18 @@ class Discriminator(nn.Module):
 
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode,
                               phase_shuffle=phase_shuffle)
+        # TODO spectral_norm does not work in D.CNNs when we have double backprop?
         last_block = DLastBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
                                 temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
                                 from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent, equalized=equalized,
-                                spectral=spectral_norm, **layer_settings)
+                                spectral=False, **layer_settings)
         self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size,
                                             from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent,
-                                            equalized=equalized, spectral=spectral_norm, **layer_settings) for i in
+                                            equalized=equalized, spectral=False, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
+        self.linear = nn.Linear(nf(initial_size - 2), 1)
         if spectral_norm:
-            self.linear = SNLinear(nf(initial_size - 2), 1)
-        else:
-            self.linear = nn.Linear(nf(initial_size - 2), 1)
+            self.linear = spectral_norm_wrapper(self.linear)
         if apply_sigmoid:
             self.linear = nn.Sequential(self.linear, nn.Sigmoid())
         self.depth = 0

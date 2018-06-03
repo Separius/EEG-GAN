@@ -9,7 +9,7 @@ from sklearn.decomposition import FastICA, PCA
 
 class MyDataset(Dataset):
     def __init__(self, dir_path='../MADSYN/data/eeg', num_files=860, seq_len=256, stride=0.5,
-                 max_freq=80, num_channels=1, per_user=True, mode=None,  # it could be None, pca or ica
+                 max_freq=80, num_channels=5, per_user=True, mode=None,  # it could be None, pca or ica
                  use_abs=False, model_dataset_depth_offset=2):  # we start with 4x4 resolution instead of 1x1
         self.model_depth = 0
         self.alpha = 1.0

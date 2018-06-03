@@ -15,7 +15,7 @@ validation_split: 0
 #config_file: null
 
 loss_type: 'wgan_gp' # vanilla, heuristic, square, wgan_gp, wgan_ct, dragan, hinge
-label_smoothing: 0.05
+label_smoothing: 0
 use_mixup: false
 optimizer: 'adam' # adam, amsgrad, asgd, rmsprop, ttur
 #Trainer.grad_clip: null #null or a float
@@ -38,7 +38,7 @@ DepthManager.lod_training_kimg: 400
 DepthManager.lod_training_kimg_overrides: {1: 40, 2: 100, 3: 200, 4: 200}  # starts from depth_offset+1
 DepthManager.lod_transition_kimg: 100
 DepthManager.lod_transition_kimg_overrides: {1: 10, 2: 25, 3: 50, 4: 50}  # starts from depth_offset+1
-OutputGenerator.output_snapshot_ticks: 5
+OutputGenerator.output_snapshot_ticks: 10
 #SaverPlugin.network_snapshot_ticks: 40
 #Validator.output_snapshot_ticks: 4
 #SaverPlugin.keep_old_checkpoints: false
@@ -46,7 +46,7 @@ OutputGenerator.output_snapshot_ticks: 5
 Generator.upsample: 'linear' #linear, nearest
 Generator.dropout: 0.1
 Generator.do_mode: 'mul' #mul, drop, prop
-#Generator.spectral_norm: false
+Generator.spectral_norm: false
 #Generator.ch_by_ch: false
 #Generator.fmap_base: 2048
 #Generator.fmap_max: 256
@@ -56,7 +56,7 @@ Generator.do_mode: 'mul' #mul, drop, prop
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
 #Generator.equalized: true
-#Generator.kernel_size: 3
+Generator.kernel_size: 3
 #Generator.recurrent_to_rgb: null #null, rnn, lstm, gru
 #Generator.layer_recurrent: null #null, rnn, lstm, gru
 #Generator.phase_shuffle: 0
@@ -71,7 +71,7 @@ Discriminator.do_mode: 'mul' #mul, drop, prop
 #Discriminator.pixelnorm: false
 #Discriminator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
 #Discriminator.equalized: true
-#Discriminator.kernel_size: 3
+Discriminator.kernel_size: 3
 #Discriminator.recurrent_from_rgb: null #null, rnn, lstm, gru
 #Discriminator.layer_recurrent: null #null, rnn, lstm, gru
 #Discriminator.phase_shuffle: 0
@@ -87,11 +87,12 @@ MyDataset.num_channels: 5
 MyDataset.per_user: true
 MyDataset.mode: null # null, pca, ica
 MyDataset.use_abs: false
-#MyDataset.dir_path: '../MADSYN/data/eeg'
+MyDataset.dir_path: '../eeg'
 #MyDataset.num_files: 860
 #MyDataset.stride: 0.5
 #MyDataset.max_freq: 80
 
 #DepthManager.depth_offset: 0
-#MyDataset.seq_len: 256
-#MyDataset.model_dataset_depth_offset: 2
+MyDataset.seq_len: 1024
+MyDataset.model_dataset_depth_offset: 4
+#1.25(8), 2.5(16), 5(32), 10(64), 20(128), 40(256), 80(512)
