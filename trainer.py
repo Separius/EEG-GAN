@@ -5,7 +5,7 @@ import torch
 
 class Trainer(object):
 
-    def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, dataiter, random_latents_generator,
+    def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, random_latents_generator,
                  grad_clip=None, D_training_repeats=1, tick_kimg_default=2, resume_nimg=0):
         self.D = D
         self.G = G
@@ -14,7 +14,6 @@ class Trainer(object):
         self.D_training_repeats = D_training_repeats
         self.optimizer_d = optimizer_d
         self.optimizer_g = optimizer_g
-        self.dataiter = dataiter
         self.dataset = dataset
         self.cur_nimg = resume_nimg
         self.random_latents_generator = random_latents_generator

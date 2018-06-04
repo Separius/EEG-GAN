@@ -1,98 +1,89 @@
-# python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data5.pkl --cuda_device 1
+# python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data256.pkl --cuda_device 0
 
-validation_split: 0
-#cuda_device: 0
-#test_mode: false
 #result_dir: 'results'
-#exp_name: 'default'
+#exp_name: 'exp_name'
+lr_rampup_kimg: 50
+G_lr_max: 0.001
+D_lr_max: 0.001
+total_kimg: 4000
 #resume_network: ''
 #resume_time: 0
-#Trainer.resume_nimg: 0
-#num_data_workers: 2
+num_data_workers: 2
 #random_seed: 1337
-#save_dataset: ''
-#load_dataset: ''
-#config_file: null
-
-loss_type: 'wgan_gp' # vanilla, heuristic, square, wgan_gp, wgan_ct, dragan, hinge
-label_smoothing: 0
-use_mixup: false
-optimizer: 'adam' # adam, amsgrad, asgd, rmsprop, ttur
-#Trainer.grad_clip: null #null or a float
-#Trainer.D_training_repeats: 1
-#lr_rampup_kimg: 50
-#G_lr_max: 0.001
-#D_lr_max: 0.001
 #grad_lambda: 10.0
 #iwass_epsilon: 0.001
-#apply_sigmoid: false
+#save_dataset: ''
+#load_dataset: ''
+loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
+#label_smoothing: 0
+#use_mixup: false
+#cuda_device: 0
+validation_split: 0
 #LAMBDA_2: 2
-#weight_decay: 0
+optimizer: 'adam' # adam, amsgrad, ttur
+#config_file: null
 
-total_kimg: 4000
+#Trainer.grad_clip: null #null or a float
+#Trainer.D_training_repeats: 1
 Trainer.tick_kimg_default: 2
-DepthManager.minibatch_default: 32
-DepthManager.minibatch_overrides: {6: 32}  # starts from depth_offset+1
-DepthManager.tick_kimg_overrides: {1: 4, 2: 4, 6: 1}  # starts from depth_offset+1
-DepthManager.lod_training_kimg: 400
-DepthManager.lod_training_kimg_overrides: {1: 40, 2: 100, 3: 200, 4: 200}  # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 100
-DepthManager.lod_transition_kimg_overrides: {1: 10, 2: 25, 3: 50, 4: 50}  # starts from depth_offset+1
-OutputGenerator.output_snapshot_ticks: 10
-#SaverPlugin.network_snapshot_ticks: 40
-#Validator.output_snapshot_ticks: 4
-#SaverPlugin.keep_old_checkpoints: false
+#Trainer.resume_nimg: 0
 
-Generator.upsample: 'linear' #linear, nearest
-Generator.dropout: 0.1
-Generator.do_mode: 'mul' #mul, drop, prop
-Generator.spectral_norm: false
-#Generator.ch_by_ch: false
 #Generator.fmap_base: 2048
-#Generator.fmap_max: 256
-#Generator.fmap_min: 16
-#Generator.latent_size: 256
+Generator.fmap_max: 256
+Generator.fmap_min: 16
+Generator.latent_size: 256
+Generator.upsample: 'linear' #linear, nearest
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
+#Generator.dropout: 0.1
+#Generator.do_mode: 'mul' #mul, drop, prop
 #Generator.equalized: true
-Generator.kernel_size: 3
-#Generator.recurrent_to_rgb: null #null, rnn, lstm, gru
-#Generator.layer_recurrent: null #null, rnn, lstm, gru
-#Generator.phase_shuffle: 0
+Generator.spectral_norm: false
+Generator.ch_by_ch: false
+#Generator.kernel_size: 3
 
-Discriminator.dropout: 0.1
-Discriminator.do_mode: 'mul' #mul, drop, prop
-#Discriminator.spectral_norm: false
 #Discriminator.fmap_base: 2048
-#Discriminator.fmap_max: 256
-#Discriminator.fmap_min: 64
-#Discriminator.downsample: 'average' #average, stride
+Discriminator.fmap_max: 256
+Discriminator.fmap_min: 64
+Discriminator.downsample: 'average' #average, stride
 #Discriminator.pixelnorm: false
-#Discriminator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
+#Discriminator.activation: 'lrelu'
+#Discriminator.dropout: 0.1
+#Discriminator.do_mode: 'mul'
 #Discriminator.equalized: true
-Discriminator.kernel_size: 3
-#Discriminator.recurrent_from_rgb: null #null, rnn, lstm, gru
-#Discriminator.layer_recurrent: null #null, rnn, lstm, gru
+Discriminator.spectral_norm: false
+#Discriminator.kernel_size: 3
 #Discriminator.phase_shuffle: 0
 #Discriminator.temporal_stats: false
 #Discriminator.num_stat_channels: 1
 
-GifGenerator.num_frames: 25
-#OutputGenerator.samples_count: 6
-#OutputGenerator.res_len: 256
+#DepthManager.depth_offset: 0
+DepthManager.minibatch_default: 32
+DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
+DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
+DepthManager.lod_training_kimg: 400
+DepthManager.lod_training_kimg_overrides: {2: 20, 4: 40, 5: 80, 6: 200} # starts from depth_offset+1
+DepthManager.lod_transition_kimg: 100
+DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts from depth_offset+1
+
+#SaverPlugin.keep_old_checkpoints: true
+#SaverPlugin.network_snapshot_ticks: 50
+
+#OutputGenerator.samples_count: 8
+#OutputGenerator.output_snapshot_ticks: 10
+
+#GifGenerator.num_frames: 30
 #GifGenerator.fps: 5
 
-MyDataset.num_channels: 5
-MyDataset.per_user: true
-MyDataset.mode: null # null, pca, ica
-MyDataset.use_abs: false
-MyDataset.dir_path: '../eeg'
+#Validator.output_snapshot_ticks: 20
+
+#MyDataset.dir_path: './data/eeg'
 #MyDataset.num_files: 860
+MyDataset.seq_len: 256
 #MyDataset.stride: 0.5
 #MyDataset.max_freq: 80
-
-#DepthManager.depth_offset: 0
-MyDataset.seq_len: 1024
-MyDataset.model_dataset_depth_offset: 4
-#1.25(8), 2.5(16), 5(32), 10(64), 20(128), 40(256), 80(512)
+#MyDataset.num_channels: 5
+#MyDataset.per_user: true
+#MyDataset.use_abs: false
+MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1

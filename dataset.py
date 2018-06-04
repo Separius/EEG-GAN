@@ -8,9 +8,8 @@ from sklearn.decomposition import FastICA, PCA
 
 
 class MyDataset(Dataset):
-    def __init__(self, dir_path='../MADSYN/data/eeg', num_files=860, seq_len=256, stride=0.5,
-                 max_freq=80, num_channels=5, per_user=True, mode=None,  # it could be None, pca or ica
-                 use_abs=False, model_dataset_depth_offset=2):  # we start with 4x4 resolution instead of 1x1
+    def __init__(self, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.5, max_freq=80, num_channels=5,
+                 per_user=True, use_abs=False, model_dataset_depth_offset=2):  # start from 4x4 instead of 1x1
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -39,14 +38,6 @@ class MyDataset(Dataset):
                 self.datas[i] = self.normalize(self.datas[i])
         if not per_user:
             self.normalize_all(num_files)
-        if mode:
-            self.transformer = PCA(n_components=num_channels) if mode == 'pca' else FastICA(n_components=num_channels)
-            self.transformer.fit(np.concatenate([d.T for d in self.datas], axis=0))
-            for i in range(num_files):
-                self.datas[i] = self.transformer.transform(self.datas[i].T).T
-            self.all_max, self.all_min = self.normalize_all(num_files)
-        else:
-            self.transformer = None
         self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.description = {
@@ -55,23 +46,11 @@ class MyDataset(Dataset):
             'depth_range': (self.min_dataset_depth, self.max_dataset_depth)
         }
 
-    def inverse_transform(self, x):
-        if self.transformer is None:
-            return x
-        y = self.denormalize(x)
-        return np.stack([self.transformer.inverse_transform(y[i].T).T for i in range(len(y))])
-
-    def denormalize(self, x):
-        if self.use_abs:
-            return x * max(abs(self.all_max), abs(self.all_min))
-        return (x + 1.0) / 2.0 * (self.all_max - self.all_min) + self.all_min
-
     def normalize_all(self, num_files):
         all_max = max([self.datas[i].max() for i in range(num_files)])
         all_min = min([self.datas[i].min() for i in range(num_files)])
         for i in range(num_files):
             self.datas[i] = self.normalize(self.datas[i], all_max, all_min)
-        return all_max, all_min
 
     def normalize(self, arr, arr_max=None, arr_min=None):
         if arr_max is None:

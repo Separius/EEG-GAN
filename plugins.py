@@ -86,18 +86,17 @@ class DepthManager(Plugin):
         depth, alpha = self.calc_progress()
         dataset = self.trainer.dataset
         if depth != self.depth:
-            self.trainer.D.set_depth(depth)
-            self.trainer.G.depth = dataset.model_depth = depth
+            self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth, self.minibatch_default)
-            self.trainer.dataiter = iter(self.create_dataloader_fun(minibatch_size))
+            self.data_loader = self.create_dataloader_fun(minibatch_size)
+            self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
             tick_duration_kimg = self.tick_kimg_overrides.get(depth, self.tick_kimg_default)
             self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
-            self.trainer.D.set_alpha(alpha)
-            self.trainer.G.alpha = dataset.alpha = alpha
+            self.trainer.D.alpha = self.trainer.G.alpha = dataset.alpha = alpha
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
@@ -161,7 +160,7 @@ class AbsoluteTimeMonitor(Plugin):
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
-    def __init__(self, checkpoints_path, keep_old_checkpoints=False, network_snapshot_ticks=40):
+    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
@@ -193,8 +192,8 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, samples_count=6, output_snapshot_ticks=3,
-                 res_len=256):
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
+                 output_snapshot_ticks=10):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
@@ -207,7 +206,6 @@ class OutputGenerator(Plugin):
         self.trainer = trainer
 
     def get_images(self, seq_len, frequency, epoch, generated):
-        generated = self.trainer.dataset.inverse_transform(generated)
         num_channels = generated.shape[1]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
@@ -262,7 +260,7 @@ class FixedNoise(OutputGenerator):
 
 class GifGenerator(OutputGenerator):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, num_frames=50,
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, num_frames=30,
                  fps=5):
         super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, num_frames,
                                            output_snapshot_ticks, res_len)
@@ -288,7 +286,7 @@ class GifGenerator(OutputGenerator):
 
 
 class Validator(Plugin):
-    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=4):
+    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
         super(Validator, self).__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.valid_set = valid_set

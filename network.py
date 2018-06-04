@@ -143,41 +143,6 @@ class GDropLayer(nn.Module):
         return self.__class__.__name__ + param_str
 
 
-class Cnn2RnnConverter(nn.Module):
-    def __init__(self):
-        super(Cnn2RnnConverter, self).__init__()
-
-    def forward(self, input):
-        return cnn2rnn(input)
-
-
-def cnn2rnn(x):
-    return x.permute(2, 0, 1)
-
-
-def rnn2cnn(x):
-    return x.permute(1, 2, 0)
-
-
-cell_dict = {'rnn': torch.nn.RNN, 'gru': torch.nn.GRU, 'lstm': torch.nn.LSTM}
-
-
-def get_cell(name):
-    return cell_dict[name.lower()]
-
-
-class Rnn2CnnConverter(nn.Module):
-    def __init__(self):
-        super(Rnn2CnnConverter, self).__init__()
-
-    def forward(self, input):
-        return rnn2cnn(input[0])
-
-
-def get_recurrent_layer(cell_type, ch_in, ch_out):
-    return nn.Sequential(Cnn2RnnConverter(), get_cell(cell_type)(ch_in, ch_out, ), Rnn2CnnConverter())
-
-
 class ChannelByChannelOut(nn.Module):
     def __init__(self, ch_in, ch_out, equalized=True):
         super(ChannelByChannelOut, self).__init__()
@@ -194,31 +159,18 @@ class ChannelByChannelOut(nn.Module):
 
 
 class ToRGB(nn.Module):
-    def __init__(self, ch_in, num_channels, ch_by_ch=False, recurrent=None, equalized=True):
+    def __init__(self, ch_in, num_channels, ch_by_ch=False, equalized=True):
         super(ToRGB, self).__init__()
         self.num_channels = num_channels
-        if recurrent is None:
-            self.rnn = None
-        else:
-            self.rnn = get_cell(recurrent)(ch_in + num_channels, hidden_size=ch_in // 4)
         if ch_by_ch:
-            self.toRGB = ChannelByChannelOut(ch_in // 4 if recurrent else ch_in, num_channels, equalized=equalized)
+            self.toRGB = ChannelByChannelOut(ch_in, num_channels, equalized=equalized)
         else:
             self.toRGB = nn.Sequential(
-                NeoPGConv1d(ch_in // 4 if recurrent else ch_in, num_channels, ksize=1, pixelnorm=False, act=None,
+                NeoPGConv1d(ch_in, num_channels, ksize=1, pixelnorm=False, act=None,
                             equalized=equalized), ScaledTanh())
 
     def forward(self, x):
-        if self.rnn is None:
-            return self.toRGB(x)
-        ret = cudize(torch.zeros(x.size(0), self.num_channels, 1))
-        ans = []
-        state = None
-        for t in range(x.size(2)):
-            ret, state = self.rnn(cnn2rnn(torch.cat((x[:, :, t:t + 1], ret), dim=1)), state)
-            ret = self.toRGB(rnn2cnn(ret))
-            ans.append(ret)
-        return torch.cat(ans, dim=2)
+        return self.toRGB(x)
 
 
 class NeoPGConv1d(nn.Module):
@@ -256,18 +208,15 @@ class NeoPGConv1d(nn.Module):
         return self.net(x)
 
 
-class GBlock(nn.Module):  # TODO work on the recurrent mode
+class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_size=None, ch_by_ch=False,
-                 recurrent_to_rgb=None, layer_recurrent=None, **layer_settings):
+                 **layer_settings):
         super(GBlock, self).__init__()
         c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=2 ** initial_size if initial_size else ksize,
                          pad=2 ** initial_size - 1 if initial_size else None, **layer_settings)
-        if layer_recurrent is None:
-            c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, **layer_settings)
-        else:
-            c2 = get_recurrent_layer(layer_recurrent, ch_out, ch_out)
+        c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, **layer_settings)
         self.net = nn.Sequential(c1, c2)
-        self.toRGB = ToRGB(ch_out, num_channels, ch_by_ch=ch_by_ch, recurrent=recurrent_to_rgb, equalized=equalized)
+        self.toRGB = ToRGB(ch_out, num_channels, ch_by_ch=ch_by_ch, equalized=equalized)
 
     def forward(self, x, last=False):
         x = self.net(x)
@@ -276,9 +225,8 @@ class GBlock(nn.Module):  # TODO work on the recurrent mode
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=16, latent_size=256,
-                 upsample='nearest', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0,
-                 do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3,
-                 recurrent_to_rgb=None, layer_recurrent=None, phase_shuffle=0):
+                 upsample='nearest', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
+                 do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -291,14 +239,11 @@ class Generator(nn.Module):
         if latent_size is None:
             latent_size = nf(initial_size - 2)
         self.normalize_latents = normalize_latents
-        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
-                              phase_shuffle=phase_shuffle)
+        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm)
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
-                             initial_size=initial_size, ch_by_ch=ch_by_ch, recurrent_to_rgb=recurrent_to_rgb,
-                             layer_recurrent=layer_recurrent, **layer_settings)
+                             initial_size=initial_size, ch_by_ch=ch_by_ch, **layer_settings)
         self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
-                                            ch_by_ch=ch_by_ch, recurrent_to_rgb=recurrent_to_rgb,
-                                            layer_recurrent=layer_recurrent, **layer_settings) for i in
+                                            ch_by_ch=ch_by_ch, **layer_settings) for i in
                                      range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
@@ -331,34 +276,14 @@ class Generator(nn.Module):
         return h
 
 
-class FromRGB(nn.Module):
-    def __init__(self, num_channels, ch_out, recurrent=None, equalized=True, spectral=False):
-        super(FromRGB, self).__init__()
-        self.num_channels = num_channels
-        if recurrent is None:
-            self.rnn = None
-        else:
-            self.rnn = get_recurrent_layer(recurrent, num_channels, ch_out // 4)
-        self.fromRGB = NeoPGConv1d(num_channels if recurrent is None else ch_out // 4, ch_out, ksize=1, pixelnorm=False,
-                                   equalized=equalized, spectral=spectral)
-
-    def forward(self, x):
-        if self.rnn is None:
-            return self.fromRGB(x)
-        return self.fromRGB(self.rnn(x))
-
-
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, ksize=3, from_recurrent=None, layer_recurrent=None,
-                 equalized=True, spectral=False, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, spectral=False, **layer_settings):
         super(DBlock, self).__init__()
-        self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
-        c1 = NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings)
-        if layer_recurrent is None:
-            c2 = NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings)
-        else:
-            c2 = get_recurrent_layer(layer_recurrent, ch_in, ch_out)
-        self.net = nn.Sequential(c1, c2)
+        self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
+                                   spectral=spectral)
+        self.net = nn.Sequential(
+            NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings),
+            NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings))
 
     def forward(self, x, first=False):
         if first:
@@ -368,19 +293,17 @@ class DBlock(nn.Module):
 
 class DLastBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, initial_size=2, temporal=False, num_stat_channels=1, ksize=3,
-                 from_recurrent=None, layer_recurrent=None, equalized=True, spectral=False, **layer_settings):
+                 equalized=True, spectral=False, **layer_settings):
         super(DLastBlock, self).__init__()
-        self.fromRGB = FromRGB(num_channels, ch_in, recurrent=from_recurrent, equalized=equalized, spectral=spectral)
+        self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
+                                   spectral=spectral)
         if num_stat_channels > 0:
             self.net = [MinibatchStddev(temporal, num_stat_channels)]
         else:
             self.net = []
-        if layer_recurrent is None:
-            self.net.append(
-                NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, spectral=spectral,
-                            **layer_settings))
-        else:
-            self.net.append(get_recurrent_layer(layer_recurrent, ch_in + num_stat_channels, ch_in))
+        self.net.append(
+            NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, spectral=spectral,
+                        **layer_settings))
         self.net.append(
             NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size, pad=0, equalized=equalized, spectral=spectral,
                         **layer_settings))
@@ -423,10 +346,9 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, apply_sigmoid, fmap_base=2048, fmap_max=256, fmap_min=64,
-                 downsample='average', pixelnorm=False, activation='lrelu', dropout=0, do_mode='mul', equalized=True,
-                 spectral_norm=False, kernel_size=3, recurrent_from_rgb=None, layer_recurrent=None, phase_shuffle=0,
-                 temporal_stats=False, num_stat_channels=1):
+    def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=64,
+                 downsample='average', pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', equalized=True,
+                 spectral_norm=False, kernel_size=3, phase_shuffle=0, temporal_stats=False, num_stat_channels=1):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -439,20 +361,15 @@ class Discriminator(nn.Module):
 
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode,
                               phase_shuffle=phase_shuffle)
-        # TODO spectral_norm does not work in D.CNNs when we have double backprop?
         last_block = DLastBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
                                 temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
-                                from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent, equalized=equalized,
-                                spectral=False, **layer_settings)
+                                equalized=equalized, spectral=False, **layer_settings)
         self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size,
-                                            from_recurrent=recurrent_from_rgb, layer_recurrent=layer_recurrent,
                                             equalized=equalized, spectral=False, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         self.linear = nn.Linear(nf(initial_size - 2), 1)
         if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
-        if apply_sigmoid:
-            self.linear = nn.Sequential(self.linear, nn.Sigmoid())
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
@@ -460,12 +377,6 @@ class Discriminator(nn.Module):
             self.downsampler = nn.AvgPool1d(kernel_size=2)
         elif downsample == 'stride':
             self.downsampler = DownSample(scale_factor=2)
-
-    def set_depth(self, depth):
-        self.depth = depth
-
-    def set_alpha(self, alpha):
-        self.alpha = alpha
 
     def forward(self, x):
         xhighres = x
