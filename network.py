@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from utils import cudize
 from torch.nn.init import calculate_gain
 from spectral_norm import spectral_norm as spectral_norm_wrapper
+from torch.nn.utils import weight_norm as weight_norm_wrapper
 
 
 class PhaseShuffle(nn.Module):
@@ -144,12 +145,12 @@ class GDropLayer(nn.Module):
 
 
 class ChannelByChannelOut(nn.Module):
-    def __init__(self, ch_in, ch_out, equalized=True):
+    def __init__(self, ch_in, ch_out, normalization=None, equalized=True):
         super(ChannelByChannelOut, self).__init__()
         self.num_out = ch_out
         self.out = nn.ModuleList([nn.Sequential(
-            NeoPGConv1d(ch_in + i, 1, ksize=1, pixelnorm=False, act=None, equalized=equalized), ScaledTanh()) for i in
-            range(ch_out)])
+            NeoPGConv1d(ch_in + i, 1, ksize=1, pixelnorm=False, act=None, equalized=equalized,
+                        normalization=normalization), ScaledTanh()) for i in range(ch_out)])
 
     def forward(self, x):
         r = x
@@ -159,15 +160,15 @@ class ChannelByChannelOut(nn.Module):
 
 
 class ToRGB(nn.Module):
-    def __init__(self, ch_in, num_channels, ch_by_ch=False, equalized=True):
+    def __init__(self, ch_in, num_channels, normalization=None, ch_by_ch=False, equalized=True):
         super(ToRGB, self).__init__()
         self.num_channels = num_channels
         if ch_by_ch:
-            self.toRGB = ChannelByChannelOut(ch_in, num_channels, equalized=equalized)
+            self.toRGB = ChannelByChannelOut(ch_in, num_channels, normalization=normalization, equalized=equalized)
         else:
             self.toRGB = nn.Sequential(
-                NeoPGConv1d(ch_in, num_channels, ksize=1, pixelnorm=False, act=None,
-                            equalized=equalized), ScaledTanh())
+                NeoPGConv1d(ch_in, num_channels, ksize=1, pixelnorm=False, act=None, equalized=equalized,
+                            normalization=normalization), ScaledTanh())
 
     def forward(self, x):
         return self.toRGB(x)
@@ -175,7 +176,7 @@ class ToRGB(nn.Module):
 
 class NeoPGConv1d(nn.Module):
     def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True,
-                 act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0):
+                 act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
         if equalized:
@@ -184,7 +185,17 @@ class NeoPGConv1d(nn.Module):
             conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
             if spectral:
                 conv = spectral_norm_wrapper(conv)
+        norm = None
+        if normalization:
+            if normalization == 'weight_norm':
+                conv = weight_norm_wrapper(conv)
+            elif normalization == 'layer_norm':
+                norm = nn.LayerNorm(ch_out)
+            elif normalization == 'batch_norm':
+                norm = nn.BatchNorm1d(ch_out)
         self.net = [conv]
+        if norm is not None:
+            self.net.append(norm)
         if act:
             if act == 'prelu':
                 self.net.append(nn.PReLU(num_parameters=ch_out))
@@ -210,23 +221,32 @@ class NeoPGConv1d(nn.Module):
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_size=None, ch_by_ch=False,
-                 **layer_settings):
+                 normalization=None, residual=False, **layer_settings):
         super(GBlock, self).__init__()
-        c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=2 ** initial_size if initial_size else ksize,
-                         pad=2 ** initial_size - 1 if initial_size else None, **layer_settings)
-        c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, **layer_settings)
-        self.net = nn.Sequential(c1, c2)
-        self.toRGB = ToRGB(ch_out, num_channels, ch_by_ch=ch_by_ch, equalized=equalized)
+        is_first = initial_size is not None
+        c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=2 ** initial_size if is_first else ksize,
+                         pad=2 ** initial_size - 1 if is_first else None, normalization=normalization,
+                         **layer_settings)
+        c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, normalization=normalization, **layer_settings)
+        self.bypass = nn.Sequential() if not residual or is_first else NeoPGConv1d(ch_in, ch_out, ksize=1,
+                                                                                   equalized=equalized,
+                                                                                   pixelnorm=False, act=None,
+                                                                                   spectral=layer_settings[
+                                                                                       'spectral_norm'])
+        self.residual = nn.Sequential(c1, c2)
+        self.toRGB = ToRGB(ch_out, num_channels, normalization=None if normalization == 'batch_norm' else normalization,
+                           ch_by_ch=ch_by_ch, equalized=equalized)
 
     def forward(self, x, last=False):
-        x = self.net(x)
+        x = self.residual(x) + self.bypass(x)
         return self.toRGB(x) if last else x
 
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=16, latent_size=256,
                  upsample='nearest', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
-                 do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3):
+                 residual=False, do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3,
+                 normalization=None):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -241,10 +261,11 @@ class Generator(nn.Module):
         self.normalize_latents = normalize_latents
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm)
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
-                             initial_size=initial_size, ch_by_ch=ch_by_ch, **layer_settings)
+                             initial_size=initial_size, ch_by_ch=ch_by_ch, normalization=normalization,
+                             residual=residual, **layer_settings)
         self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
-                                            ch_by_ch=ch_by_ch, **layer_settings) for i in
-                                     range(initial_size, R)])
+                                            ch_by_ch=ch_by_ch, normalization=normalization, residual=residual,
+                                            **layer_settings) for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
         self.latent_size = latent_size
@@ -277,42 +298,31 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, spectral=False, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, initial_size=2, temporal=False, num_stat_channels=1,
+                 ksize=3, equalized=True, spectral=False, normalization=None, residual=False, **layer_settings):
         super(DBlock, self).__init__()
+        is_last = initial_size is not None
+        self.bypass = nn.Sequential() if not residual or is_last else NeoPGConv1d(ch_in, ch_out, ksize=1,
+                                                                                  equalized=equalized, pixelnorm=False,
+                                                                                  act=None, spectral=spectral)
         self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
-                                   spectral=spectral)
-        self.net = nn.Sequential(
-            NeoPGConv1d(ch_in, ch_in, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings),
-            NeoPGConv1d(ch_in, ch_out, ksize=ksize, equalized=equalized, spectral=spectral, **layer_settings))
-
-    def forward(self, x, first=False):
-        if first:
-            x = self.fromRGB(x)
-        return self.net(x)
-
-
-class DLastBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, initial_size=2, temporal=False, num_stat_channels=1, ksize=3,
-                 equalized=True, spectral=False, **layer_settings):
-        super(DLastBlock, self).__init__()
-        self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
-                                   spectral=spectral)
-        if num_stat_channels > 0:
+                                   spectral=spectral,
+                                   normalization=None if normalization == 'batch_norm' else normalization)
+        if num_stat_channels > 0 and is_last:
             self.net = [MinibatchStddev(temporal, num_stat_channels)]
         else:
             self.net = []
         self.net.append(
-            NeoPGConv1d(ch_in + num_stat_channels, ch_in, ksize=ksize, equalized=equalized, spectral=spectral,
-                        **layer_settings))
-        self.net.append(
-            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size, pad=0, equalized=equalized, spectral=spectral,
-                        **layer_settings))
-        self.net = nn.Sequential(*self.net)
+            NeoPGConv1d(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
+                        spectral=spectral, normalization=normalization, **layer_settings))
+        self.net = nn.Sequential(
+            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size if is_last else ksize, pad=0 if is_last else None,
+                        equalized=equalized, spectral=spectral, normalization=normalization, **layer_settings))
 
     def forward(self, x, first=False):
         if first:
             x = self.fromRGB(x)
-        return self.net(x)
+        return self.net(x) + self.bypass(x)
 
 
 class MinibatchStddev(nn.Module):
@@ -346,9 +356,10 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=64,
+    def __init__(self, dataset_shape, initial_size, spectral_norm_linear, fmap_base=2048, fmap_max=256, fmap_min=64,
                  downsample='average', pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', equalized=True,
-                 spectral_norm=False, kernel_size=3, phase_shuffle=0, temporal_stats=False, num_stat_channels=1):
+                 spectral_norm=False, kernel_size=3, phase_shuffle=0, temporal_stats=False, num_stat_channels=1,
+                 normalization=None, residual=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -361,14 +372,16 @@ class Discriminator(nn.Module):
 
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode,
                               phase_shuffle=phase_shuffle)
-        last_block = DLastBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
-                                temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
-                                equalized=equalized, spectral=False, **layer_settings)
-        self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size,
-                                            equalized=equalized, spectral=False, **layer_settings) for i in
+        last_block = DBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
+                            temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
+                            residual=residual, equalized=equalized, spectral=spectral_norm, normalization=normalization,
+                            **layer_settings)
+        self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size, equalized=equalized,
+                                            initial_size=None, residual=residual, spectral=spectral_norm,
+                                            normalization=normalization, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         self.linear = nn.Linear(nf(initial_size - 2), 1)
-        if spectral_norm:
+        if spectral_norm_linear:
             self.linear = spectral_norm_wrapper(self.linear)
         self.depth = 0
         self.alpha = 1.0

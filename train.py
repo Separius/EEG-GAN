@@ -35,13 +35,12 @@ default_params = OrderedDict(
     iwass_epsilon=0.001,
     save_dataset='',
     load_dataset='',
-    loss_type='wgan_gp', # wgan_gp, wgan_ct, hinge
-    label_smoothing=0,
-    use_mixup=False,
+    loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge
+    mixup_alpha=None,  # null or float (was 1.0 before)
     cuda_device=0,
     validation_split=0,
     LAMBDA_2=2,
-    optimizer='adam', # adam, amsgrad, ttur
+    optimizer='adam',  # adam, amsgrad, ttur
     config_file=None
 )
 
@@ -81,7 +80,6 @@ def main(params):
             print('saving dataset to file')
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
-    yaml.dump(params, open(os.path.join(result_dir, 'conf.yml', 'w')))
 
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
@@ -103,7 +101,15 @@ def main(params):
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
         G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
-        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Discriminator'])
+        if params['Discriminator']['spectral_norm']:
+            params['Discriminator']['normalization'] = None
+        spectral_norm_linear = params['Discriminator']['spectral_norm']
+        if params['loss_type'] != 'hinge':
+            params['Discriminator']['spectral_norm'] = False
+            if params['Discriminator']['normalization'] == 'batch_norm':
+                params['Discriminator']['normalization'] = 'layer_norm'
+        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'],
+                          spectral_norm_linear=spectral_norm_linear, **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
@@ -145,10 +151,9 @@ def main(params):
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], label_smoothing=params['label_smoothing'],
-                         use_mixup=params['use_mixup'], LAMBDA_2=params['LAMBDA_2'])
-    G_loss_fun = partial(G_loss, loss_type=params['loss_type'], label_smoothing=params['label_smoothing'])
-    trainer = Trainer(D, G, D_loss_fun, G_loss_fun, opt_d, opt_g, dataset, rl(mb_def), **params['Trainer'])
+                         grad_lambda=params['grad_lambda'], mixup_alpha=params['mixup_alpha'],
+                         LAMBDA_2=params['LAMBDA_2'])
+    trainer = Trainer(D, G, D_loss_fun, G_loss, opt_d, opt_g, dataset, rl(mb_def), **params['Trainer'])
     max_depth = min(G.max_depth, D.max_depth)
     trainer.register_plugin(
         DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager']))
@@ -164,14 +169,15 @@ def main(params):
                         params['MyDataset']['max_freq'], params['MyDataset']['seq_len'], **params['OutputGenerator']))
     trainer.register_plugin(
         FixedNoise(lambda x: random_latents(x, latent_size), result_dir, params['MyDataset']['seq_len'],
-                   params['MyDataset']['max_freq'], **params['OutputGenerator']))
+                   params['MyDataset']['max_freq'], params['MyDataset']['seq_len'], **params['OutputGenerator']))
     trainer.register_plugin(
         GifGenerator(lambda x: random_latents(x, latent_size), result_dir, params['MyDataset']['seq_len'],
                      params['MyDataset']['max_freq'], params['OutputGenerator']['output_snapshot_ticks'],
-                     params['OutputGenerator']['res_len'], **params['GifGenerator']))
+                     params['MyDataset']['seq_len'], **params['GifGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)
+    yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])
     del trainer
 

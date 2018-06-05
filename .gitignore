@@ -5,6 +5,7 @@ results/
 .ropeproject/
 *.yml
 !defaults.yml
+!hpc.yml
 data/
 configs/
 *.pkl

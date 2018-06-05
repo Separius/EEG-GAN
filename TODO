@@ -1,13 +1,10 @@
 Resize => find the best upsampler, find the best down sampler
 I/O => channel by channel output
-SpectralNorm => test it on hinge, apply on D, apply on G, turn off other reqularizers, https://github.com/christiancosgrove/pytorch-spectral-normalization-gan/blob/master/model_resnet.py
-Losses => check wgan_gp, check wgan_ct, check hinge; mixup(with custom alpha) and label smoothing on all 3 losses, on ct batch size of G training is 2x
-WGAN-CT => https://github.com/biuyq/CT-GAN/blob/master/CT-GANs/tensorflow_generative_model/CT_gan_cifar.py#L123
-HingeLoss => https://github.com/christiancosgrove/pytorch-spectral-normalization-gan/blob/master/main.py#L71
-WeightNorm => apply on G, apply on D, conditional layer norm on D
+SpecNorm => test on hinge, test again on wgan
+ResidualBlock => Test
+
 PhaseShift => make it work
-BatchNorm => must implement conditional batch norm in G (even with SN) [(ConvT, BN, ReLU)*N, ConvT, WeightNorm, Tanh]
-Validation => use the result in saver and early stopping, add differentiable matlab features, call matlab functions?, if norms of gradients are over 100 things are screwing up
+Validation => use the result in saver and early stopping, add differentiable matlab features, call matlab functions?
 SeqLen => play with depth manager's initial depth, play with ds'initial depth
 Config => better config reader and also experiment manager and hyper param search, better test_mode(print everything)
 Optimizer => what lr and scheduler, num D updates per G, ttur config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
@@ -18,11 +15,10 @@ KernelSize => best kernel size for D/G
 DataSet => increase to 16 channels, per_user or global, use_abs or max-min
 MiscI => d(concatenated parts) == fake, mixed classifiers(abnormal / 6 classes), stats mmd(github.com/ratschlab/RGAN)
 Stats => temporal or not, num of channels
-ResidualBlock => https://github.com/igul222/improved_wgan_training/blob/master/gan_64x64.py, https://github.com/pfnet-research/sngan_projection/blob/master/gen_models/resblocks.py
 Attention => add self attention to D, add self attention to G, where to add them?, has lambda, placing it at higher levels (more channels = lower temporal freq) is better
 MiscII => connection network(restore Z from data ||z-C(D(G(z)))||), dp training(github.com/ratschlab/RGAN)
 MiscIII => wavenet or samplernn + trained d as semantic loss, test same net on audio(4x the freq at each stage)
 progressive dilated RNN or Wavenet/TCN ==> Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred + AutoRegressive ; what is alpha in here? -> two things, at last layer(repeat vs get output of net) and at first layer, get z directly or from the new layer
-Condition ==> on User Embedding or Easy meta-data(age, sex) or all ; with SemiSupervised InfoGAN(github.com/spurra/ss-infogan) or AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py) or Activation Maximization(github.com/ZhimingZhou/AM-GAN) or Class Splitting GAN(github.com/CIFASIS/splitting_gan) or Projection(yW . x)(github.com/pfnet-research/sngan_projection)
+Condition ==> on User Embedding or Easy meta-data(age, sex) or all ; ConditionalBatchNorm ; with SemiSupervised InfoGAN(github.com/spurra/ss-infogan) or AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py) or Activation Maximization(github.com/ZhimingZhou/AM-GAN) or Class Splitting GAN(github.com/CIFASIS/splitting_gan) or Projection(yW . x)(github.com/pfnet-research/sngan_projection)
 Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
 InfiniteLength => G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut and also even VAE like arch we can have stochastisity ; or use the connection net to make another gan over sequences of Z! :D

@@ -126,7 +126,7 @@ class EfficientLossMonitor(LossMonitor):
         self.stat_name = stat_name
 
     def _get_value(self, iteration, *args):
-        val = args[self.loss_no] if self.loss_no < 2 else args[self.loss_no].mean()
+        val = args[self.loss_no]
         return val.item()
 
 
