@@ -19,6 +19,7 @@ import yaml
 import subprocess
 from argparse import ArgumentParser
 from collections import OrderedDict
+from torchsummary import summary
 
 default_params = OrderedDict(
     result_dir='results',
@@ -41,7 +42,8 @@ default_params = OrderedDict(
     validation_split=0,
     LAMBDA_2=2,
     optimizer='adam',  # adam, amsgrad, ttur
-    config_file=None
+    config_file=None,
+    verbose=False
 )
 
 
@@ -112,6 +114,11 @@ def main(params):
     G = cudize(G)
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
+    if params['verbose']:
+        G.depth = G.max_depth
+        summary(G, (latent_size, ))
+        D.depth = D.max_depth
+        summary(D, (params['MyDataset']['num_channels'], params['MyDataset']['seq_len']))
     logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
     logger.log('dataset shape: {}'.format(dataset.shape))
     logger.log('Total number of parameters in Generator: {}'.format(num_params(G)))

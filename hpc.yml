@@ -21,6 +21,7 @@ validation_split: 0
 #LAMBDA_2: 2
 optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
+#verbose: false
 
 #Trainer.grad_clip: null #null or a float
 #Trainer.D_training_repeats: 1
