@@ -23,14 +23,16 @@ class DepthManager(Plugin):
                  create_rlg,
                  max_depth,
                  tick_kimg_default,
+                 attention_start_depth=None,
+                 attention_transition_kimg=200,
                  depth_offset=0,
-                 minibatch_default=32,
-                 minibatch_overrides={6: 32, 7: 32, 8: 32},  # starts from depth_offset+1
-                 tick_kimg_overrides={3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4},  # starts from depth_offset+1
+                 minibatch_default=64,
+                 minibatch_overrides={6: 32, 7: 32, 8: 16},  # starts from depth_offset+1
+                 tick_kimg_overrides={4: 4, 5: 3, 6: 2, 7: 1, 8: 1},  # starts from depth_offset+1
                  lod_training_kimg=400,
-                 lod_training_kimg_overrides={2: 20, 4: 40, 5: 80, 6: 200},  # starts from depth_offset+1
+                 lod_training_kimg_overrides={1: 250, 2: 250, 3: 300, 4: 350},  # starts from depth_offset+1
                  lod_transition_kimg=100,
-                 lod_transition_kimg_overrides={2: 5, 4: 8, 5: 16, 6: 40}):  # starts from depth_offset+1
+                 lod_transition_kimg_overrides={1: 50, 2: 60, 3: 80, 4: 90}):  # starts from depth_offset+1
         super(DepthManager, self).__init__([(1, 'iteration')])
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
@@ -43,27 +45,40 @@ class DepthManager(Plugin):
         self.alpha = -1
         self.depth_offset = depth_offset
         self.max_depth = max_depth
-        self.alpha_map = self.pre_compute_alpha_map(depth_offset, max_depth, lod_training_kimg,
-                                                    lod_training_kimg_overrides, lod_transition_kimg,
-                                                    lod_transition_kimg_overrides)
+        self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(depth_offset, max_depth,
+                                                                                        lod_training_kimg,
+                                                                                        lod_training_kimg_overrides,
+                                                                                        lod_transition_kimg,
+                                                                                        lod_transition_kimg_overrides,
+                                                                                        attention_start_depth,
+                                                                                        attention_transition_kimg)
 
     def register(self, trainer):
         self.trainer = trainer
         self.trainer.stats['minibatch_size'] = self.minibatch_default
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
+        if self.start_gamma is not None:
+            self.trainer.stats['gamma'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
         self.iteration()
 
     @staticmethod
     def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
-                              lod_transition_kimg, lod_transition_kimg_overrides):
+                              lod_transition_kimg, lod_transition_kimg_overrides, attention_start_depth,
+                              attention_transition_kimg):
+        start_gamma = None
+        end_gamma = None
         points = []
         pointer = 0
         for i in range(start_depth, max_depth):
             pointer += int(lod_training_kimg_overrides.get(i + 1, lod_training_kimg) * 1000)
+            if i == attention_start_depth:
+                start_gamma = pointer
+                pointer += int(attention_transition_kimg * 1000)
+                end_gamma = pointer
             points.append(pointer)
             pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
             points.append(pointer)
-        return points
+        return points, (start_gamma, end_gamma)
 
     def calc_progress(self):
         cur_nimg = self.trainer.cur_nimg
@@ -100,6 +115,12 @@ class DepthManager(Plugin):
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
+        if self.start_gamma is not None:
+            cur_kimg = self.trainer.cur_nimg
+            gamma = min(1, max(0, (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)))
+            self.trainer.D.set_gamma(gamma)
+            self.trainer.G.set_gamma(gamma)
+            self.trainer.stats['gamma']['val'] = gamma
 
 
 class LRScheduler(Plugin):
@@ -160,7 +181,7 @@ class AbsoluteTimeMonitor(Plugin):
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
-    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50):
+    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50, use_3way_test=False):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints

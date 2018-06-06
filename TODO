@@ -1,33 +1,19 @@
-Validation:
-    https://github.com/eugenium/MMD/blob/master/mmd.py => (this is the 3way mode)work with fft
-    https://github.com/nipy/nitime
-    https://github.com/Eden-Kramer-Lab/spectral_connectivity
-    Use validation result
-    d(concatenated parts) == fake
-Test:
-    Discriminator.phase_shuffle: 0
-    ttur: config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
-    generator.residual
-    Discriminator.temporal_stats: false
-    Discriminator.num_stat_channels: 1
-    Discriminator.residual: false
-    DepthManager.depth_offset: 0
-    MyDataset.per_user: true
-    MyDataset.use_abs: false
 Addition:
-    experiment manager and hyper param search
-    verbose_mode(print everything)
-    self attention in G
-    self attention in D
-    connection network
-    differential privacy training
-    Inception blocks (o=concat(conv(x, k=3), conv(x, k=5), conv(x, k=7)))
-    ConditionalBatchNorm
+    experiment manager and hyper param search(Define ParamSearchSpace)
+
+Validation:
+    Alish Features
+    d(concatenated parts) == fake
+    https://github.com/eugenium/MMD/blob/master/mmd.py => (this is the 3way mode)work with fft
+    Use validation result
 Classification:
+    ChronoNetStyleNetwork
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
 Experiment:
+    connection network
+    differential privacy training
     test on audio
     sample-rnn + trained discriminator
     Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
@@ -38,6 +24,7 @@ Experiment:
             at last layer(repeat vs get output of net)
             at first layer, get z directly or from the new layer
 Condition:
+    ConditionalBatchNorm
     On:
         User Embedding
         Easy meta-data(age, sex)
@@ -53,48 +40,3 @@ InfiniteSeqLen:
     Mabye, giving 0,0,0,Z,0,0,0,Z,0,0,0,Z,0,0,0 will work? => middle outputs must be halved => is not consistent even with slerp
     G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut => extend this is VAE like output
     Use the connection net to make another gan over sequences of Z! :D
-ParamSearch:
-    learning_rate
-    lr_rampup: disable vs default
-    loss_type: wgan_gp, wgan_ct, hinge
-    mixup_alpha: (0, 10)
-    optimizer: adam, amsgrad, ttur
-    D_training_repeats: {1, 2, 3, 4, 5}
-    Generator.fmap_base: 2048
-    Generator.fmap_max: 256
-    Generator.fmap_min: 16
-    Generator.latent_size: 256
-    Generator.upsample: 'linear' #linear, nearest
-    Generator.dropout: 0.1 #read somewhere that is O(50)
-    Generator.residual: false
-    Generator.do_mode: 'mul' #mul, drop, prop
-    Generator.spectral_norm: false
-    Generator.ch_by_ch: false
-    Generator.kernel_size: 3
-    Generator.pixelnorm: true
-    Generator.normalization: null #batch_norm, layer_norm, weight_norm
-    Discriminator.fmap_base: 2048
-    Discriminator.fmap_max: 256
-    Discriminator.fmap_min: 64
-    Discriminator.downsample: 'average' #average, stride
-    Discriminator.dropout: 0.1
-    Discriminator.spectral_norm: false
-    Discriminator.kernel_size: 3
-    Discriminator.phase_shuffle: 0
-    Discriminator.temporal_stats: false
-    Discriminator.num_stat_channels: 1
-    Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
-    Discriminator.residual: false
-    DepthManager.depth_offset: {0, 1, 2}
-    DepthManager.minibatch_default: 32
-    DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
-    DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
-    DepthManager.lod_training_kimg: 400
-    DepthManager.lod_training_kimg_overrides: {2: 20, 4: 40, 5: 80, 6: 200} # starts from depth_offset+1
-    DepthManager.lod_transition_kimg: 100
-    DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts from depth_offset+1
-    MyDataset.seq_len: 256
-    MyDataset.stride: 0.5
-    MyDataset.per_user: true
-    MyDataset.use_abs: false
-    MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1

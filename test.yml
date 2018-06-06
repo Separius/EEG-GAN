@@ -1,11 +1,11 @@
 # python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data256.pkl --cuda_device 0
 
 #result_dir: 'results'
-#exp_name: 'exp_name'
-lr_rampup_kimg: 50
-G_lr_max: 0.001
-D_lr_max: 0.001
-total_kimg: 4000
+#exp_name: ''
+#lr_rampup_kimg: 50
+#G_lr_max: 0.001
+#D_lr_max: 0.001
+total_kimg: 100
 #resume_network: ''
 #resume_time: 0
 num_data_workers: 2
@@ -14,74 +14,74 @@ num_data_workers: 2
 #iwass_epsilon: 0.001
 #save_dataset: ''
 #load_dataset: ''
-
 loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
-Discriminator.spectral_norm: false
-Discriminator.normalization: 'layer_norm' #batch_norm, layer_norm, weight_norm
-optimizer: 'adam' # adam, amsgrad, ttur
-
 #cuda_device: 0
 validation_split: 0
 #LAMBDA_2: 2
+optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
 #verbose: false
+fmap_base: 256
+fmap_max: 128
+fmap_min: 2
+#equalized: true
+kernel_size: 3
+inception: false
+
+self_attention_layer: 2
+self_attention_size: 32
+DepthManager.attention_start_depth: 4
+DepthManager.attention_transition_kimg: 4
+DepthManager.depth_offset: 0
 
 #Trainer.grad_clip: null #null or a float
 #Trainer.D_training_repeats: 1
-Trainer.tick_kimg_default: 2
+Trainer.tick_kimg_default: 0.5
 #Trainer.resume_nimg: 0
 
-#Generator.fmap_base: 2048
-Generator.fmap_max: 16
-Generator.fmap_min: 4
-Generator.latent_size: 8
+Generator.latent_size: 64
 Generator.upsample: 'linear' #linear, nearest
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
-#Generator.dropout: 0.1
+Generator.dropout: 0.1
 Generator.residual: false
-#Generator.do_mode: 'mul' #mul, drop, prop
-#Generator.equalized: true
+Generator.do_mode: 'mul' #mul, drop, prop
 Generator.spectral_norm: false
 Generator.ch_by_ch: false
-#Generator.kernel_size: 3
-Generator.normalization: null #batch_norm, layer_norm, weight_norm
+Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
-#Discriminator.fmap_base: 2048
-Discriminator.fmap_max: 16
-Discriminator.fmap_min: 4
 Discriminator.downsample: 'average' #average, stride
-#Discriminator.pixelnorm: false
-#Discriminator.activation: 'lrelu'
-#Discriminator.dropout: 0.1
-#Discriminator.do_mode: 'mul'
-#Discriminator.equalized: true
-#Discriminator.kernel_size: 3
-#Discriminator.phase_shuffle: 0
-#Discriminator.temporal_stats: false
-#Discriminator.num_stat_channels: 1
 Discriminator.residual: false
+#Discriminator.activation: 'lrelu'
+Discriminator.dropout: 0.1
+Discriminator.do_mode: 'mul'
+Discriminator.spectral_norm: false
+Discriminator.phase_shuffle: 0
+Discriminator.temporal_stats: false
+Discriminator.num_stat_channels: 1
+Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Discriminator.pixelnorm: false
 
-#DepthManager.depth_offset: 0
-DepthManager.minibatch_default: 8
-DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
-DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
-DepthManager.lod_training_kimg: 400
-DepthManager.lod_training_kimg_overrides: {2: 20, 4: 40, 5: 80, 6: 200} # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 100
-DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts from depth_offset+1
+DepthManager.minibatch_default: 32
+DepthManager.minibatch_overrides: {}  # starts from depth_offset+1
+DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
+DepthManager.lod_training_kimg: 1.2
+DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
+DepthManager.lod_transition_kimg: 0.8
+DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
 
 #SaverPlugin.keep_old_checkpoints: true
-#SaverPlugin.network_snapshot_ticks: 50
+SaverPlugin.network_snapshot_ticks: 80
+#SaverPlugin.use_3way_test: false
 
 #OutputGenerator.samples_count: 8
-OutputGenerator.output_snapshot_ticks: 50
+OutputGenerator.output_snapshot_ticks: 80
 
-GifGenerator.num_frames: 30
+#GifGenerator.num_frames: 30
 #GifGenerator.fps: 5
 
-Validator.output_snapshot_ticks: 20
+Validator.output_snapshot_ticks: 95
 
 #MyDataset.dir_path: './data/eeg'
 #MyDataset.num_files: 860

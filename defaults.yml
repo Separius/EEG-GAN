@@ -1,14 +1,14 @@
 # python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data256.pkl --cuda_device 0
 
 #result_dir: 'results'
-#exp_name: 'exp_name'
-lr_rampup_kimg: 50
-G_lr_max: 0.001
-D_lr_max: 0.001
-total_kimg: 4000
+#exp_name: ''
+#lr_rampup_kimg: 50
+#G_lr_max: 0.001
+#D_lr_max: 0.001
+#total_kimg: 4000
 #resume_network: ''
 #resume_time: 0
-num_data_workers: 2
+#num_data_workers: 3
 #random_seed: 1337
 #grad_lambda: 10.0
 #iwass_epsilon: 0.001
@@ -21,57 +21,58 @@ validation_split: 0
 optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
 #verbose: false
+#fmap_base: 2048
+#fmap_max: 256
+#fmap_min: 64
+#equalized: true
+kernel_size: 3
+inception: false
+self_attention_layer: null
+self_attention_size: 32
 
 #Trainer.grad_clip: null #null or a float
 #Trainer.D_training_repeats: 1
-Trainer.tick_kimg_default: 2
+#Trainer.tick_kimg_default: 5
 #Trainer.resume_nimg: 0
 
-#Generator.fmap_base: 2048
-Generator.fmap_max: 256
-Generator.fmap_min: 16
 Generator.latent_size: 256
 Generator.upsample: 'linear' #linear, nearest
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
-#Generator.dropout: 0.1
+Generator.dropout: 0.1
 Generator.residual: false
-#Generator.do_mode: 'mul' #mul, drop, prop
-#Generator.equalized: true
+Generator.do_mode: 'mul' #mul, drop, prop
 Generator.spectral_norm: false
 Generator.ch_by_ch: false
-#Generator.kernel_size: 3
-#Generator.normalization: null #batch_norm, layer_norm, weight_norm
+Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
-#Discriminator.fmap_base: 2048
-Discriminator.fmap_max: 256
-Discriminator.fmap_min: 64
 Discriminator.downsample: 'average' #average, stride
-#Discriminator.pixelnorm: false
-#Discriminator.activation: 'lrelu'
-#Discriminator.dropout: 0.1
-#Discriminator.do_mode: 'mul'
-#Discriminator.equalized: true
-Discriminator.spectral_norm: false
-#Discriminator.kernel_size: 3
-#Discriminator.phase_shuffle: 0
-#Discriminator.temporal_stats: false
-#Discriminator.num_stat_channels: 1
-#Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
 Discriminator.residual: false
+#Discriminator.activation: 'lrelu'
+Discriminator.dropout: 0.1
+Discriminator.do_mode: 'mul'
+Discriminator.spectral_norm: false
+Discriminator.phase_shuffle: 0
+Discriminator.temporal_stats: false
+Discriminator.num_stat_channels: 1
+Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Discriminator.pixelnorm: false
 
+DepthManager.attention_start_depth: null
+DepthManager.attention_transition_kimg: 200
 #DepthManager.depth_offset: 0
-DepthManager.minibatch_default: 32
-DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
-DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
-DepthManager.lod_training_kimg: 400
-DepthManager.lod_training_kimg_overrides: {2: 20, 4: 40, 5: 80, 6: 200} # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 100
-DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts from depth_offset+1
+#DepthManager.minibatch_default: 64
+#DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16}  # starts from depth_offset+1
+#DepthManager.tick_kimg_overrides: {4: 4, 5: 3, 6: 2, 7: 1, 8: 1}  # starts from depth_offset+1
+#DepthManager.lod_training_kimg: 400
+#DepthManager.lod_training_kimg_overrides: {1: 250, 2: 250, 3: 300, 4: 350}  # starts from depth_offset+1
+#DepthManager.lod_transition_kimg: 100
+#DepthManager.lod_transition_kimg_overrides: {1: 50, 2: 60, 3: 80, 4: 90}  # starts from depth_offset+1
 
 #SaverPlugin.keep_old_checkpoints: true
 #SaverPlugin.network_snapshot_ticks: 50
+#SaverPlugin.use_3way_test: false
 
 #OutputGenerator.samples_count: 8
 #OutputGenerator.output_snapshot_ticks: 10

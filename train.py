@@ -22,14 +22,14 @@ from collections import OrderedDict
 
 default_params = OrderedDict(
     result_dir='results',
-    exp_name='exp_name',
+    exp_name='',
     lr_rampup_kimg=50,
     G_lr_max=0.001,
     D_lr_max=0.001,
     total_kimg=4000,
     resume_network='',
     resume_time=0,
-    num_data_workers=2,
+    num_data_workers=3,
     random_seed=1337,
     grad_lambda=10.0,
     iwass_epsilon=0.001,
@@ -41,7 +41,15 @@ default_params = OrderedDict(
     LAMBDA_2=2,
     optimizer='adam',  # adam, amsgrad, ttur
     config_file=None,
-    verbose=False
+    verbose=False,
+    fmap_base=2048,
+    fmap_max=256,
+    fmap_min=64,
+    equalized=True,
+    kernel_size=3,
+    inception=False,
+    self_attention_layer=None,  # starts from 0
+    self_attention_size=32
 )
 
 
@@ -79,7 +87,7 @@ def main(params):
         if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
-    if params['config_file']:
+    if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
@@ -104,18 +112,28 @@ def main(params):
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
             params['Generator']['normalization'] = 'batch_norm'
-        G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
+        G = Generator(dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                      fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
+                      kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
+                      self_attention_layer=params['self_attention_layer'],
+                      self_attention_size=params['self_attention_size'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Discriminator'])
+        D = Discriminator(dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                          fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
+                          kernel_size=params['kernel_size'], equalized=params['equalized'],
+                          inception=params['inception'], self_attention_layer=params['self_attention_layer'],
+                          self_attention_size=params['self_attention_size'], **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
     if params['verbose']:
         from torchsummary import summary
+        G.set_gamma(1)
         G.depth = G.max_depth
-        summary(G, (latent_size, ))
+        summary(G, (latent_size,))
+        D.set_gamma(1)
         D.depth = D.max_depth
         summary(D, (params['MyDataset']['num_channels'], params['MyDataset']['seq_len']))
     logger.log('exp name: {}'.format(params['exp_name']))
@@ -142,6 +160,7 @@ def main(params):
 
     if params['optimizer'] == 'ttur':
         params['D_lr_max'] = params['G_lr_max'] * 4.0
+        params['Adam']['betas'] = (0, 0.9)
     opt_g = Adam(trainable_params(G), params['G_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
     opt_d = Adam(trainable_params(D), params['D_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
 
