@@ -19,7 +19,6 @@ import yaml
 import subprocess
 from argparse import ArgumentParser
 from collections import OrderedDict
-from torchsummary import summary
 
 default_params = OrderedDict(
     result_dir='results',
@@ -108,16 +107,13 @@ def main(params):
         G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        # if params['loss_type'] != 'hinge':
-        #     params['Discriminator']['spectral_norm'] = False
-        #     if params['Discriminator']['normalization'] in ('batch_norm', 'layer_norm'):
-        #         params['Discriminator']['normalization'] = 'weight_norm'
         D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
     latent_size = params['Generator']['latent_size']
     if params['verbose']:
+        from torchsummary import summary
         G.depth = G.max_depth
         summary(G, (latent_size, ))
         D.depth = D.max_depth

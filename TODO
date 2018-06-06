@@ -1,25 +1,22 @@
-Debug:
-    WGAN + D + BN(works_on_cpu)/LN/SN(works_on_cpu) == Fails
-Test:
-    Validation_split
-    ttur: config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
-    generator.residual
-    Discriminator.phase_shuffle: 0
-    Discriminator.temporal_stats: false
-    Discriminator.num_stat_channels: 1
-    Discriminator.residual: false
-    DepthManager.depth_offset: 0
-    MyDataset.per_user: true
-    MyDataset.use_abs: false
 Validation:
     https://github.com/eugenium/MMD/blob/master/mmd.py => (this is the 3way mode)work with fft
     https://github.com/nipy/nitime
     https://github.com/Eden-Kramer-Lab/spectral_connectivity
     Use validation result
     d(concatenated parts) == fake
+Test:
+    Discriminator.phase_shuffle: 0
+    ttur: config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
+    generator.residual
+    Discriminator.temporal_stats: false
+    Discriminator.num_stat_channels: 1
+    Discriminator.residual: false
+    DepthManager.depth_offset: 0
+    MyDataset.per_user: true
+    MyDataset.use_abs: false
 Addition:
     experiment manager and hyper param search
-    test_mode(print everything)
+    verbose_mode(print everything)
     self attention in G
     self attention in D
     connection network

@@ -17,7 +17,7 @@ num_data_workers: 2
 
 loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
 Discriminator.spectral_norm: false
-Discriminator.normalization: 'batch_norm' #batch_norm, layer_norm, weight_norm
+Discriminator.normalization: 'layer_norm' #batch_norm, layer_norm, weight_norm
 optimizer: 'adam' # adam, amsgrad, ttur
 
 #cuda_device: 0
