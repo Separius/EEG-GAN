@@ -103,13 +103,11 @@ def main(params):
         G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        spectral_norm_linear = params['Discriminator']['spectral_norm']
         if params['loss_type'] != 'hinge':
             params['Discriminator']['spectral_norm'] = False
             if params['Discriminator']['normalization'] == 'batch_norm':
                 params['Discriminator']['normalization'] = 'layer_norm'
-        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'],
-                          spectral_norm_linear=spectral_norm_linear, **params['Discriminator'])
+        D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)

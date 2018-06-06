@@ -1,5 +1,4 @@
 Test:
-    DEBUG current head (compare with two commits before)
     HingeLoss + SpectralNorm
     Wgan + SpectralNorm
     Mixup + 3 losses

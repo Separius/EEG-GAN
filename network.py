@@ -318,9 +318,10 @@ class DBlock(nn.Module):
         self.net.append(
             NeoPGConv1d(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
                         spectral=spectral, normalization=normalization, **layer_settings))
-        self.net = nn.Sequential(
-            NeoPGConv1d(ch_in, ch_out, ksize=2 ** initial_size if is_last else ksize, pad=0 if is_last else None,
+        self.net.append(
+            NeoPGConv1d(ch_in, ch_out, ksize=(2 ** initial_size) if is_last else ksize, pad=0 if is_last else None,
                         equalized=equalized, spectral=spectral, normalization=normalization, **layer_settings))
+        self.net = nn.Sequential(*self.net)
 
     def forward(self, x, first=False):
         if first:
@@ -359,10 +360,10 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, spectral_norm_linear, fmap_base=2048, fmap_max=256, fmap_min=64,
-                 downsample='average', pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', equalized=True,
-                 spectral_norm=False, kernel_size=3, phase_shuffle=0, temporal_stats=False, num_stat_channels=1,
-                 normalization=None, residual=False):
+    def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=64, downsample='average',
+                 pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', equalized=True, spectral_norm=False,
+                 kernel_size=3, phase_shuffle=0, temporal_stats=False, num_stat_channels=1, normalization=None,
+                 residual=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -384,7 +385,7 @@ class Discriminator(nn.Module):
                                             normalization=normalization, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         self.linear = nn.Linear(nf(initial_size - 2), 1)
-        if spectral_norm_linear:
+        if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
         self.depth = 0
         self.alpha = 1.0
