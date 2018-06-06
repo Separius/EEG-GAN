@@ -89,11 +89,13 @@ class ScaledTanh(nn.Tanh):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False):
+    def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False, is_weight_norm=False):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
         if is_spectral:
             self.conv = spectral_norm_wrapper(self.conv)
+        if is_weight_norm:
+            self.conv = weight_norm_wrapper(self.conv)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
         self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
@@ -180,16 +182,17 @@ class NeoPGConv1d(nn.Module):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
         if equalized:
-            conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral)
+            conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral,
+                                   is_weight_norm=normalization == 'weight_norm')
         else:
             conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
             if spectral:
                 conv = spectral_norm_wrapper(conv)
-        norm = None
-        if normalization:
             if normalization == 'weight_norm':
                 conv = weight_norm_wrapper(conv)
-            elif normalization == 'layer_norm':
+        norm = None
+        if normalization:
+            if normalization == 'layer_norm':
                 norm = nn.LayerNorm(ch_out)
             elif normalization == 'batch_norm':
                 norm = nn.BatchNorm1d(ch_out)
@@ -244,7 +247,7 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base=2048, fmap_max=256, fmap_min=16, latent_size=256,
-                 upsample='nearest', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
+                 upsample='linear', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
                  residual=False, do_mode='mul', equalized=True, spectral_norm=False, ch_by_ch=False, kernel_size=3,
                  normalization=None):
         super(Generator, self).__init__()
@@ -298,7 +301,7 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, initial_size=2, temporal=False, num_stat_channels=1,
+    def __init__(self, ch_in, ch_out, num_channels, initial_size=None, temporal=False, num_stat_channels=1,
                  ksize=3, equalized=True, spectral=False, normalization=None, residual=False, **layer_settings):
         super(DBlock, self).__init__()
         is_last = initial_size is not None

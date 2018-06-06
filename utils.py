@@ -2,8 +2,8 @@ import torch
 import os
 import inspect
 from pickle import load, dump
-import numpy as np
 from pyeeg import spectral_entropy_vectorized, bin_power_vectorized, hjorth_vectorized
+import numpy as np
 from scipy.stats import kurtosis, skew
 from sklearn import svm, tree
 from sklearn.ensemble import RandomForestClassifier
@@ -158,6 +158,7 @@ def get_features_vectorized(x, is_numpy=False):
     res[:, 15:19] = power_ratio[:]
     res[:, 19:23] = bin_power_vectorized(z, [4, 10, 15, 25, 40], 80)[:]
     res[:, 23] = spectral_entropy_vectorized(power_ratio)
+    #TODO res[:, xx:yy] = bin_power_vectorized(z, [0.5, 4, 8, 10, 12, 30])
     return res
 
 

@@ -1,24 +1,109 @@
-Resize => find the best upsampler, find the best down sampler
-I/O => channel by channel output
-SpecNorm => test on hinge, test again on wgan
-ResidualBlock => Test
-
-PhaseShift => make it work
-Validation => use the result in saver and early stopping, add differentiable matlab features, call matlab functions?
-SeqLen => play with depth manager's initial depth, play with ds'initial depth
-Config => better config reader and also experiment manager and hyper param search, better test_mode(print everything)
-Optimizer => what lr and scheduler, num D updates per G, ttur config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
-Sizes => batch size heuristics, feature number of G/D(force their equality), latent size
-Training => training and transition size for each stage heuristics
-Dropout => what dropout for D, how much dropout for D, what dropout for G(~50!), how much dropout for G
-KernelSize => best kernel size for D/G
-DataSet => increase to 16 channels, per_user or global, use_abs or max-min
-MiscI => d(concatenated parts) == fake, mixed classifiers(abnormal / 6 classes), stats mmd(github.com/ratschlab/RGAN)
-Stats => temporal or not, num of channels
-Attention => add self attention to D, add self attention to G, where to add them?, has lambda, placing it at higher levels (more channels = lower temporal freq) is better
-MiscII => connection network(restore Z from data ||z-C(D(G(z)))||), dp training(github.com/ratschlab/RGAN)
-MiscIII => wavenet or samplernn + trained d as semantic loss, test same net on audio(4x the freq at each stage)
-progressive dilated RNN or Wavenet/TCN ==> Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred + AutoRegressive ; what is alpha in here? -> two things, at last layer(repeat vs get output of net) and at first layer, get z directly or from the new layer
-Condition ==> on User Embedding or Easy meta-data(age, sex) or all ; ConditionalBatchNorm ; with SemiSupervised InfoGAN(github.com/spurra/ss-infogan) or AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py) or Activation Maximization(github.com/ZhimingZhou/AM-GAN) or Class Splitting GAN(github.com/CIFASIS/splitting_gan) or Projection(yW . x)(github.com/pfnet-research/sngan_projection)
-Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
-InfiniteLength => G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut and also even VAE like arch we can have stochastisity ; or use the connection net to make another gan over sequences of Z! :D
+Test:
+    DEBUG current head (compare with two commits before)
+    HingeLoss + SpectralNorm
+    Wgan + SpectralNorm
+    Mixup + 3 losses
+    Wgan-CT
+    Validation_split
+    amsgrad
+    ttur: config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
+    generator.residual
+    Generator.normalization => no pixel_norm then?
+    Discriminator.phase_shuffle: 0
+    Discriminator.temporal_stats: false
+    Discriminator.num_stat_channels: 1
+    Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
+    Discriminator.residual: false
+    DepthManager.depth_offset: 0
+    MyDataset.per_user: true
+    MyDataset.use_abs: false
+Validation:
+    https://github.com/eugenium/MMD/blob/master/mmd.py => (this is the 3way mode)work with fft
+    https://github.com/nipy/nitime
+    https://github.com/Eden-Kramer-Lab/spectral_connectivity
+    Use validation result
+    d(concatenated parts) == fake
+Addition:
+    experiment manager and hyper param search
+    test_mode(print everything)
+    self attention in G
+    self attention in D
+    connection network
+    differential privacy training
+    Inception blocks (o=concat(conv(x, k=3), conv(x, k=5), conv(x, k=7)))
+    ConditionalBatchNorm
+Classification:
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
+Experiment:
+    test on audio
+    sample-rnn + trained discriminator
+    Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
+    progressive dilated mode(Wavenet/TCN/DRNN)
+        Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred
+        AutoRegressive
+        Alpha Meaning
+            at last layer(repeat vs get output of net)
+            at first layer, get z directly or from the new layer
+Condition:
+    On:
+        User Embedding
+        Easy meta-data(age, sex)
+        All the data
+    Loss:
+        SemiSupervised InfoGAN(github.com/spurra/ss-infogan)
+        AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py)
+        Activation Maximization(github.com/ZhimingZhou/AM-GAN)
+        Class Splitting GAN(github.com/CIFASIS/splitting_gan)
+        Projection(yW . x)(github.com/pfnet-research/sngan_projection)
+InfiniteSeqLen:
+    Freez D and swap first linear of G with a conv => not consistent => must defreeze D and retrain everything
+    Mabye, giving 0,0,0,Z,0,0,0,Z,0,0,0,Z,0,0,0 will work? => middle outputs must be halved => is not consistent even with slerp
+    G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut => extend this is VAE like output
+    Use the connection net to make another gan over sequences of Z! :D
+ParamSearch:
+    learning_rate
+    lr_rampup: disable vs default
+    loss_type: wgan_gp, wgan_ct, hinge
+    mixup_alpha: (0, 10)
+    optimizer: adam, amsgrad, ttur
+    D_training_repeats: {1, 2, 3, 4, 5}
+    Generator.fmap_base: 2048
+    Generator.fmap_max: 256
+    Generator.fmap_min: 16
+    Generator.latent_size: 256
+    Generator.upsample: 'linear' #linear, nearest
+    Generator.dropout: 0.1 #read somewhere that is O(50)
+    Generator.residual: false
+    Generator.do_mode: 'mul' #mul, drop, prop
+    Generator.spectral_norm: false
+    Generator.ch_by_ch: false
+    Generator.kernel_size: 3
+    Generator.pixelnorm: true
+    Generator.normalization: null #batch_norm, layer_norm, weight_norm
+    Discriminator.fmap_base: 2048
+    Discriminator.fmap_max: 256
+    Discriminator.fmap_min: 64
+    Discriminator.downsample: 'average' #average, stride
+    Discriminator.dropout: 0.1
+    Discriminator.spectral_norm: false
+    Discriminator.kernel_size: 3
+    Discriminator.phase_shuffle: 0
+    Discriminator.temporal_stats: false
+    Discriminator.num_stat_channels: 1
+    Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
+    Discriminator.residual: false
+    DepthManager.depth_offset: {0, 1, 2}
+    DepthManager.minibatch_default: 32
+    DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
+    DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
+    DepthManager.lod_training_kimg: 400
+    DepthManager.lod_training_kimg_overrides: {2: 20, 4: 40, 5: 80, 6: 200} # starts from depth_offset+1
+    DepthManager.lod_transition_kimg: 100
+    DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts from depth_offset+1
+    MyDataset.seq_len: 256
+    MyDataset.stride: 0.5
+    MyDataset.per_user: true
+    MyDataset.use_abs: false
+    MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1

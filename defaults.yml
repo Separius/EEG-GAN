@@ -32,24 +32,22 @@ Generator.fmap_max: 256
 Generator.fmap_min: 16
 Generator.latent_size: 256
 Generator.upsample: 'linear' #linear, nearest
-Generator.residual: false
-#Generator.normalization: null #batch_norm, layer_norm, weight_norm
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
 #Generator.dropout: 0.1
+Generator.residual: false
 #Generator.do_mode: 'mul' #mul, drop, prop
 #Generator.equalized: true
 Generator.spectral_norm: false
 Generator.ch_by_ch: false
 #Generator.kernel_size: 3
+#Generator.normalization: null #batch_norm, layer_norm, weight_norm
 
 #Discriminator.fmap_base: 2048
 Discriminator.fmap_max: 256
 Discriminator.fmap_min: 64
 Discriminator.downsample: 'average' #average, stride
-Discriminator.residual: false
-#Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
 #Discriminator.pixelnorm: false
 #Discriminator.activation: 'lrelu'
 #Discriminator.dropout: 0.1
@@ -60,6 +58,8 @@ Discriminator.spectral_norm: false
 #Discriminator.phase_shuffle: 0
 #Discriminator.temporal_stats: false
 #Discriminator.num_stat_channels: 1
+#Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
+Discriminator.residual: false
 
 #DepthManager.depth_offset: 0
 DepthManager.minibatch_default: 32
