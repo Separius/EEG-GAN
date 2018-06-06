@@ -81,6 +81,8 @@ def main(params):
         if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
+    if params['config_file']:
+        params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss']
@@ -119,6 +121,7 @@ def main(params):
         summary(G, (latent_size, ))
         D.depth = D.max_depth
         summary(D, (params['MyDataset']['num_channels'], params['MyDataset']['seq_len']))
+    logger.log('exp name: {}'.format(params['exp_name']))
     logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
     logger.log('dataset shape: {}'.format(dataset.shape))
     logger.log('Total number of parameters in Generator: {}'.format(num_params(G)))
