@@ -231,17 +231,20 @@ class GBlock(nn.Module):
                          pad=2 ** initial_size - 1 if is_first else None, normalization=normalization,
                          **layer_settings)
         c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, normalization=normalization, **layer_settings)
-        self.bypass = nn.Sequential() if not residual or is_first else NeoPGConv1d(ch_in, ch_out, ksize=1,
-                                                                                   equalized=equalized,
-                                                                                   pixelnorm=False, act=None,
-                                                                                   spectral=layer_settings[
-                                                                                       'spectral_norm'])
+        if residual and not is_first:
+            self.bypass = NeoPGConv1d(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
+                                      spectral=layer_settings['spectral_norm'])
+        else:
+            self.bypass = None
         self.residual = nn.Sequential(c1, c2)
         self.toRGB = ToRGB(ch_out, num_channels, normalization=None if normalization == 'batch_norm' else normalization,
                            ch_by_ch=ch_by_ch, equalized=equalized)
 
     def forward(self, x, last=False):
-        x = self.residual(x) + self.bypass(x)
+        if self.bypass is not None:
+            x = self.residual(x) + self.bypass(x)
+        else:
+            x = self.residual(x)
         return self.toRGB(x) if last else x
 
 
@@ -305,9 +308,11 @@ class DBlock(nn.Module):
                  ksize=3, equalized=True, spectral=False, normalization=None, residual=False, **layer_settings):
         super(DBlock, self).__init__()
         is_last = initial_size is not None
-        self.bypass = nn.Sequential() if not residual or is_last else NeoPGConv1d(ch_in, ch_out, ksize=1,
-                                                                                  equalized=equalized, pixelnorm=False,
-                                                                                  act=None, spectral=spectral)
+        if residual and not is_last:
+            self.bypass = NeoPGConv1d(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
+                                      spectral=spectral)
+        else:
+            self.bypass = None
         self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
                                    spectral=spectral,
                                    normalization=None if normalization == 'batch_norm' else normalization)
@@ -326,7 +331,10 @@ class DBlock(nn.Module):
     def forward(self, x, first=False):
         if first:
             x = self.fromRGB(x)
-        return self.net(x) + self.bypass(x)
+        if self.bypass is not None:
+            return self.net(x) + self.bypass(x)
+        else:
+            return self.net(x)
 
 
 class MinibatchStddev(nn.Module):
