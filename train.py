@@ -37,7 +37,6 @@ default_params = OrderedDict(
     save_dataset='',
     load_dataset='',
     loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge
-    mixup_alpha=None,  # null or float (was 1.0 before)
     cuda_device=0,
     validation_split=0,
     LAMBDA_2=2,
@@ -104,13 +103,15 @@ def main(params):
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
+        if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
+            params['Generator']['normalization'] = 'batch_norm'
         G = Generator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        if params['loss_type'] != 'hinge':
-            params['Discriminator']['spectral_norm'] = False
-            if params['Discriminator']['normalization'] == 'batch_norm':
-                params['Discriminator']['normalization'] = 'layer_norm'
+        # if params['loss_type'] != 'hinge':
+        #     params['Discriminator']['spectral_norm'] = False
+        #     if params['Discriminator']['normalization'] in ('batch_norm', 'layer_norm'):
+        #         params['Discriminator']['normalization'] = 'weight_norm'
         D = Discriminator(dataset.shape, params['MyDataset']['model_dataset_depth_offset'], **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
@@ -159,8 +160,7 @@ def main(params):
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], mixup_alpha=params['mixup_alpha'],
-                         LAMBDA_2=params['LAMBDA_2'])
+                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'])
     trainer = Trainer(D, G, D_loss_fun, G_loss, opt_d, opt_g, dataset, rl(mb_def), **params['Trainer'])
     max_depth = min(G.max_depth, D.max_depth)
     trainer.register_plugin(

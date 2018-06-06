@@ -15,7 +15,6 @@ num_data_workers: 3
 #save_dataset: ''
 #load_dataset: ''
 loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
-#mixup_alpha: null # or float (was 1.0 before)
 #cuda_device: 0
 validation_split: 0
 #LAMBDA_2: 2

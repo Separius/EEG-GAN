@@ -6,6 +6,7 @@ results/
 *.yml
 !defaults.yml
 !hpc.yml
+!test.yml
 data/
 configs/
 *.pkl

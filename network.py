@@ -176,6 +176,16 @@ class ToRGB(nn.Module):
         return self.toRGB(x)
 
 
+class LayerNorm(nn.Module):
+    def __init__(self, ch_out):
+        super(LayerNorm, self).__init__()
+        self.num_channels = ch_out
+        self.net = nn.LayerNorm(ch_out)
+
+    def forward(self, x):
+        return self.net(x.permute(0, 2, 1)).permute(0, 2, 1)
+
+
 class NeoPGConv1d(nn.Module):
     def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True,
                  act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None):
@@ -193,7 +203,7 @@ class NeoPGConv1d(nn.Module):
         norm = None
         if normalization:
             if normalization == 'layer_norm':
-                norm = nn.LayerNorm(ch_out)
+                norm = LayerNorm(ch_out)
             elif normalization == 'batch_norm':
                 norm = nn.BatchNorm1d(ch_out)
         self.net = [conv]

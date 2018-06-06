@@ -14,11 +14,15 @@ num_data_workers: 2
 #iwass_epsilon: 0.001
 #save_dataset: ''
 #load_dataset: ''
+
 loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
+Discriminator.spectral_norm: false
+Discriminator.normalization: 'batch_norm' #batch_norm, layer_norm, weight_norm
+optimizer: 'adam' # adam, amsgrad, ttur
+
 #cuda_device: 0
 validation_split: 0
 #LAMBDA_2: 2
-optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
 #verbose: false
 
@@ -28,9 +32,9 @@ Trainer.tick_kimg_default: 2
 #Trainer.resume_nimg: 0
 
 #Generator.fmap_base: 2048
-Generator.fmap_max: 256
-Generator.fmap_min: 16
-Generator.latent_size: 256
+Generator.fmap_max: 16
+Generator.fmap_min: 4
+Generator.latent_size: 8
 Generator.upsample: 'linear' #linear, nearest
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
@@ -42,27 +46,25 @@ Generator.residual: false
 Generator.spectral_norm: false
 Generator.ch_by_ch: false
 #Generator.kernel_size: 3
-#Generator.normalization: null #batch_norm, layer_norm, weight_norm
+Generator.normalization: null #batch_norm, layer_norm, weight_norm
 
 #Discriminator.fmap_base: 2048
-Discriminator.fmap_max: 256
-Discriminator.fmap_min: 64
+Discriminator.fmap_max: 16
+Discriminator.fmap_min: 4
 Discriminator.downsample: 'average' #average, stride
 #Discriminator.pixelnorm: false
 #Discriminator.activation: 'lrelu'
 #Discriminator.dropout: 0.1
 #Discriminator.do_mode: 'mul'
 #Discriminator.equalized: true
-Discriminator.spectral_norm: false
 #Discriminator.kernel_size: 3
 #Discriminator.phase_shuffle: 0
 #Discriminator.temporal_stats: false
 #Discriminator.num_stat_channels: 1
-#Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
 Discriminator.residual: false
 
 #DepthManager.depth_offset: 0
-DepthManager.minibatch_default: 32
+DepthManager.minibatch_default: 8
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 32} # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {3: 16, 4: 8, 5: 8, 6: 4, 7: 4, 8: 4} # starts from depth_offset+1
 DepthManager.lod_training_kimg: 400
@@ -74,12 +76,12 @@ DepthManager.lod_transition_kimg_overrides: {2: 5, 4: 8, 5: 16, 6: 40} # starts 
 #SaverPlugin.network_snapshot_ticks: 50
 
 #OutputGenerator.samples_count: 8
-#OutputGenerator.output_snapshot_ticks: 10
+OutputGenerator.output_snapshot_ticks: 50
 
-#GifGenerator.num_frames: 30
+GifGenerator.num_frames: 30
 #GifGenerator.fps: 5
 
-#Validator.output_snapshot_ticks: 20
+Validator.output_snapshot_ticks: 20
 
 #MyDataset.dir_path: './data/eeg'
 #MyDataset.num_files: 860

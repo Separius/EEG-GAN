@@ -1,17 +1,12 @@
+Debug:
+    WGAN + D + BN(works_on_cpu)/LN/SN(works_on_cpu) == Fails
 Test:
-    HingeLoss + SpectralNorm
-    Wgan + SpectralNorm
-    Mixup + 3 losses
-    Wgan-CT
     Validation_split
-    amsgrad
     ttur: config(b1=0 and b2=0.9, d_lr = 0.0004 and g=d/4)
     generator.residual
-    Generator.normalization => no pixel_norm then?
     Discriminator.phase_shuffle: 0
     Discriminator.temporal_stats: false
     Discriminator.num_stat_channels: 1
-    Discriminator.normalization: null #batch_norm, layer_norm, weight_norm
     Discriminator.residual: false
     DepthManager.depth_offset: 0
     MyDataset.per_user: true
