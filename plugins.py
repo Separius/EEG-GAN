@@ -239,8 +239,8 @@ class OutputGenerator(Plugin):
             fig.set_figwidth(20)
             for ch in range(num_channels):
                 data = generated[index, ch, :]
-                axs[ch][0].plot(t, data, color=(0.8, 0, 0, 0.5), label='fake')
-                axs[ch][1].plot(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='fake_fft')
+                axs[ch][0].plot(t, data, color=(0.8, 0, 0, 0.5), label='time domain')
+                axs[ch][1].semilogy(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain')
                 axs[ch][0].set_ylim([-1.1, 1.1])
                 axs[ch][0].legend()
                 axs[ch][1].legend()

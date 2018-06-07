@@ -21,17 +21,17 @@ validation_split: 0
 optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
 #verbose: false
-#fmap_base: 2048
-#fmap_max: 256
-#fmap_min: 64
-#equalized: true
+fmap_base: 2048
+fmap_max: 256
+fmap_min: 64
+equalized: true
 kernel_size: 3
 inception: false
 self_attention_layer: null
 self_attention_size: 32
 
 #Trainer.grad_clip: null #null or a float
-#Trainer.D_training_repeats: 1
+Trainer.D_training_repeats: 1
 #Trainer.tick_kimg_default: 5
 #Trainer.resume_nimg: 0
 
@@ -72,7 +72,7 @@ DepthManager.attention_transition_kimg: 200
 
 #SaverPlugin.keep_old_checkpoints: true
 #SaverPlugin.network_snapshot_ticks: 50
-#SaverPlugin.use_3way_test: false
+SaverPlugin.use_3way_test: false
 
 #OutputGenerator.samples_count: 8
 #OutputGenerator.output_snapshot_ticks: 10

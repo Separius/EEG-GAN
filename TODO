@@ -4,8 +4,11 @@ Addition:
 Validation:
     Alish Features
     d(concatenated parts) == fake
-    https://github.com/eugenium/MMD/blob/master/mmd.py => (this is the 3way mode)work with fft
+    3-way mmd over fft or time
     Use validation result
+    Aggregation graphs (time and freq domain)
+    16 channels
+    higher top freq(250 Hz)
 Classification:
     ChronoNetStyleNetwork
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
@@ -15,14 +18,12 @@ Experiment:
     connection network
     differential privacy training
     test on audio
-    sample-rnn + trained discriminator
+    sample-rnn + trained discriminator + classifier hidden rep
     Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
     progressive dilated mode(Wavenet/TCN/DRNN)
         Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred
         AutoRegressive
-        Alpha Meaning
-            at last layer(repeat vs get output of net)
-            at first layer, get z directly or from the new layer
+        Alpha: at first layer, get z(x) directly or from the new layer
 Condition:
     ConditionalBatchNorm
     On:
