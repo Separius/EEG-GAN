@@ -86,7 +86,7 @@ def main(params):
         dataset = load_pkl(params['load_dataset'])
     else:
         print('loading dataset from scratch')
-        dataset = EEGDataset(params['progression_scale'], **params['MyDataset'])
+        dataset = EEGDataset(params['progression_scale'], **params['EEGDataset'])
         if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
@@ -119,25 +119,25 @@ def main(params):
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     elif params['drnn']:
         G = DilatedGenerator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
-                             initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                             initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                              fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                              equalized=params['equalized'], **params['DilatedGenerator'])
         D = DilatedDiscriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
-                                 initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                                 initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                                  fmap_base=params['fmap_base'], fmap_max=params['fmap_max'],
                                  fmap_min=params['fmap_min'], equalized=params['equalized'],
                                  **params['DilatedDiscriminator'])
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
             params['Generator']['normalization'] = 'batch_norm'
-        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
                       self_attention_layer=params['self_attention_layer'],
                       self_attention_size=params['self_attention_size'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],
@@ -152,7 +152,7 @@ def main(params):
         summary(G, (latent_size,))
         D.set_gamma(1)
         D.depth = D.max_depth
-        summary(D, (params['MyDataset']['num_channels'], params['MyDataset']['seq_len']))
+        summary(D, (params['EEGDataset']['num_channels'], params['EEGDataset']['seq_len']))
     logger.log('exp name: {}'.format(params['exp_name']))
     logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
     logger.log('dataset shape: {}'.format(dataset.shape))
@@ -205,15 +205,15 @@ def main(params):
         trainer.register_plugin(
             Validator(lambda x: random_latents(x, latent_size), valid_data_loader, **params['Validator']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, params['MyDataset']['seq_len'],
-                        params['MyDataset']['max_freq'], params['MyDataset']['seq_len'], **params['OutputGenerator']))
+        OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, params['EEGDataset']['seq_len'],
+                        params['EEGDataset']['max_freq'], params['EEGDataset']['seq_len'], **params['OutputGenerator']))
     trainer.register_plugin(
-        FixedNoise(lambda x: random_latents(x, latent_size), result_dir, params['MyDataset']['seq_len'],
-                   params['MyDataset']['max_freq'], params['MyDataset']['seq_len'], **params['OutputGenerator']))
+        FixedNoise(lambda x: random_latents(x, latent_size), result_dir, params['EEGDataset']['seq_len'],
+                   params['EEGDataset']['max_freq'], params['EEGDataset']['seq_len'], **params['OutputGenerator']))
     trainer.register_plugin(
-        GifGenerator(lambda x: random_latents(x, latent_size), result_dir, params['MyDataset']['seq_len'],
-                     params['MyDataset']['max_freq'], params['OutputGenerator']['output_snapshot_ticks'],
-                     params['MyDataset']['seq_len'], **params['GifGenerator']))
+        GifGenerator(lambda x: random_latents(x, latent_size), result_dir, params['EEGDataset']['seq_len'],
+                     params['EEGDataset']['max_freq'], params['OutputGenerator']['output_snapshot_ticks'],
+                     params['EEGDataset']['seq_len'], **params['GifGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)

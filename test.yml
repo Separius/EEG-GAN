@@ -85,10 +85,10 @@ Validator.output_snapshot_ticks: 95
 
 #MyDataset.dir_path: './data/eeg'
 #MyDataset.num_files: 860
-MyDataset.seq_len: 256
+MyDataset.seq_len: 512
 #MyDataset.stride: 0.5
 #MyDataset.max_freq: 80
 #MyDataset.num_channels: 5
 #MyDataset.per_user: true
 #MyDataset.use_abs: false
-MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
+MyDataset.model_dataset_depth_offset: 3 # start from 4x4 instead of 1x1

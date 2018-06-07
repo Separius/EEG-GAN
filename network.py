@@ -276,12 +276,14 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = 0
-        while True:
-            R += 1
-            if resolution // progression_scale ** R == 1:
-                break
-        self.R = R
+        # R = 0
+        # while True:
+        #     R += 1
+        #     if resolution // progression_scale ** R == 1:
+        #         break
+        # self.R = R
+        R = int(np.log2(resolution))
+        assert resolution == 2 ** R and resolution >= 2 ** initial_size
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -444,11 +446,13 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = 0
-        while True:
-            R += 1
-            if resolution // progression_scale ** R == 1:
-                break
+        # R = 0
+        # while True:
+        #     R += 1
+        #     if resolution // progression_scale ** R == 1:
+        #         break
+        R = int(np.log2(resolution))
+        assert resolution == 2 ** R and resolution >= initial_size ** 2
         self.R = R
 
         def nf(stage):

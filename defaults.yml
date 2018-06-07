@@ -27,8 +27,8 @@ fmap_min: 64
 equalized: true
 kernel_size: 3
 inception: false
-self_attention_layer: null
-self_attention_size: 32
+self_attention_layer: 3
+self_attention_size: 16
 #drnn: false
 progression_scale: 2
 
@@ -61,7 +61,7 @@ Discriminator.num_stat_channels: 1
 Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 #Discriminator.pixelnorm: false
 
-DepthManager.attention_start_depth: null
+DepthManager.attention_start_depth: 6
 DepthManager.attention_transition_kimg: 200
 #DepthManager.depth_offset: 0
 #DepthManager.minibatch_default: 64
