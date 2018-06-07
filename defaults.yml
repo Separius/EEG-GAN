@@ -29,6 +29,8 @@ kernel_size: 3
 inception: false
 self_attention_layer: null
 self_attention_size: 32
+#drnn: false
+progression_scale: 2
 
 #Trainer.grad_clip: null #null or a float
 Trainer.D_training_repeats: 1
@@ -91,3 +93,27 @@ MyDataset.seq_len: 256
 #MyDataset.per_user: true
 #MyDataset.use_abs: false
 MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
+
+DilatedGenerator.latent_size: 256
+DilatedGenerator.normalize_latents: true
+DilatedGenerator.pixelnorm: true
+DilatedGenerator.activation: 'lrelu'
+DilatedGenerator.dropout: 0.1
+DilatedGenerator.do_mode: 'mul'
+DilatedGenerator.spectral_norm: false
+DilatedGenerator.ch_by_ch: false
+DilatedGenerator.normalization: null
+DilatedGenerator.recurrent_dropout: 0.1
+DilatedGenerator.bidir: false
+DilatedGenerator.n_layers: 2
+DilatedGenerator.cell_type: 'gru'
+
+DilatedDiscriminator.activation: 'lrelu'
+DilatedDiscriminator.dropout: 0.1
+DilatedDiscriminator.do_mode: 'mul'
+DilatedDiscriminator.spectral_norm: false
+DilatedDiscriminator.normalization: null
+DilatedDiscriminator.recurrent_dropout: 0.1
+DilatedDiscriminator.bidir: false
+DilatedDiscriminator.n_layers: 2
+DilatedDiscriminator.cell_type: 'gru'

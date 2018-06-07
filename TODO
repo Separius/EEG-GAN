@@ -1,5 +1,9 @@
 Addition:
     experiment manager and hyper param search(Define ParamSearchSpace)
+    Test DRNN models(+ make slerp work here too [gif generator/fixed explicitly says use this])
+
+    chrononet network
+    5 types of conditional nets
 
 Validation:
     Alish Features
@@ -10,20 +14,16 @@ Validation:
     16 channels
     higher top freq(250 Hz)
 Classification:
-    ChronoNetStyleNetwork
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
 Experiment:
+    test on audio(use sample rnn script)
     connection network
     differential privacy training
-    test on audio
     sample-rnn + trained discriminator + classifier hidden rep
     Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
-    progressive dilated mode(Wavenet/TCN/DRNN)
-        Z(2xFreq)|NewLayer|OldLayer|Fake ; Data(2xFreq)|NewLayer|OldLayer|Pred
-        AutoRegressive
-        Alpha: at first layer, get z(x) directly or from the new layer
+    progressive dilated mode + AutoRegressive
 Condition:
     ConditionalBatchNorm
     On:

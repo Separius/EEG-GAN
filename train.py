@@ -4,7 +4,7 @@ from network import Generator, Discriminator
 from losses import G_loss, D_loss
 from functools import partial
 from trainer import Trainer
-from dataset import MyDataset
+from dataset import EEGDataset
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SequentialSampler, SubsetRandomSampler
 from plugins import FixedNoise, OutputGenerator, Validator, GifGenerator, SaverPlugin, LRScheduler, \
@@ -19,6 +19,7 @@ import yaml
 import subprocess
 from argparse import ArgumentParser
 from collections import OrderedDict
+from drnn import DilatedDiscriminator, DilatedGenerator
 
 default_params = OrderedDict(
     result_dir='results',
@@ -49,7 +50,9 @@ default_params = OrderedDict(
     kernel_size=3,
     inception=False,
     self_attention_layer=None,  # starts from 0
-    self_attention_size=32
+    self_attention_size=32,
+    drnn=False,
+    progression_scale=2
 )
 
 
@@ -83,7 +86,7 @@ def main(params):
         dataset = load_pkl(params['load_dataset'])
     else:
         print('loading dataset from scratch')
-        dataset = MyDataset(**params['MyDataset'])
+        dataset = EEGDataset(params['progression_scale'], **params['MyDataset'])
         if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
@@ -107,19 +110,34 @@ def main(params):
         stats_to_log.extend(['validation.' + x for x in val_stats])
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
 
+    if params['drnn']:
+        latent_size = params['DilatedGenerator']['latent_size']
+    else:
+        latent_size = params['Generator']['latent_size']
+
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
+    elif params['drnn']:
+        G = DilatedGenerator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
+                             initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                             fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
+                             equalized=params['equalized'], **params['DilatedGenerator'])
+        D = DilatedDiscriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
+                                 initial_size=params['MyDataset']['model_dataset_depth_offset'],
+                                 fmap_base=params['fmap_base'], fmap_max=params['fmap_max'],
+                                 fmap_min=params['fmap_min'], equalized=params['equalized'],
+                                 **params['DilatedDiscriminator'])
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
             params['Generator']['normalization'] = 'batch_norm'
-        G = Generator(dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
                       self_attention_layer=params['self_attention_layer'],
                       self_attention_size=params['self_attention_size'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        D = Discriminator(dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
+        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['MyDataset']['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],
@@ -127,8 +145,7 @@ def main(params):
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
-    latent_size = params['Generator']['latent_size']
-    if params['verbose']:
+    if params['verbose'] and not params['drnn']:
         from torchsummary import summary
         G.set_gamma(1)
         G.depth = G.max_depth
@@ -207,8 +224,8 @@ def main(params):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin,
-                       OutputGenerator, Adam, GifGenerator, Validator, MyDataset]
+    needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam,
+                       GifGenerator, Validator, EEGDataset, DilatedDiscriminator, DilatedGenerator]
     excludes = {'Adam': {'lr', 'amsgrad', 'weight_decay'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(needarg_classes, excludes, default_overrides)

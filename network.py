@@ -269,15 +269,19 @@ class GBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized, inception,
+    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized, inception,
                  self_attention_layer, self_attention_size, latent_size=256, upsample='linear', normalize_latents=True,
                  pixelnorm=True, activation='lrelu', dropout=0.1, residual=False, do_mode='mul', spectral_norm=False,
                  ch_by_ch=False, normalization=None):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution))
-        assert resolution == 2 ** R and resolution >= 2 ** initial_size
+        R = 0
+        while True:
+            R += 1
+            if resolution // progression_scale ** R == 1:
+                break
+        self.R = R
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -302,9 +306,9 @@ class Generator(nn.Module):
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         if upsample == 'linear':
-            self.upsampler = nn.Upsample(scale_factor=2, mode=upsample, align_corners=True)
+            self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample, align_corners=True)
         else:
-            self.upsampler = nn.Upsample(scale_factor=2, mode=upsample)
+            self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample)
 
     def set_gamma(self, new_gamma):
         if self.self_attention is not None:
@@ -433,15 +437,18 @@ class MinibatchStddev(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size, inception,
+    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size, inception,
                  self_attention_layer, self_attention_size, downsample='average', pixelnorm=False, activation='lrelu',
                  dropout=0.1, do_mode='mul', spectral_norm=False, phase_shuffle=0, temporal_stats=False,
                  num_stat_channels=1, normalization=None, residual=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution))
-        assert resolution == 2 ** R and resolution >= initial_size ** 2
+        R = 0
+        while True:
+            R += 1
+            if resolution // progression_scale ** R == 1:
+                break
         self.R = R
 
         def nf(stage):
@@ -469,9 +476,9 @@ class Discriminator(nn.Module):
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
         if downsample == 'average':
-            self.downsampler = nn.AvgPool1d(kernel_size=2)
+            self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
         elif downsample == 'stride':
-            self.downsampler = DownSample(scale_factor=2)
+            self.downsampler = DownSample(scale_factor=progression_scale)
 
     def set_gamma(self, new_gamma):
         if self.self_attention is not None:
