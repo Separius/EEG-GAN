@@ -52,7 +52,8 @@ default_params = OrderedDict(
     self_attention_layer=None,  # starts from 0
     self_attention_size=32,
     drnn=False,
-    progression_scale=2
+    progression_scale=2,
+    num_classes=0,
 )
 
 
@@ -130,14 +131,16 @@ def main(params):
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
             params['Generator']['normalization'] = 'batch_norm'
-        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
+        G = Generator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
+                      dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
                       self_attention_layer=params['self_attention_layer'],
                       self_attention_size=params['self_attention_size'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
-        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
+        D = Discriminator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
+                          dataset_shape=dataset.shape, initial_size=params['EEGDataset']['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],

@@ -92,11 +92,7 @@ class DilatedGenerator(nn.Module):
         super(DilatedGenerator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = 0
-        while True:
-            R += 1
-            if resolution // progression_scale ** R == 1:
-                break
+        R = int(np.log2(resolution) / np.log2(progression_scale))
         self.R = R
 
         def nf(stage):
@@ -155,12 +151,7 @@ class DilatedDiscriminator(nn.Module):
         super(DilatedDiscriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-
-        R = 0
-        while True:
-            R += 1
-            if resolution // progression_scale ** R == 1:
-                break
+        R = int(np.log2(resolution) / np.log2(progression_scale))
         self.R = R
 
         def nf(stage):

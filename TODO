@@ -1,10 +1,8 @@
 Addition:
     experiment manager and hyper param search(Define ParamSearchSpace)
     Test DRNN models(+ make slerp work here too [gif generator/fixed explicitly says use this])
-
     chrononet network
-    5 types of conditional nets
-
+    Make a stable hinge config
 Validation:
     Alish Features
     d(concatenated parts) == fake
@@ -25,16 +23,12 @@ Experiment:
     Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
     progressive dilated mode + AutoRegressive
 Condition:
-    ConditionalBatchNorm
     On:
         User Embedding
         Easy meta-data(age, sex)
-        All the data
     Loss:
+        InfoGAN(github.com/pianomania/infoGAN-pytorch)
         SemiSupervised InfoGAN(github.com/spurra/ss-infogan)
-        AcGan(github.com/znxlwm/pytorch-generative-model-collections/blob/master/ACGAN.py)
-        Activation Maximization(github.com/ZhimingZhou/AM-GAN)
-        Class Splitting GAN(github.com/CIFASIS/splitting_gan)
         Projection(yW . x)(github.com/pfnet-research/sngan_projection)
 InfiniteSeqLen:
     Freez D and swap first linear of G with a conv => not consistent => must defreeze D and retrain everything

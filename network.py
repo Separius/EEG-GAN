@@ -176,9 +176,49 @@ class ToRGB(nn.Module):
         return self.toRGB(x)
 
 
+class ConditionalBatchNorm(nn.Module):
+    def __init__(self, num_channels, num_classes):
+        super(ConditionalBatchNorm, self).__init__()
+        if num_classes == 0:
+            num_classes = 1
+        self.units = nn.ModuleList([nn.BatchNorm1d(num_channels) for _ in range(num_classes)])
+
+    def forward(self, x, y=0):
+        if y is None:
+            y = 0
+        return self.units[y](x)
+
+
+class ConditionalGroupNorm(nn.Module):
+    def __init__(self, num_channels, num_classes):
+        super(ConditionalGroupNorm, self).__init__()
+        if num_classes == 0:
+            num_classes = 1
+        self.units = nn.ModuleList([nn.GroupNorm(1, num_channels) for _ in range(num_classes)])
+
+    def forward(self, x, y=0):
+        if y is None:
+            y = 0
+        return self.units[y](x)
+
+
+def get_activation(act, ch_out):
+    if act == 'prelu':
+        return nn.PReLU(num_parameters=ch_out)
+    elif act == 'lrelu':
+        return nn.LeakyReLU(0.2, inplace=True)
+    elif act == 'relu':
+        return nn.ReLU(inplace=True)
+    elif act == 'relu6':
+        return nn.ReLU6(inplace=True)
+    elif act == 'elu':
+        return nn.ELU(inplace=True)
+    raise ValueError()
+
+
 class NeoPGConv1d(nn.Module):
     def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True,
-                 act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None):
+                 act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
         if equalized:
@@ -193,23 +233,17 @@ class NeoPGConv1d(nn.Module):
         norm = None
         if normalization:
             if normalization == 'layer_norm':
-                norm = nn.GroupNorm(1, ch_out)
+                norm = ConditionalGroupNorm(ch_out, num_classes)
             elif normalization == 'batch_norm':
-                norm = nn.BatchNorm1d(ch_out)
-        self.net = [conv]
+                norm = ConditionalBatchNorm(ch_out, num_classes)
+        self.conv = conv
         if norm is not None:
-            self.net.append(norm)
+            self.norm = norm
+        else:
+            self.norm = None
+        self.net = []
         if act:
-            if act == 'prelu':
-                self.net.append(nn.PReLU(num_parameters=ch_out))
-            elif act == 'lrelu':
-                self.net.append(nn.LeakyReLU(0.2, inplace=True))
-            elif act == 'relu':
-                self.net.append(nn.ReLU(inplace=True))
-            elif act == 'relu6':
-                self.net.append(nn.ReLU6(inplace=True))
-            elif act == 'elu':
-                self.net.append(nn.ELU(inplace=True))
+            self.net.append(get_activation(act, ch_out))
         if pixelnorm:
             self.net.append(PixelNorm())
         if do != 0:
@@ -218,8 +252,10 @@ class NeoPGConv1d(nn.Module):
             self.net.append(PhaseShuffle(phase_shuffle))
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x, y=0):
+        if self.norm:
+            return self.net(self.norm(self.conv(x), y))
+        return self.net(self.norm(self.conv(x)))
 
 
 class Concatenate(nn.Module):
@@ -227,8 +263,8 @@ class Concatenate(nn.Module):
         super(Concatenate, self).__init__()
         self.module_list = module_list
 
-    def forward(self, x):
-        return torch.cat([m(x) for m in self.module_list], dim=1)
+    def forward(self, *args):
+        return torch.cat([m(*args) for m in self.module_list], dim=1)
 
 
 class GBlock(nn.Module):
@@ -251,7 +287,8 @@ class GBlock(nn.Module):
                              **layer_settings)
             c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
                              **layer_settings)
-        self.residual = nn.Sequential(c1, c2)
+        self.c1 = c1
+        self.c2 = c2
         if residual and not is_first:
             self.bypass = NeoPGConv1d(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
                                       spectral=layer_settings['spectral'])
@@ -260,30 +297,24 @@ class GBlock(nn.Module):
         self.toRGB = ToRGB(ch_out, num_channels, normalization=None if normalization == 'batch_norm' else normalization,
                            ch_by_ch=ch_by_ch, equalized=equalized)
 
-    def forward(self, x, last=False):
+    def forward(self, x, y=0, last=False):
         if self.bypass is not None:
-            x = self.residual(x) + self.bypass(x)
+            x = self.c2(self.c1(x, y), y) + self.bypass(x)
         else:
-            x = self.residual(x)
+            x = self.c2(self.c1(x, y), y)
         return self.toRGB(x) if last else x
 
 
 class Generator(nn.Module):
-    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized, inception,
-                 self_attention_layer, self_attention_size, latent_size=256, upsample='linear', normalize_latents=True,
-                 pixelnorm=True, activation='lrelu', dropout=0.1, residual=False, do_mode='mul', spectral_norm=False,
-                 ch_by_ch=False, normalization=None):
+    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
+                 equalized, inception, self_attention_layer, self_attention_size, num_classes, latent_size=256,
+                 upsample='linear', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
+                 residual=False, do_mode='mul', spectral_norm=False, ch_by_ch=False, normalization=None):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        # R = 0
-        # while True:
-        #     R += 1
-        #     if resolution // progression_scale ** R == 1:
-        #         break
-        # self.R = R
-        R = int(np.log2(resolution))
-        assert resolution == 2 ** R and resolution >= 2 ** initial_size
+        R = int(np.log2(resolution) / np.log2(progression_scale))
+        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -291,13 +322,14 @@ class Generator(nn.Module):
         if latent_size is None:
             latent_size = nf(initial_size - 2)
         self.normalize_latents = normalize_latents
-        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm)
+        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
+                              num_classes=num_classes)
         self.block0 = GBlock(latent_size, nf(initial_size - 1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_size=initial_size, ch_by_ch=ch_by_ch, normalization=normalization,
                              residual=residual, **layer_settings)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(initial_size-1 + self_attention_layer), self_attention_size)
+            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer), self_attention_size)
         else:
             self.self_attention = None
         self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
@@ -316,19 +348,19 @@ class Generator(nn.Module):
         if self.self_attention is not None:
             self.self_attention.gamma = new_gamma
 
-    def forward(self, x):
+    def forward(self, x, y=0):
         h = x.unsqueeze(2)
         if self.normalize_latents:
             h = pixel_norm(h)
-        h = self.block0(h, self.depth == 0)
+        h = self.block0(h, y, self.depth == 0)
         if self.depth > 0:
             for i in range(self.depth - 1):
                 if i == self.self_attention_layer:
                     h = self.self_attention(h)
                 h = self.upsampler(h)
-                h = self.blocks[i](h)
+                h = self.blocks[i](h, y)
             h = self.upsampler(h)
-            ult = self.blocks[self.depth - 1](h, True)
+            ult = self.blocks[self.depth - 1](h, y, True)
             if self.alpha < 1.0:
                 if self.depth > 1:
                     preult_rgb = self.blocks[self.depth - 2].toRGB(h)
@@ -365,7 +397,8 @@ class SelfAttention(nn.Module):
 
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, initial_size=None, temporal=False, num_stat_channels=1, ksize=3,
-                 equalized=True, spectral=False, normalization=None, residual=False, inception=False, **layer_settings):
+                 equalized=True, spectral=False, normalization=None, residual=False, inception=False,
+                 **layer_settings):
         super(DBlock, self).__init__()
         is_last = initial_size is not None
         if residual and not is_last:
@@ -438,21 +471,47 @@ class MinibatchStddev(nn.Module):
         return torch.cat((x, y), dim=1)
 
 
+def get_linear(n_in, n_out, activation=None, spectral_norm=False, normalization=None):
+    shared = [nn.Linear(n_in, n_out)]
+    if spectral_norm:
+        shared[0] = spectral_norm_wrapper(shared[0])
+    else:
+        if normalization == 'layer_norm':
+            shared.append(ConditionalGroupNorm(n_out, 1))
+        elif normalization == 'batch_norm':
+            shared.append(ConditionalBatchNorm(n_out, 1))
+        elif normalization == 'weight_norm':
+            shared[0] = weight_norm_wrapper(shared[0])
+    shared.append(get_activation(activation, n_out))
+    return nn.Sequential(*shared)
+
+
+class Q(nn.Module):
+    def __init__(self, input_size, cat_out, con_out, activation, spectral_norm, normalization):
+        super(Q, self).__init__()
+        hidden = int(np.sqrt(2 * input_size * np.sqrt(cat_out * con_out * 2)))
+        self.shared = get_linear(input_size, hidden, activation, spectral_norm, normalization)
+        self.cat = get_linear(hidden, cat_out, spectral_norm=spectral_norm) if cat_out > 0 else None
+        self.con_mu = get_linear(hidden, con_out, spectral_norm=spectral_norm) if con_out > 0 else None
+        self.con_var = get_linear(hidden, con_out, spectral_norm=spectral_norm) if con_out > 0 else None
+
+    def forward(self, x):
+        h = self.shared(x)
+        return self.cat(h) if self.cat else None, self.con_mu(h) if self.con_mu else None, self.con_var(
+            h) if self.con_var else None
+
+
 class Discriminator(nn.Module):
-    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size, inception,
-                 self_attention_layer, self_attention_size, downsample='average', pixelnorm=False, activation='lrelu',
-                 dropout=0.1, do_mode='mul', spectral_norm=False, phase_shuffle=0, temporal_stats=False,
-                 num_stat_channels=1, normalization=None, residual=False):
+    def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
+                 kernel_size, inception, self_attention_layer, self_attention_size, num_classes, downsample='average',
+                 pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', spectral_norm=False, phase_shuffle=0,
+                 temporal_stats=False, num_stat_channels=1, normalization=None, residual=False, is_info=False,
+                 cat_out=0, con_out=0):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        # R = 0
-        # while True:
-        #     R += 1
-        #     if resolution // progression_scale ** R == 1:
-        #         break
-        R = int(np.log2(resolution))
-        assert resolution == 2 ** R and resolution >= initial_size ** 2
+        R = int(np.log2(resolution) / np.log2(progression_scale))
+        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
         self.R = R
 
         def nf(stage):
@@ -473,9 +532,19 @@ class Discriminator(nn.Module):
                                             initial_size=None, residual=residual, spectral=spectral_norm,
                                             normalization=normalization, inception=inception, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
+        if num_classes != 0:
+            self.class_emb = nn.Embedding(num_classes, nf(initial_size - 2))
+            if spectral_norm:
+                self.class_emb = spectral_norm_wrapper(self.class_emb)
+        else:
+            self.class_emb = None
         self.linear = nn.Linear(nf(initial_size - 2), 1)
         if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
+        if is_info:
+            self.Q = Q(nf(initial_size - 2), cat_out, con_out, activation, spectral_norm, normalization)
+        else:
+            self.Q = None
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
@@ -488,7 +557,7 @@ class Discriminator(nn.Module):
         if self.self_attention is not None:
             self.self_attention.gamma = new_gamma
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
@@ -504,4 +573,9 @@ class Discriminator(nn.Module):
             if (self.self_attention_layer is not None) and i == (self.max_depth - self.self_attention_layer):
                 h = self.self_attention(h)
         h = h.squeeze(-1)
-        return self.linear(h), h
+        o = self.linear(h)
+        if y and self.class_emb:
+            o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True)
+        if self.Q:
+            return o, h, self.Q(h)
+        return o, h
