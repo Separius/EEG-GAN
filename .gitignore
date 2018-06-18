@@ -1,11 +1,9 @@
 .idea/
 __pycache__/
-piano/
 results/
 .ropeproject/
 *.yml
 !defaults.yml
-!hpc.yml
 !test.yml
 data/
 configs/

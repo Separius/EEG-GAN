@@ -186,6 +186,7 @@ class SaverPlugin(Plugin):
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
         self._best_val_loss = float('+inf')  # TODO use the validator's loss for this
+        # TODO use_3way_test here
 
     def register(self, trainer):
         self.trainer = trainer
@@ -253,11 +254,11 @@ class OutputGenerator(Plugin):
         return images
 
     def epoch(self, epoch_index):
-        gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
+        gen_input = cudize(Variable(self.sample_fn(self.samples_count)))  # TODO based on dilated
         out = generate_samples(self.trainer.G, gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
         for i, image in enumerate(images):
             misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
@@ -268,13 +269,13 @@ class OutputGenerator(Plugin):
 class FixedNoise(OutputGenerator):
     def __init__(self, *args, **kwargss):
         super(FixedNoise, self).__init__(*args, **kwargss)
-        self.gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
+        self.gen_input = cudize(Variable(self.sample_fn(self.samples_count)))  # TODO based on dilated
 
     def epoch(self, epoch_index):
         out = generate_samples(self.trainer.G, self.gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
         for i, image in enumerate(images):
             misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
 
@@ -288,13 +289,13 @@ class GifGenerator(OutputGenerator):
         self.fps = fps
 
     def epoch(self, epoch_index):
-        gen_input = self.sample_fn(2).numpy()
+        gen_input = self.sample_fn(2).numpy()  # TODO based on dilated
         gen_input = self.slerp(np.arange(self.samples_count) / self.samples_count, gen_input[0], gen_input[1])
         gen_input = cudize(Variable(torch.from_numpy(gen_input.astype(np.float32))))
         out = generate_samples(self.trainer.G, gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
         imageio.mimsave(os.path.join(self.checkpoints_dir, '{}.gif'.format(epoch_index)), images, fps=self.fps)
 
     @staticmethod
@@ -309,6 +310,7 @@ class GifGenerator(OutputGenerator):
 class Validator(Plugin):
     def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
         super(Validator, self).__init__([(1, 'epoch'), (1, 'end')])
+        # TODO do not call this for audio
         self.sample_fn = sample_fn
         self.valid_set = valid_set
         self.real_features = None
@@ -343,6 +345,7 @@ class Validator(Plugin):
         d_loss = 0.0
         for batch in self.valid_set:
             x_real = cudize(batch)
+            # TODO dilated mode
             x_fake = self.trainer.G(cudize(Variable(self.sample_fn(x_real.shape[0])))).detach()
             fakes.append(x_fake)
             d_loss += ll(

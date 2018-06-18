@@ -63,7 +63,7 @@ def pixel_norm(h):
 
 
 class DownSample(nn.Module):
-    def __init__(self, scale_factor=1):
+    def __init__(self, scale_factor=2):
         super(DownSample, self).__init__()
         self.scale_factor = scale_factor
 
@@ -176,30 +176,27 @@ class ToRGB(nn.Module):
         return self.toRGB(x)
 
 
-class ConditionalBatchNorm(nn.Module):
-    def __init__(self, num_channels, num_classes):
-        super(ConditionalBatchNorm, self).__init__()
-        if num_classes == 0:
-            num_classes = 1
-        self.units = nn.ModuleList([nn.BatchNorm1d(num_channels) for _ in range(num_classes)])
+class SelfAttention(nn.Module):
+    def __init__(self, channels_in, key_length):
+        super(SelfAttention, self).__init__()
+        self.gamma = 0
+        self.channels_in = channels_in
+        self.key_length = key_length
+        self.to_key = nn.Conv1d(channels_in, key_length, kernel_size=1)
+        self.to_query = nn.Conv1d(channels_in, key_length, kernel_size=1)
+        self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, x, y=0):
-        if y is None:
-            y = 0
-        return self.units[y](x)
-
-
-class ConditionalGroupNorm(nn.Module):
-    def __init__(self, num_channels, num_classes):
-        super(ConditionalGroupNorm, self).__init__()
-        if num_classes == 0:
-            num_classes = 1
-        self.units = nn.ModuleList([nn.GroupNorm(1, num_channels) for _ in range(num_classes)])
-
-    def forward(self, x, y=0):
-        if y is None:
-            y = 0
-        return self.units[y](x)
+    def forward(self, v):
+        if self.gamma == 0:
+            return v
+        T = v.size(2)
+        k = self.to_key(v)  # k, q = (N, C, T)
+        q = self.to_query(v)
+        e1 = q.unsqueeze(3).repeat(1, 1, 1, T).permute(0, 1, 3, 2)
+        e2 = k.unsqueeze(3).repeat(1, 1, 1, T)
+        a = self.softmax((e1 * e2).sum(dim=1))  # a is (N, T(normalized), T)
+        a = torch.bmm(v, a)
+        return v + self.gamma * a
 
 
 def get_activation(act, ch_out):
@@ -214,6 +211,71 @@ def get_activation(act, ch_out):
     elif act == 'elu':
         return nn.ELU(inplace=True)
     raise ValueError()
+
+
+class Concatenate(nn.Module):
+    def __init__(self, module_list):
+        super(Concatenate, self).__init__()
+        self.module_list = module_list
+
+    def forward(self, *args):
+        return torch.cat([m(*args) for m in self.module_list], dim=1)
+
+
+class MinibatchStddev(nn.Module):
+    def __init__(self, temporal=False, out_channels=1):
+        super(MinibatchStddev, self).__init__()
+        self.temporal = temporal
+        self.out_channels = out_channels
+
+    def calc_mean(self, x, expand=True):
+        mean = torch.mean(x, dim=0, keepdim=True)
+        if not self.temporal:
+            mean = torch.mean(mean, dim=2, keepdim=True)
+        c = mean.size(1)
+        if self.out_channels == c:
+            return mean
+        if self.out_channels == 1:
+            return torch.mean(mean, dim=1, keepdim=True)
+        else:
+            step = c // self.out_channels
+            if expand:
+                return torch.cat(
+                    [torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True).expand(-1, step, -1) for i in
+                     range(self.out_channels)], dim=1)
+            return torch.cat([torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True) for i in
+                              range(self.out_channels)], dim=1)
+
+    def forward(self, x):
+        mean = self.calc_mean(x).expand(x.size())
+        y = torch.sqrt(self.calc_mean((x - mean) ** 2, False)).expand(x.size(0), -1, x.size(2))
+        return torch.cat((x, y), dim=1)
+
+
+class ConditionalBatchNorm(nn.Module):  # TODO use an embedding
+    def __init__(self, num_channels, num_classes):
+        super(ConditionalBatchNorm, self).__init__()
+        if num_classes == 0:
+            num_classes = 1
+        self.units = nn.ModuleList([nn.BatchNorm1d(num_channels) for _ in range(num_classes)])
+
+    def forward(self, x, y=None):
+        if y is None:
+            y = 0
+        return self.units[y](x)
+
+
+class ConditionalGroupNorm(nn.Module):  # TODO use an embedding
+    def __init__(self, num_channels, num_classes):
+        super(ConditionalGroupNorm, self).__init__()
+        if num_classes == 0:
+            num_classes = 1
+        self.units = nn.ModuleList([nn.GroupNorm(1, num_channels) for _ in range(num_classes)])
+
+    def forward(self, x, y=None):
+        if y is None:
+            y = 0
+        return self.units[y](x)
 
 
 class NeoPGConv1d(nn.Module):
@@ -252,19 +314,10 @@ class NeoPGConv1d(nn.Module):
             self.net.append(PhaseShuffle(phase_shuffle))
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, x, y=0):
+    def forward(self, x, y=None):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
         return self.net(self.norm(self.conv(x)))
-
-
-class Concatenate(nn.Module):
-    def __init__(self, module_list):
-        super(Concatenate, self).__init__()
-        self.module_list = module_list
-
-    def forward(self, *args):
-        return torch.cat([m(*args) for m in self.module_list], dim=1)
 
 
 class GBlock(nn.Module):
@@ -276,6 +329,7 @@ class GBlock(nn.Module):
             c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=1, normalization=normalization, **layer_settings)
             c2 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
                              **layer_settings)
+            # TODO bound ksize*2-1
             c3 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=ksize * 2 - 1, normalization=normalization,
                              **layer_settings)
             c1 = Concatenate(nn.ModuleList([c1, c2, c3]))
@@ -297,7 +351,7 @@ class GBlock(nn.Module):
         self.toRGB = ToRGB(ch_out, num_channels, normalization=None if normalization == 'batch_norm' else normalization,
                            ch_by_ch=ch_by_ch, equalized=equalized)
 
-    def forward(self, x, y=0, last=False):
+    def forward(self, x, y=None, last=False):
         if self.bypass is not None:
             x = self.c2(self.c1(x, y), y) + self.bypass(x)
         else:
@@ -341,14 +395,19 @@ class Generator(nn.Module):
         self.max_depth = len(self.blocks)
         if upsample == 'linear':
             self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample, align_corners=True)
-        else:
+        elif upsample == 'nearest':
             self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample)
+        elif upsample == 'cubic' and progression_scale == 2:
+            self.upsampler = nn.ConvTranspose1d(1, 1, kernel_size=7, stride=2, bias=False, padding=3)#2*L-1 :|
+            self.upsampler.weight.data = torch.tensor([[[-0.0625, 0.0, 0.5625, 1.0, 0.5625, 0.0, -0.0625]]])
+        else:
+            raise ValueError()
 
     def set_gamma(self, new_gamma):
         if self.self_attention is not None:
             self.self_attention.gamma = new_gamma
 
-    def forward(self, x, y=0):
+    def forward(self, x, y=None):
         h = x.unsqueeze(2)
         if self.normalize_latents:
             h = pixel_norm(h)
@@ -370,29 +429,6 @@ class Generator(nn.Module):
                 preult_rgb = 0.0
             h = preult_rgb * (1.0 - self.alpha) + ult * self.alpha
         return h
-
-
-class SelfAttention(nn.Module):
-    def __init__(self, channels_in, key_length):
-        super(SelfAttention, self).__init__()
-        self.gamma = 0
-        self.channels_in = channels_in
-        self.key_length = key_length
-        self.to_key = nn.Conv1d(channels_in, key_length, kernel_size=1)
-        self.to_query = nn.Conv1d(channels_in, key_length, kernel_size=1)
-        self.softmax = nn.Softmax(dim=1)
-
-    def forward(self, v):
-        if self.gamma == 0:
-            return v
-        T = v.size(2)
-        k = self.to_key(v)  # k, q = (N, C, T)
-        q = self.to_query(v)
-        e1 = q.unsqueeze(3).repeat(1, 1, 1, T).permute(0, 1, 3, 2)
-        e2 = k.unsqueeze(3).repeat(1, 1, 1, T)
-        a = self.softmax((e1 * e2).sum(dim=1))  # a is (N, T(normalized), T)
-        a = torch.bmm(v, a)
-        return v + self.gamma * a
 
 
 class DBlock(nn.Module):
@@ -418,6 +454,7 @@ class DBlock(nn.Module):
                              normalization=normalization, **layer_settings)
             c2 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=ksize,
                              normalization=normalization, **layer_settings)
+            # TODO bound ksize*2-1
             c3 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=ksize * 2 - 1,
                              normalization=normalization, **layer_settings)
             self.net.append(Concatenate(nn.ModuleList([c1, c2, c3])))
@@ -441,72 +478,11 @@ class DBlock(nn.Module):
             return self.net(x)
 
 
-class MinibatchStddev(nn.Module):
-    def __init__(self, temporal=False, out_channels=1):
-        super(MinibatchStddev, self).__init__()
-        self.temporal = temporal
-        self.out_channels = out_channels
-
-    def calc_mean(self, x, expand=True):
-        mean = torch.mean(x, dim=0, keepdim=True)
-        if not self.temporal:
-            mean = torch.mean(mean, dim=2, keepdim=True)
-        c = mean.size(1)
-        if self.out_channels == c:
-            return mean
-        if self.out_channels == 1:
-            return torch.mean(mean, dim=1, keepdim=True)
-        else:
-            step = c // self.out_channels
-            if expand:
-                return torch.cat(
-                    [torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True).expand(-1, step, -1) for i in
-                     range(self.out_channels)], dim=1)
-            return torch.cat([torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True) for i in
-                              range(self.out_channels)], dim=1)
-
-    def forward(self, x):
-        mean = self.calc_mean(x).expand(x.size())
-        y = torch.sqrt(self.calc_mean((x - mean) ** 2, False)).expand(x.size(0), -1, x.size(2))
-        return torch.cat((x, y), dim=1)
-
-
-def get_linear(n_in, n_out, activation=None, spectral_norm=False, normalization=None):
-    shared = [nn.Linear(n_in, n_out)]
-    if spectral_norm:
-        shared[0] = spectral_norm_wrapper(shared[0])
-    else:
-        if normalization == 'layer_norm':
-            shared.append(ConditionalGroupNorm(n_out, 1))
-        elif normalization == 'batch_norm':
-            shared.append(ConditionalBatchNorm(n_out, 1))
-        elif normalization == 'weight_norm':
-            shared[0] = weight_norm_wrapper(shared[0])
-    shared.append(get_activation(activation, n_out))
-    return nn.Sequential(*shared)
-
-
-class Q(nn.Module):
-    def __init__(self, input_size, cat_out, con_out, activation, spectral_norm, normalization):
-        super(Q, self).__init__()
-        hidden = int(np.sqrt(2 * input_size * np.sqrt(cat_out * con_out * 2)))
-        self.shared = get_linear(input_size, hidden, activation, spectral_norm, normalization)
-        self.cat = get_linear(hidden, cat_out, spectral_norm=spectral_norm) if cat_out > 0 else None
-        self.con_mu = get_linear(hidden, con_out, spectral_norm=spectral_norm) if con_out > 0 else None
-        self.con_var = get_linear(hidden, con_out, spectral_norm=spectral_norm) if con_out > 0 else None
-
-    def forward(self, x):
-        h = self.shared(x)
-        return self.cat(h) if self.cat else None, self.con_mu(h) if self.con_mu else None, self.con_var(
-            h) if self.con_var else None
-
-
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
                  kernel_size, inception, self_attention_layer, self_attention_size, num_classes, downsample='average',
                  pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', spectral_norm=False, phase_shuffle=0,
-                 temporal_stats=False, num_stat_channels=1, normalization=None, residual=False, is_info=False,
-                 cat_out=0, con_out=0):
+                 temporal_stats=False, num_stat_channels=1, normalization=None, residual=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -541,10 +517,6 @@ class Discriminator(nn.Module):
         self.linear = nn.Linear(nf(initial_size - 2), 1)
         if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
-        if is_info:
-            self.Q = Q(nf(initial_size - 2), cat_out, con_out, activation, spectral_norm, normalization)
-        else:
-            self.Q = None
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
@@ -574,8 +546,6 @@ class Discriminator(nn.Module):
                 h = self.self_attention(h)
         h = h.squeeze(-1)
         o = self.linear(h)
-        if y and self.class_emb:
+        if y:
             o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True)
-        if self.Q:
-            return o, h, self.Q(h)
         return o, h

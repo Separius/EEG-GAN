@@ -1,37 +1,41 @@
-Addition:
-    experiment manager and hyper param search(Define ParamSearchSpace)
-    Test DRNN models(+ make slerp work here too [gif generator/fixed explicitly says use this])
-    chrononet network
-    Make a stable hinge config
-Validation:
+Code:
+    update default and test config
+    experiment manager: stores validation losses and results
+    hyper parameter search
+    cubic interpolation: -0.0625, 0.0, 0.5625, 1.0, 0.5625, 0.0, -0.0625
+    make a stable hinge loss config
+Module:
+    recurrent G/D block
+Condition:
+    get mapping: dataset_id -> our_id
+    get data: sex, age, status(sleep, ...), normality
+    conditional normalization
+    bag of possibilities for D embedding
+    data feeding
+Paper:
+    16 channels
+    connection network
+    InfiniteSeqLen:
+        G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut => extend this is VAE like output
+        Use the connection net to make another gan over sequences of Z! :D
+Experiment:
+    Dilated(+ all the goodies, autoregressive)
+    Test on Audio(save, 4x)
+    Differential Privacy
+    SampleRNN + D loss
+    higher top freq(250 Hz)
+    SuperRes: freq domain, channel domain
+Eval:
+    Chrononet
+    TrainOnFakeTestOnReal/RV:
+        https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
+        https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
+        https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
     Alish Features
     d(concatenated parts) == fake
     3-way mmd over fft or time
-    Use validation result
     Aggregation graphs (time and freq domain)
-    16 channels
-    higher top freq(250 Hz)
-Classification:
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
-Experiment:
-    test on audio(use sample rnn script)
-    connection network
-    differential privacy training
-    sample-rnn + trained discriminator + classifier hidden rep
-    Recurrent => recurrent layers with a lipschitz regularizers(read the SN paper + orthogonal rnns)
-    progressive dilated mode + AutoRegressive
-Condition:
-    On:
-        User Embedding
-        Easy meta-data(age, sex)
-    Loss:
-        InfoGAN(github.com/pianomania/infoGAN-pytorch)
-        SemiSupervised InfoGAN(github.com/spurra/ss-infogan)
-        Projection(yW . x)(github.com/pfnet-research/sngan_projection)
-InfiniteSeqLen:
-    Freez D and swap first linear of G with a conv => not consistent => must defreeze D and retrain everything
-    Mabye, giving 0,0,0,Z,0,0,0,Z,0,0,0,Z,0,0,0 will work? => middle outputs must be halved => is not consistent even with slerp
-    G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut => extend this is VAE like output
-    Use the connection net to make another gan over sequences of Z! :D
+    FID
+    InceptionScore
+    Sliced W Distance
+    Nearest Neighbor (l2 distance)

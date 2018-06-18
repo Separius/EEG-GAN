@@ -26,6 +26,7 @@ def load_pkl(fname):
         return load(f)
 
 
+# TODO change this for dilated mode
 def random_latents(num_latents, latent_size):
     return torch.randn(num_latents, latent_size)
 
@@ -158,7 +159,7 @@ def get_features_vectorized(x, is_numpy=False):
     res[:, 15:19] = power_ratio[:]
     res[:, 19:23] = bin_power_vectorized(z, [4, 10, 15, 25, 40], 80)[:]
     res[:, 23] = spectral_entropy_vectorized(power_ratio)
-    #TODO res[:, xx:yy] = bin_power_vectorized(z, [0.5, 4, 8, 10, 12, 30])
+    # TODO res[:, xx:yy] = bin_power_vectorized(z, [0.5, 4, 8, 10, 12, 30])
     return res
 
 

@@ -15,7 +15,6 @@ class Cnn2Rnn(nn.Module):
 
 
 class DRNN(nn.Module):
-
     def __init__(self, depth, n_input, n_hiddens, n_layers, dropout=0, cell_type='GRU', bidir=False, dilation=2,
                  from_conv=nn.Conv1d):
         super(DRNN, self).__init__()
@@ -72,7 +71,7 @@ class DRNN(nn.Module):
         return dilated_inputs
 
 
-def test():
+def test_drnn():
     drnn = DRNN(depth=5, n_input=3, n_hiddens=[11, 10, 9, 8, 7], n_layers=2, dropout=0.2, bidir=True, dilation=4)
     bs = 5
     for d in range(5):
@@ -137,6 +136,7 @@ class DilatedGenerator(nn.Module):
         self._depth = value
 
     def forward(self, x):
+        # TODO move this to the real latent generator, so slurp, fixed(needs another change though) and others do work
         h = cudize(torch.randn(x.size(0), self.latent_size, self.progression_scale ** self.depth))
         if self.normalize_latents:
             h = pixel_norm(h)

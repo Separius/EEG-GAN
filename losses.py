@@ -1,7 +1,6 @@
 import torch
 from torch.autograd import Variable, grad
-from utils import var, cudize
-import numpy as np
+from utils import cudize
 import torch.nn.functional as F
 
 mixing_factors = None
@@ -41,19 +40,29 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad
         z = Variable(fake_latents_in)
     g_ = Variable(G(z).data)
     d_fake, _ = D(g_)
-    if loss_type == 'wgan_gp' or loss_type == 'wgan_ct':
-        alpha = get_mixing_factor(x_real.size(0))
-        x_hat = Variable(alpha * x_real.data + (1.0 - alpha) * g_.data, requires_grad=True)
-        pred_hat, _ = D(x_hat)
-        d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_epsilon
-        g = calc_grad(x_hat, pred_hat).view(x_hat.size(0), -1)
-        gp = ((g.norm(p=2, dim=1) - 1) ** 2).mean() * grad_lambda
-        d_loss = d_loss + gp
-        if loss_type == 'wgan_ct' and D.training:
+    if loss_type == 'hinge':
+        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
+    else:
+        if loss_type == 'wgan_theirs' or loss_type == 'wgan_theirs_ct':
+            d_fake_mean = d_fake.mean()
+            d_real_mean = d_real.mean()
+            d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_epsilon
+            gp_gain = F.relu(d_real_mean-d_fake_mean)
+        else:
+            d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_epsilon
+            gp_gain = 1
+        if gp_gain != 0:
+            alpha = get_mixing_factor(x_real.size(0))
+            x_hat = Variable(alpha * x_real.data + (1.0 - alpha) * g_.data, requires_grad=True)
+            pred_hat, _ = D(x_hat)
+            g = calc_grad(x_hat, pred_hat).view(x_hat.size(0), -1)
+            gp = g.norm(p=2, dim=1) - 1
+            if loss_type == 'wgan_theirs' or loss_type == 'wgan_theirs_ct':
+                gp = F.relu(gp)
+            d_loss = d_loss + gp_gain * (gp ** 2).mean() * grad_lambda
+        if (loss_type == 'wgan_ct' or loss_type == 'wgan_theirs_ct') and D.training:
             d_real2, d_last_real2 = D(x_real)
             CT = LAMBDA_2 * (d_real - d_real2) ** 2
             CT = CT + LAMBDA_2 * 0.1 * torch.mean((d_last_real - d_last_real2) ** 2, dim=1)
             d_loss = d_loss + torch.mean(torch.clamp(CT, min=0))
-    else:
-        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
     return d_loss

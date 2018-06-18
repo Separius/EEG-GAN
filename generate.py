@@ -17,8 +17,7 @@ default_params = {
 def output_samples(generator_path, num_samples):
     G = torch.load(generator_path, map_location=lambda storage, location: storage)
     G = cudize(G)
-    latent_size = getattr(G, 'latent_size', 512)
-    gen_input = cudize(Variable(random_latents(num_samples, latent_size)))
+    gen_input = cudize(Variable(random_latents(num_samples, G.latent_size)))
     output = generate_samples(G, gen_input)
     return output
 

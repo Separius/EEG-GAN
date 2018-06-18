@@ -10,7 +10,7 @@ from scipy.io.wavfile import read as wav_read
 class EEGDataset(Dataset):
     def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.5, max_freq=80,
                  num_channels=5, per_user=True, use_abs=False,
-                 model_dataset_depth_offset=2):  # start from 4x4 instead of 1x1
+                 model_dataset_depth_offset=2, dataset_freq=80):  # start from 2^2 instead of 2^0
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -24,7 +24,7 @@ class EEGDataset(Dataset):
         sizes = []
         for i in range(num_files):
             with open(self.all_files[i]) as f:
-                all_data_len = len(list(map(float, f.read().split()))) // (80 // max_freq)
+                all_data_len = len(list(map(float, f.read().split()))) // (dataset_freq // max_freq)
                 sizes.append(max(int(np.ceil((all_data_len - self.seq_len + 1) / self.stride)), 0))
         self.sizes = sizes
         self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
@@ -33,7 +33,7 @@ class EEGDataset(Dataset):
         for i in range(num_files):
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
-                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::(80 // max_freq)][
+                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::(dataset_freq // max_freq)][
                           :num_points[i]]
                     self.datas[i][j, :] = tmp
             if per_user:
@@ -110,8 +110,9 @@ class EEGDataset(Dataset):
 
 
 class AudioDataset(Dataset):
-    def __init__(self, progression_scale, dir_path='./data/audio', num_files=860, seq_len=16384, stride=0.5,
-                 max_freq=16000, num_channels=1, model_dataset_depth_offset=3):  # start from 4^3 = 64
+    def __init__(self, progression_scale, dir_path='./data/audio', num_files=100, seq_len=16384, stride=0.5,
+                 max_freq=16000, num_channels=1, dataset_freq=16000,
+                 model_dataset_depth_offset=3):  # start from 4^3 = 64
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -123,14 +124,14 @@ class AudioDataset(Dataset):
         sizes = []
         for i in range(num_files):
             read_len = len(wav_read(self.all_files[i])[1])
-            all_data_len = read_len // (16000 // max_freq)
+            all_data_len = read_len // (dataset_freq // max_freq)
             sizes.append(max(int(np.ceil((all_data_len - self.seq_len + 1) / self.stride)), 0))
         self.sizes = sizes
         self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
         num_points = [(self.sizes[i] - 1) * self.stride + self.seq_len for i in range(num_files)]
         self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
         for i in range(num_files):
-            tmp = wav_read(self.all_files[i])[1][::(80 // max_freq)][:num_points[i]].astype(np.float32)
+            tmp = wav_read(self.all_files[i])[1][::(dataset_freq // max_freq)][:num_points[i]].astype(np.float32)
             self.datas[i][0, :] = self.normalize(tmp)
         self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
         self.min_dataset_depth = self.model_dataset_depth_offset
