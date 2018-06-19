@@ -2,16 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from functools import partial
-from network import NeoPGConv1d, ToRGB, pixel_norm
-from utils import cudize
-
-
-class Cnn2Rnn(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, input):
-        return input.permute(2, 0, 1)
+from network import NeoPGConv1d, ToRGB, pixel_norm, Cnn2Rnn
+from utils import cudize, get_recurrent_cell
 
 
 class DRNN(nn.Module):
@@ -25,7 +17,7 @@ class DRNN(nn.Module):
         self.alpha = 1
         self.bi = bidir
         self.n_layers = n_layers
-        cell = {'gru': nn.GRU, 'rnn': nn.RNN, 'lstm': nn.LSTM}[cell_type.lower()]
+        cell = get_recurrent_cell(cell_type)
         self.cells = nn.ModuleList([cell(n_input if i == 0 else (n_hiddens[i - 1] * (2 if bidir else 1)), n_hiddens[i],
                                          num_layers=n_layers, dropout=dropout, bidirectional=bidir) for i in
                                     range(depth)])

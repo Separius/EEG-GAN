@@ -105,7 +105,7 @@ def MMD_Diff_Var(Kyy, Kzz, Kxy, Kxz):
                  'zeta1': zeta1,
                  'zeta2': zeta2,
                  })
-    # TODO more precise version for zeta2
+    # NOTE more precise version for zeta2
     #    xx=(1/m^2)*sum(sum(Kxxnd.*Kxxnd))-u_xx^2;
     # yy=(1/n^2)*sum(sum(Kyynd.*Kyynd))-u_yy^2;
     # xy=(1/(n*m))*sum(sum(Kxy.*Kxy))-u_xy^2;

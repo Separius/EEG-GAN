@@ -10,10 +10,12 @@ for f_name in glob.glob('./data/reports/**/*.txt', recursive=True):
         for line in f:
             l = line.encode('utf-8').strip().decode('utf-8')
             p = l.find(':')
-            if p != -1:  # TODO and it does not end with a digit: at 13:30 ... and len(l[:p].split()) < 4?(heuristic)
+            if p!=-1:
+                new_key = ' '.join([x.strip().upper() for x in l[:p].strip().split()])
+            if p != -1 and new_key != '' and not new_key[-1].isdigit() and len(new_key.split()) < 5:
                 if current_key != '' and len(current_value) != 0:
                     current_res.update({current_key: current_value})
-                current_key = l[:p].strip()
+                current_key = new_key
                 v = l[p + 1:].strip()
                 if v != '':
                     current_value = [v]

@@ -1,0 +1,6 @@
+[submodule "sru"]
+	path = sru
+	url = https://github.com/taolei87/sru.git
+[submodule "qrnn"]
+	path = qrnn
+	url = https://github.com/salesforce/pytorch-qrnn
