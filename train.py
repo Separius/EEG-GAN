@@ -118,7 +118,7 @@ def main(params):
             val_stats.append(cs + '_all')
         stats_to_log.extend(['validation.' + x for x in val_stats])
         #TODO times channels
-        stats_to_log.extend(['nn_validation.'+x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']])
+        #stats_to_log.extend(['nn_validation.'+x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']])
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
 
     if params['drnn']:

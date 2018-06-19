@@ -14,59 +14,67 @@
 #iwass_epsilon: 0.001
 #save_dataset: ''
 #load_dataset: ''
-loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge
+#loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 #cuda_device: 0
-validation_split: 0
+#validation_split: 0
 #LAMBDA_2: 2
-optimizer: 'adam' # adam, amsgrad, ttur
+#optimizer: 'adam' # adam, amsgrad, ttur
 #config_file: null
 #verbose: false
-fmap_base: 2048
-fmap_max: 256
-fmap_min: 64
-equalized: true
+#fmap_base: 2048
+#fmap_max: 256
+#fmap_min: 64
+#equalized: true
 kernel_size: 3
-inception: false
-self_attention_layer: 3
-self_attention_size: 16
+#inception: false
+#self_attention_layer: null
+#self_attention_size: 32
 #drnn: false
-progression_scale: 2
+#progression_scale: 2
+#num_classes: 0
+#audio: false
 
 #Trainer.grad_clip: null #null or a float
-Trainer.D_training_repeats: 1
+#Trainer.D_training_repeats: 1
 #Trainer.tick_kimg_default: 5
 #Trainer.resume_nimg: 0
 
-Generator.latent_size: 256
-Generator.upsample: 'linear' #linear, nearest
+#Generator.latent_size: 256
+#Generator.upsample: 'linear' #linear, nearest
 #Generator.normalize_latents: true
 #Generator.pixelnorm: true
 #Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
-Generator.dropout: 0.1
-Generator.residual: false
-Generator.do_mode: 'mul' #mul, drop, prop
-Generator.spectral_norm: false
-Generator.ch_by_ch: false
-Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Generator.dropout: 0.1
+#Generator.residual: false
+#Generator.do_mode: 'mul' #mul, drop, prop
+#Generator.spectral_norm: false
+#Generator.ch_by_ch: false
+#Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Generator.cell_type: null #null, lstm, gru, rnn, sru, qrnn
+#Generator.cell_num_layers: 1
+#Generator.cell_bidirectional: false
 
-Discriminator.downsample: 'average' #average, stride
-Discriminator.residual: false
-#Discriminator.activation: 'lrelu'
-Discriminator.dropout: 0.1
-Discriminator.do_mode: 'mul'
-Discriminator.spectral_norm: false
-Discriminator.phase_shuffle: 0
-Discriminator.temporal_stats: false
-Discriminator.num_stat_channels: 1
-Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Discriminator.downsample: 'average' #average, stride
 #Discriminator.pixelnorm: false
+#Discriminator.activation: 'lrelu'
+#Discriminator.dropout: 0.1
+#Discriminator.do_mode: 'mul'
+#Discriminator.spectral_norm: false
+#Discriminator.phase_shuffle: 0
+#Discriminator.temporal_stats: false
+#Discriminator.num_stat_channels: 1
+#Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Discriminator.residual: false
+#Discriminator.cell_type: null #null, lstm, gru, rnn, sru, qrnn
+#Discriminator.cell_num_layers: 1
+#Discriminator.cell_bidirectional: false
 
-DepthManager.attention_start_depth: 6
-DepthManager.attention_transition_kimg: 200
+#DepthManager.attention_start_depth: null
+#DepthManager.attention_transition_kimg: 200
 #DepthManager.depth_offset: 0
 #DepthManager.minibatch_default: 64
-#DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16}  # starts from depth_offset+1
-#DepthManager.tick_kimg_overrides: {4: 4, 5: 3, 6: 2, 7: 1, 8: 1}  # starts from depth_offset+1
+#DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
+#DepthManager.tick_kimg_overrides: {6: 4, 7: 4, 8: 3, 9: 3, 10: 2, 11: 2, 12: 1}  # starts from depth_offset+1
 #DepthManager.lod_training_kimg: 400
 #DepthManager.lod_training_kimg_overrides: {1: 250, 2: 250, 3: 300, 4: 350}  # starts from depth_offset+1
 #DepthManager.lod_transition_kimg: 100
@@ -74,7 +82,7 @@ DepthManager.attention_transition_kimg: 200
 
 #SaverPlugin.keep_old_checkpoints: true
 #SaverPlugin.network_snapshot_ticks: 50
-SaverPlugin.use_3way_test: false
+#SaverPlugin.use_3way_test: false
 
 #OutputGenerator.samples_count: 8
 #OutputGenerator.output_snapshot_ticks: 10
@@ -82,38 +90,48 @@ SaverPlugin.use_3way_test: false
 #GifGenerator.num_frames: 30
 #GifGenerator.fps: 5
 
-#Validator.output_snapshot_ticks: 20
+#ClassifierValidator.output_snapshot_ticks: 20
 
-#MyDataset.dir_path: './data/eeg'
-#MyDataset.num_files: 860
-MyDataset.seq_len: 256
-#MyDataset.stride: 0.5
-#MyDataset.max_freq: 80
-#MyDataset.num_channels: 5
-#MyDataset.per_user: true
-#MyDataset.use_abs: false
-MyDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
+#EEGDataset.dir_path: './data/eeg'
+#EEGDataset.num_files: 860
+EEGDataset.seq_len: 256
+EEGDataset.stride: 0.5
+EEGDataset.max_freq: 80
+#EEGDataset.num_channels: 5
+#EEGDataset.per_user: true
+#EEGDataset.use_abs: false
+EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
+#EEGDataset.dataset_freq: 80
 
-DilatedGenerator.latent_size: 256
-DilatedGenerator.normalize_latents: true
-DilatedGenerator.pixelnorm: true
-DilatedGenerator.activation: 'lrelu'
-DilatedGenerator.dropout: 0.1
-DilatedGenerator.do_mode: 'mul'
-DilatedGenerator.spectral_norm: false
-DilatedGenerator.ch_by_ch: false
-DilatedGenerator.normalization: null
-DilatedGenerator.recurrent_dropout: 0.1
-DilatedGenerator.bidir: false
-DilatedGenerator.n_layers: 2
-DilatedGenerator.cell_type: 'gru'
+#DilatedGenerator.latent_size: 256
+#DilatedGenerator.normalize_latents: true
+#DilatedGenerator.pixelnorm: true
+#DilatedGenerator.activation: 'lrelu'
+#DilatedGenerator.dropout: 0.1
+#DilatedGenerator.do_mode: 'mul'
+#DilatedGenerator.spectral_norm: false
+#DilatedGenerator.ch_by_ch: false
+#DilatedGenerator.normalization: null
+#DilatedGenerator.recurrent_dropout: 0.1
+#DilatedGenerator.bidir: false
+#DilatedGenerator.n_layers: 2
+#DilatedGenerator.cell_type: 'gru'
 
-DilatedDiscriminator.activation: 'lrelu'
-DilatedDiscriminator.dropout: 0.1
-DilatedDiscriminator.do_mode: 'mul'
-DilatedDiscriminator.spectral_norm: false
-DilatedDiscriminator.normalization: null
-DilatedDiscriminator.recurrent_dropout: 0.1
-DilatedDiscriminator.bidir: false
-DilatedDiscriminator.n_layers: 2
-DilatedDiscriminator.cell_type: 'gru'
+#DilatedDiscriminator.activation: 'lrelu'
+#DilatedDiscriminator.dropout: 0.1
+#DilatedDiscriminator.do_mode: 'mul'
+#DilatedDiscriminator.spectral_norm: false
+#DilatedDiscriminator.normalization: null
+#DilatedDiscriminator.recurrent_dropout: 0.1
+#DilatedDiscriminator.bidir: false
+#DilatedDiscriminator.n_layers: 2
+#DilatedDiscriminator.cell_type: 'gru'
+
+#AudioDataset.dir_path: './data/audio'
+#AudioDataset.num_files: 100
+#AudioDataset.seq_len: 16384
+#AudioDataset.stride: 0.5
+#AudioDataset.max_freq: 16000
+#AudioDataset.num_channels: 1
+#AudioDataset.dataset_freq: 16000
+#AudioDataset.model_dataset_depth_offset: 3

@@ -29,8 +29,8 @@ class DepthManager(Plugin):
                  attention_transition_kimg=200,
                  depth_offset=0,
                  minibatch_default=64,
-                 minibatch_overrides={6: 32, 7: 32, 8: 16},  # starts from depth_offset+1
-                 tick_kimg_overrides={4: 4, 5: 3, 6: 2, 7: 1, 8: 1},  # starts from depth_offset+1
+                 minibatch_overrides={6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4},  # starts from depth_offset+1
+                 tick_kimg_overrides={6: 4, 7: 4, 8: 3, 9: 3, 10: 2, 11: 2, 12: 1},  # starts from depth_offset+1
                  lod_training_kimg=400,
                  lod_training_kimg_overrides={1: 250, 2: 250, 3: 300, 4: 350},  # starts from depth_offset+1
                  lod_transition_kimg=100,
