@@ -262,7 +262,7 @@ class OutputGenerator(Plugin):
     def epoch(self, epoch_index):
         gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
-        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        frequency = self.max_freq * out.shape[2] / self.seq_len
         res_len = min(self.res_len, out.shape[2])
         if self.is_audio:
             images = self.get_audios(out[:, :, :res_len])
@@ -285,7 +285,7 @@ class FixedNoise(OutputGenerator):
 
     def epoch(self, epoch_index):
         out = generate_samples(self.trainer.G, self.gen_input)
-        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        frequency = self.max_freq * out.shape[2] / self.seq_len
         res_len = min(self.res_len, out.shape[2])
         if self.is_audio:
             images = self.get_audios(out[:, :, :res_len])
@@ -312,7 +312,7 @@ class GifGenerator(OutputGenerator):
         gen_input = self.slerp(np.arange(self.samples_count) / self.samples_count, gen_input[0], gen_input[1])
         gen_input = cudize(Variable(torch.from_numpy(gen_input.astype(np.float32))))
         out = generate_samples(self.trainer.G, gen_input)
-        frequency = int(self.max_freq * out.shape[2] / self.seq_len)
+        frequency = self.max_freq * out.shape[2] / self.seq_len
         res_len = min(self.res_len, out.shape[2])
         images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         imageio.mimsave(os.path.join(self.checkpoints_dir, '{}.gif'.format(epoch_index)), images, fps=self.fps)
@@ -371,7 +371,7 @@ class AggregationGraphValidator(Plugin):
         fakes = torch.cat(fakes, dim=0).data.cpu().numpy()
         fake_bounds = self.get_bounds(fakes)
         fake_bounds_f = self.get_bounds(np.abs(np.fft.rfft(fakes)))
-        frequency = int(self.max_freq * x_fake.shape[2] / self.seq_len)
+        frequency = self.max_freq * x_fake.shape[2] / self.seq_len
         res_len = min(self.res_len, x_fake.shape[2])
         self.plot_bounds(self.real_bounds, fake_bounds, self.real_bounds_f, fake_bounds_f, res_len, frequency, epoch)
 

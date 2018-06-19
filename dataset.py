@@ -28,7 +28,8 @@ class EEGDataset(Dataset):
                 sizes.append(max(int(np.ceil((all_data_len - self.seq_len + 1) / self.stride)), 0))
         self.sizes = sizes
         self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
-        num_points = [(self.sizes[i] - 1) * self.stride + self.seq_len for i in range(num_files)]
+        num_points = [((self.sizes[i] - 1) * self.stride + self.seq_len) if self.sizes[i] > 0 else 1 for i in
+                      range(num_files)]
         self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
         for i in range(num_files):
             for j in range(num_channels):
@@ -36,7 +37,7 @@ class EEGDataset(Dataset):
                     tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::(dataset_freq // max_freq)][
                           :num_points[i]]
                     self.datas[i][j, :] = tmp
-            if per_user:
+            if per_user and self.sizes[i]>0:
                 self.datas[i] = self.normalize(self.datas[i])
         if not per_user:
             self.normalize_all(num_files)

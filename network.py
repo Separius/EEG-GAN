@@ -340,10 +340,7 @@ class NeoPGConv1d(nn.Module):
             elif normalization == 'batch_norm':
                 norm = ConditionalBatchNorm(ch_out, num_classes)
         self.conv = conv
-        if norm is not None:
-            self.norm = norm
-        else:
-            self.norm = None
+        self.norm = norm
         self.net = []
         if act:
             self.net.append(get_activation(act, ch_out))
@@ -358,7 +355,7 @@ class NeoPGConv1d(nn.Module):
     def forward(self, x, y=None):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
-        return self.net(self.norm(self.conv(x)))
+        return self.net(self.conv(x))
 
 
 class GBlock(nn.Module):

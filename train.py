@@ -167,7 +167,8 @@ def main(params):
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
     logger.log('exp name: {}'.format(params['exp_name']))
-    logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
+    # TODO do this on HPC(at least print time :D)
+    # logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
     logger.log('dataset shape: {}'.format(dataset.shape))
     logger.log('Total number of parameters in Generator: {}'.format(num_params(G)))
     logger.log('Total number of parameters in Discriminator: {}'.format(num_params(D)))
