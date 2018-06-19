@@ -34,7 +34,7 @@ class EEGDataset(Dataset):
         for i in range(num_files):
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
-                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::(dataset_freq // max_freq)][
+                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::int(dataset_freq / max_freq)][
                           :num_points[i]]
                     self.datas[i][j, :] = tmp
             if per_user and self.sizes[i]>0:

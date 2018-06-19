@@ -303,8 +303,8 @@ class GifGenerator(OutputGenerator):
 
     def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, is_audio,
                  num_frames=30, fps=5):
-        super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, num_frames,
-                                           output_snapshot_ticks, res_len, is_audio)
+        super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, res_len, is_audio,
+                                           samples_count=num_frames, output_snapshot_ticks=output_snapshot_ticks)
         self.fps = fps
 
     def epoch(self, epoch_index):
