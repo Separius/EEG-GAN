@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import numpy as np
+import math
 from functools import partial
 from network import NeoPGConv1d, ToRGB, pixel_norm, Cnn2Rnn
 from utils import cudize, get_recurrent_cell
@@ -83,7 +83,7 @@ class DilatedGenerator(nn.Module):
         super(DilatedGenerator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution) / np.log2(progression_scale))
+        R = int(math.log(resolution, progression_scale))
         self.R = R
 
         def nf(stage):
@@ -128,7 +128,6 @@ class DilatedGenerator(nn.Module):
         self._depth = value
 
     def forward(self, x):
-        # TODO move this to the real latent generator, so slurp, fixed(needs another change though) and others do work
         h = cudize(torch.randn(x.size(0), self.latent_size, self.progression_scale ** self.depth))
         if self.normalize_latents:
             h = pixel_norm(h)
@@ -143,7 +142,7 @@ class DilatedDiscriminator(nn.Module):
         super(DilatedDiscriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution) / np.log2(progression_scale))
+        R = int(math.log(resolution, progression_scale))
         self.R = R
 
         def nf(stage):

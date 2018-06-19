@@ -3,7 +3,9 @@ import time
 from datetime import timedelta
 from glob import glob
 import torch
+from scipy.io import wavfile
 import numpy as np
+from sklearn.neighbors import BallTree
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
@@ -214,7 +216,7 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, is_audio, samples_count=8,
                  output_snapshot_ticks=10):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
@@ -223,6 +225,7 @@ class OutputGenerator(Plugin):
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
         self.max_freq = max_freq
+        self.is_audio = is_audio
 
     def register(self, trainer):
         self.trainer = trainer
@@ -253,14 +256,23 @@ class OutputGenerator(Plugin):
             plt.close(fig)
         return images
 
+    def get_audios(self, generated):
+        return [generated[i, 0, :] for i in range(len(generated))]
+
     def epoch(self, epoch_index):
-        gen_input = cudize(Variable(self.sample_fn(self.samples_count)))  # TODO based on dilated
+        gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
+        if self.is_audio:
+            images = self.get_audios(out[:, :, :res_len])
+        else:
+            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         for i, image in enumerate(images):
-            misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
+            if self.is_audio:
+                wavfile.write(os.path.join(self.checkpoints_dir, '{}_{}.wav'.format(epoch_index, i)), frequency, image)
+            else:
+                misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
     def end(self, *args):
         self.epoch(*args)
@@ -269,33 +281,40 @@ class OutputGenerator(Plugin):
 class FixedNoise(OutputGenerator):
     def __init__(self, *args, **kwargss):
         super(FixedNoise, self).__init__(*args, **kwargss)
-        self.gen_input = cudize(Variable(self.sample_fn(self.samples_count)))  # TODO based on dilated
+        self.gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
 
     def epoch(self, epoch_index):
         out = generate_samples(self.trainer.G, self.gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
+        if self.is_audio:
+            images = self.get_audios(out[:, :, :res_len])
+        else:
+            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         for i, image in enumerate(images):
-            misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
+            if self.is_audio:
+                wavfile.write(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.wav'.format(epoch_index, i)), frequency,
+                              image)
+            else:
+                misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
 
 
 class GifGenerator(OutputGenerator):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, num_frames=30,
-                 fps=5):
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, is_audio,
+                 num_frames=30, fps=5):
         super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, num_frames,
-                                           output_snapshot_ticks, res_len)
+                                           output_snapshot_ticks, res_len, is_audio)
         self.fps = fps
 
     def epoch(self, epoch_index):
-        gen_input = self.sample_fn(2).numpy()  # TODO based on dilated
+        gen_input = self.sample_fn(2).numpy()
         gen_input = self.slerp(np.arange(self.samples_count) / self.samples_count, gen_input[0], gen_input[1])
         gen_input = cudize(Variable(torch.from_numpy(gen_input.astype(np.float32))))
         out = generate_samples(self.trainer.G, gen_input)
         frequency = int(self.max_freq * out.shape[2] / self.seq_len)
         res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])  # TODO or get audio
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         imageio.mimsave(os.path.join(self.checkpoints_dir, '{}.gif'.format(epoch_index)), images, fps=self.fps)
 
     @staticmethod
@@ -307,10 +326,92 @@ class GifGenerator(OutputGenerator):
         return np.outer(np.sin((1.0 - val) * omega) / so, low) + np.outer(np.sin(val * omega) / so, high)
 
 
-class Validator(Plugin):
+class AggregationGraphValidator(Plugin):
+    def __init__(self, sample_fn, valid_set, output_snapshot_ticks, checkpoints_dir, res_len, seq_len, max_freq):
+        super(AggregationGraphValidator, self).__init__([(1, 'epoch'), (1, 'end')])
+        self.sample_fn = sample_fn
+        self.valid_set = valid_set
+        self.real_bounds = None
+        self.real_bounds_f = None
+        self.last_depth = None
+        self.output_snapshot_ticks = output_snapshot_ticks
+        self.checkpoints_dir = checkpoints_dir
+        self.res_len = res_len
+        self.seq_len = seq_len
+        self.max_freq = max_freq
+
+    @staticmethod
+    def get_bounds(a):
+        return np.max(a, axis=0), np.mean(a, axis=0), np.min(a, axis=0)
+
+    def update_real_bounds(self):
+        if self.last_depth != self.trainer.D.depth:
+            all_real = torch.cat([batch for batch in self.valid_set], dim=0).cpu().numpy()
+            self.real_bounds = self.get_bounds(all_real)
+            self.real_bounds_f = self.get_bounds(np.abs(np.fft.rfft(all_real)))
+            self.last_depth = self.trainer.D.depth
+
+    def register(self, trainer):
+        self.trainer = trainer
+
+    def end(self, *args):
+        self.epoch(*args)
+
+    def epoch(self, epoch):
+        if len(self.valid_set) == 0:
+            return
+        if (epoch - 1) % self.output_snapshot_ticks != 0:
+            return
+        self.update_real_bounds()
+        self.trainer.G.eval()
+        fakes = []
+        for batch in self.valid_set:
+            x_fake = self.trainer.G(cudize(Variable(self.sample_fn(batch.shape[0])))).detach()
+            fakes.append(x_fake)
+        fakes = torch.cat(fakes, dim=0).data.cpu().numpy()
+        fake_bounds = self.get_bounds(fakes)
+        fake_bounds_f = self.get_bounds(np.abs(np.fft.rfft(fakes)))
+        frequency = int(self.max_freq * x_fake.shape[2] / self.seq_len)
+        res_len = min(self.res_len, x_fake.shape[2])
+        self.plot_bounds(self.real_bounds, fake_bounds, self.real_bounds_f, fake_bounds_f, res_len, frequency, epoch)
+
+    def plot_bounds(self, real_bounds, fake_bounds, f_real_bounds, f_fake_bounds, seq_len, frequency, epoch):
+        num_channels = real_bounds.shape[0]
+        t = np.linspace(0, seq_len / frequency, seq_len)
+        f = np.fft.rfftfreq(seq_len, d=1. / frequency)
+        fig, (axs) = plt.subplots(num_channels, 2)
+        if num_channels == 1:
+            axs = axs.reshape(1, -1)
+        fig.set_figheight(20)
+        fig.set_figwidth(20)
+        for ch in range(num_channels):
+            axs[ch][0].plot(t, real_bounds[1][ch, :], lw=2, color=(0.8, 0, 0, 0.5), label='real_mean_t')
+            axs[ch][0].fill_between(t, real_bounds[2][ch, :], real_bounds[1][ch, :], facecolor='yellow', alpha=0.5,
+                                    label='real_bound_t')
+            axs[ch][0].plot(t, fake_bounds[1][ch, :], lw=2, color=(0.2, 0, 0, 0.8), label='fake_mean_t')
+            axs[ch][0].fill_between(t, real_bounds[2][ch, :], real_bounds[1][ch, :], facecolor='green', alpha=0.5,
+                                    label='fake_bound_t')
+
+            axs[ch][1].plot(f, f_real_bounds[1][ch, :], color=(0.8, 0, 0, 0.5), label='real_mean_f')
+            axs[ch][1].fill_between(f, f_real_bounds[2][ch, :], f_real_bounds[1][ch, :], facecolor='yellow', alpha=0.5,
+                                    label='real_bound_f')
+            axs[ch][1].plot(f, f_fake_bounds[1][ch, :], color=(0.2, 0, 0, 0.8), label='fake_mean_f')
+            axs[ch][1].fill_between(f, f_fake_bounds[2][ch, :], f_fake_bounds[1][ch, :], facecolor='green', alpha=0.5,
+                                    label='fake_bound_f')
+            axs[ch][0].set_ylim([-1.1, 1.1])
+            axs[ch][0].legend()
+            axs[ch][1].legend()
+            axs[ch][1].set_yscale("log")
+        fig.canvas.draw()
+        image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plt.close(fig)
+        misc.imsave(os.path.join(self.checkpoints_dir, 'aggregation_{}.png'.format(epoch)), image)
+
+
+class ClassifierValidator(Plugin):
     def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
-        super(Validator, self).__init__([(1, 'epoch'), (1, 'end')])
-        # TODO do not call this for audio
+        super(ClassifierValidator, self).__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.valid_set = valid_set
         self.real_features = None
@@ -345,12 +446,11 @@ class Validator(Plugin):
         d_loss = 0.0
         for batch in self.valid_set:
             x_real = cudize(batch)
-            # TODO dilated mode
             x_fake = self.trainer.G(cudize(Variable(self.sample_fn(x_real.shape[0])))).detach()
             fakes.append(x_fake)
             d_loss += ll(
                 self.trainer.D_loss(self.trainer.D, self.trainer.G, x_real, cudize(self.sample_fn(x_real.shape[0]))))
-            del x_real, x_fake
+            del x_real
         d_loss /= len(self.valid_set)
         fakes = get_features(torch.cat(fakes, dim=0).data)
         reals = self.get_real_features()
@@ -359,6 +459,55 @@ class Validator(Plugin):
         valid_dict = {'d_loss': d_loss}
         valid_dict.update(get_accuracy(reals, fakes))
         self.update_stats(valid_dict)
+
+    def end(self, *args):
+        self.epoch(*args)
+
+
+class NearestNeighborValidator(Plugin):
+    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
+        super(NearestNeighborValidator, self).__init__([(1, 'epoch'), (1, 'end')])
+        self.sample_fn = sample_fn
+        self.valid_set = valid_set
+        self.real_tree = None
+        self.last_depth = None
+        self.output_snapshot_ticks = output_snapshot_ticks
+
+    def get_real_tree(self):
+        if self.last_depth == self.trainer.D.depth:
+            return self.real_tree
+        all_real = torch.cat([batch for batch in self.valid_set], dim=0).cpu().numpy()
+        self.real_tree = [BallTree(all_real[:, i, :], leaf_size=30, metric='euclidean') for i in
+                          range(all_real.shape[1])]
+        self.last_depth = self.trainer.D.depth
+        return self.real_tree
+
+    def register(self, trainer):
+        self.trainer = trainer
+        self.trainer.stats['nn_validation'] = {'log_format': ':.4f'}
+        # ['nn_validation.' + x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']] * channels
+
+    def update_stats(self, new_dict):
+        self.stats = new_dict
+        for k, v in new_dict.items():
+            self.trainer.stats['nn_validation'][k] = v
+
+    def epoch(self, epoch):
+        if len(self.valid_set) == 0:
+            return
+        if (epoch - 1) % self.output_snapshot_ticks != 0:
+            self.update_stats(self.stats)
+            return
+        self.trainer.G.eval()
+        fakes = []
+        for batch in self.valid_set:
+            x_fake = self.trainer.G(cudize(Variable(self.sample_fn(batch.shape[0])))).detach()
+            fakes.append(x_fake)
+        fakes = torch.cat(fakes, dim=0).data.cpu().numpy()
+        fakes = [BallTree(fakes[:, i, :], leaf_size=30, metric='euclidean') for i in range(fakes.shape[1])]
+        reals = self.get_real_tree()
+        self.trainer.G.train()
+        self.update_stats(dict())  # TODO fill the dict with queries(kdt.query(X, k=2, return_distance=True))
 
     def end(self, *args):
         self.epoch(*args)

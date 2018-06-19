@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import math
 from torch import nn
 import torch.nn.functional as F
 from utils import cudize, get_recurrent_cell, cnn2rnn, rnn2cnn
@@ -415,7 +416,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution) / np.log2(progression_scale))
+        R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
         def nf(stage):
@@ -544,7 +545,7 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(np.log2(resolution) / np.log2(progression_scale))
+        R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
         self.R = R
 

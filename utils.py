@@ -38,7 +38,6 @@ def load_pkl(fname):
         return load(f)
 
 
-# TODO change this for dilated mode
 def random_latents(num_latents, latent_size):
     return torch.randn(num_latents, latent_size)
 
@@ -146,7 +145,7 @@ def get_features_vectorized(x, is_numpy=False):
     if not np.isfinite(z).all():
         print('INPUT IS NOT FINITE!!')
         exit()
-    res = np.zeros((z.shape[0], 24))
+    res = np.zeros((z.shape[0], 21))
     N = z.shape[1]
     diff = np.diff(z)
     res[:, 0] = zcc(diff)
@@ -167,11 +166,9 @@ def get_features_vectorized(x, is_numpy=False):
             np.sum(magnitudes, axis=1) + 1e-6)
     res[:, 12] = np.argmax(magnitudes, axis=1)
     res[:, 13], res[:, 14] = hjorth_vectorized(z, diff)
-    power_ratio = bin_power_vectorized(z, [0.5, 4, 7, 12, 30], 80)
-    res[:, 15:19] = power_ratio[:]
-    res[:, 19:23] = bin_power_vectorized(z, [4, 10, 15, 25, 40], 80)[:]
-    res[:, 23] = spectral_entropy_vectorized(power_ratio)
-    # TODO res[:, xx:yy] = bin_power_vectorized(z, [0.5, 4, 8, 10, 12, 30])
+    power_ratio = bin_power_vectorized(z, [0.5, 4, 8, 10, 12, 30], 80)[:]
+    res[:, 15:20] = power_ratio[:]
+    res[:, 20] = spectral_entropy_vectorized(power_ratio)
     return res
 
 
