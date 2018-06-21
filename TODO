@@ -1,43 +1,36 @@
-Eval:
-    ◽️ Nearest Neighbor
 Code:
-    ◽️ update default and test config
-    ◽️ experiment manager: stores validation losses and results(same as a good old logger! :D)
-    ◽️ hyper parameter search => config generator and run them in k GPUs
-        https://dmitryulyanov.github.io/if-you-are-lazy-to-install-slurm/
-------------------------------------------------------------------
-Code:
-    cubic interpolation: -0.0625, 0.0, 0.5625, 1.0, 0.5625, 0.0, -0.0625
-    make a stable hinge loss config
-Condition:
-    data feeding(real/fake)
-    get data: sex, age, status(sleep, ...), normality => by hand! :D, it is only 860 files :| :D or regex only for 860
-    get mapping: dataset_id -> our_id
-Experiment:
-    Differential Privacy
-    SampleRNN + D loss
-    higher top freq(250 Hz)
-    SuperRes: freq domain, channel domain
-OtherDataset:
-    https://www.kaggle.com/c/4477/download/{train, test}.zip
-    https://github.com/mne-tools/mne-python/blob/master/mne/datasets/eegbci/eegbci.py
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.0/
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/current/
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
-Classifier:
-    https://github.com/vlawhern/arl-eegmodels
-    https://github.com/stupiding/kaggle_EEG
+    [ ] connection network => change D
+    [ ] F(o1, o2, o3) = o4 => change G
+    [ ] Z1,0,0,0,Z2,0,0,0,Z3 => change G => Compatibility Network([Con(real1), Con(real2)] = high)
+    [ ] test all on CPU
+    [ ] test all on GPU
+    [ ] gang of D?
 Eval:
-    3-way mmd over fft or time
-    TrainOnFakeTestOnReal/RV
-    Alish Features
-    d(concatenated parts) == fake
-    FID
-    InceptionScore
-    Sliced W Distance
-Paper:
-    16 channels
-    connection network
-    InfiniteSeqLen:
-        G1(z)=o1,o2,o3,o4 so we can have a F(o1,o2,o3)=o4 and H(o2,o3,o4)=o1 + DropOut => extend this is VAE like output
-        Use the connection net to make another gan over sequences of Z! :D
+    seeing => generate.py
+    3-mmd
+    alish features => call matlab with .mat args
+    easy test conditional
+    runner script
+Configs:
+    Loss:
+        optimizer: adam, amsgrad, ttur
+        hinge
+        wgan_gp + ct
+        wgan_theirs + ct
+    Structure:
+        progress: num layers, initial size, depth_manager_offset, progression_scale
+        channel by channel
+        stats layer
+        num features
+        residual
+        kernel size
+        inception
+        self attention
+    Normalization:
+        dropout
+        phase shuffle
+        pixel norm
+        spectral norm
+        batch norm
+        layer norm
+        weight norm

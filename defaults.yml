@@ -30,9 +30,11 @@ kernel_size: 3
 #self_attention_layer: null
 #self_attention_size: 32
 #drnn: false
-#progression_scale: 2
+#progression_scale: 2 # single number or a list where prod(list) == seq_len
 #num_classes: 0
 #audio: false
+#gen_gif: false
+#spreading_factor: 0
 
 #Trainer.grad_clip: null #null or a float
 #Trainer.D_training_repeats: 1
@@ -50,9 +52,6 @@ kernel_size: 3
 #Generator.spectral_norm: false
 #Generator.ch_by_ch: false
 #Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-#Generator.cell_type: null #null, lstm, gru, rnn, sru, qrnn
-#Generator.cell_num_layers: 1
-#Generator.cell_bidirectional: false
 
 #Discriminator.downsample: 'average' #average, stride
 #Discriminator.pixelnorm: false
@@ -65,9 +64,6 @@ kernel_size: 3
 #Discriminator.num_stat_channels: 1
 #Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 #Discriminator.residual: false
-#Discriminator.cell_type: null #null, lstm, gru, rnn, sru, qrnn
-#Discriminator.cell_num_layers: 1
-#Discriminator.cell_bidirectional: false
 
 #DepthManager.attention_start_depth: null
 #DepthManager.attention_transition_kimg: 200

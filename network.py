@@ -107,24 +107,6 @@ class ScaledTanh(nn.Tanh):
         return super().forward(x * self.scale)
 
 
-class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False, is_weight_norm=False):
-        super(EqualizedConv1d, self).__init__()
-        self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False)
-        if is_spectral:
-            self.conv = spectral_norm_wrapper(self.conv)
-        if is_weight_norm:
-            self.conv = weight_norm_wrapper(self.conv)
-        torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
-        self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).fill_(0))
-        self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
-        self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
-
-    def forward(self, x):
-        x = self.conv(x * self.scale)
-        return x + self.bias.view(1, -1, 1).expand_as(x)
-
-
 class GDropLayer(nn.Module):
     """
     # Generalized dropout layer. Supports arbitrary subsets of axes and different
@@ -170,8 +152,8 @@ class ChannelByChannelOut(nn.Module):
         super(ChannelByChannelOut, self).__init__()
         self.num_out = ch_out
         self.out = nn.ModuleList([nn.Sequential(
-            NeoPGConv1d(ch_in + i, 1, ksize=1, pixelnorm=False, act=None, equalized=equalized,
-                        normalization=normalization), ScaledTanh()) for i in range(ch_out)])
+            GeneralConv(ch_in + i, 1, ksize=1, pixelnorm=False, act=None, equalized=equalized,
+                        normalization=normalization, spreading_factor=0), ScaledTanh()) for i in range(ch_out)])
 
     def forward(self, x):
         r = x
@@ -188,8 +170,8 @@ class ToRGB(nn.Module):
             self.toRGB = ChannelByChannelOut(ch_in, num_channels, normalization=normalization, equalized=equalized)
         else:
             self.toRGB = nn.Sequential(
-                NeoPGConv1d(ch_in, num_channels, ksize=1, pixelnorm=False, act=None, equalized=equalized,
-                            normalization=normalization), ScaledTanh())
+                GeneralConv(ch_in, num_channels, ksize=1, pixelnorm=False, act=None, equalized=equalized,
+                            normalization=normalization, spreading_factor=0), ScaledTanh())
 
     def forward(self, x):
         return self.toRGB(x)
@@ -319,16 +301,41 @@ class ConditionalGroupNorm(nn.Module):
         return gammas * (x - mean) * torch.rsqrt(var + 1e-8) + betas
 
 
+class EqualizedConv1d(nn.Module):
+    def __init__(self, c_in, c_out, k_size, stride=1, padding=0, is_spectral=False, is_weight_norm=False, groups=1,
+                 bias=True):
+        super(EqualizedConv1d, self).__init__()
+        self.conv = nn.Conv1d(c_in, c_out, k_size, stride, padding, bias=False, groups=groups)
+        if is_spectral:
+            self.conv = spectral_norm_wrapper(self.conv)
+        if is_weight_norm:
+            self.conv = weight_norm_wrapper(self.conv)
+        torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+        if bias:
+            self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).zero_())
+        else:
+            self.bias = None
+        self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
+        self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
+
+    def forward(self, x):
+        x = self.conv(x * self.scale)
+        if self.bias is not None:
+            return x + self.bias.view(1, -1, 1).expand_as(x)
+        return x
+
+
 class NeoPGConv1d(nn.Module):
-    def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True,
-                 act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0):
+    def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True, act='lrelu', do=0,
+                 do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0, groups=1,
+                 bias=True):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
         if equalized:
-            conv = EqualizedConv1d(ch_in, ch_out, ksize, 1, pad, is_spectral=spectral,
-                                   is_weight_norm=normalization == 'weight_norm')
+            conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, is_spectral=spectral,
+                                   is_weight_norm=normalization == 'weight_norm', groups=groups, bias=bias)
         else:
-            conv = nn.Conv1d(ch_in, ch_out, ksize, 1, pad)
+            conv = nn.Conv1d(ch_in, ch_out, ksize, padding=pad, groups=groups, bias=bias)
             if spectral:
                 conv = spectral_norm_wrapper(conv)
             if normalization == 'weight_norm':
@@ -358,38 +365,63 @@ class NeoPGConv1d(nn.Module):
         return self.net(self.conv(x))
 
 
-class GBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_size=None, ch_by_ch=False,
-                 normalization=None, residual=False, inception=False, cell_type=None, cell_settings=None,
-                 **layer_settings):
-        super(GBlock, self).__init__()
-        is_first = initial_size is not None
-        if cell_type is None or is_first:
-            if inception and not is_first:
-                c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=1, normalization=normalization,
-                                 **layer_settings)
-                c2 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
-                                 **layer_settings)
-                c3 = NeoPGConv1d(ch_in, ch_out, equalized=equalized,
-                                 ksize=(ksize * 2 - 1) if ksize < 7 else ((ksize + 1) // 4 * 2 + 1),
-                                 normalization=normalization, **layer_settings)
-                c1 = Concatenate(nn.ModuleList([c1, c2, c3]))
-                c2 = NeoPGConv1d(ch_out * 3, ch_out, equalized=equalized, ksize=1, normalization=normalization,
-                                 **layer_settings)
-            else:
-                c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, ksize=2 ** initial_size if is_first else ksize,
-                                 pad=2 ** initial_size - 1 if is_first else None, normalization=normalization,
-                                 **layer_settings)
-                c2 = NeoPGConv1d(ch_out, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
-                                 **layer_settings)
-            self.c1 = c1
-            self.c2 = c2
+class GeneralConv(nn.Module):
+    def __init__(self, in_channels, out_channels, ksize, spreading_factor=0, equalized=True, pad=None,
+                 pixelnorm=True, act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None,
+                 num_classes=0):
+        super(GeneralConv, self).__init__()
+        self.is_separable = (spreading_factor != 0) and (
+                normalization == 'layer_norm' or normalization == 'batch_norm')
+        if self.is_separable:
+            self.c1 = NeoPGConv1d(in_channels, in_channels * spreading_factor, ksize, equalized=equalized,
+                                  phase_shuffle=phase_shuffle, pixelnorm=pixelnorm,
+                                  act=act if act is not None else 'relu', do=do, do_mode=do_mode, spectral=spectral,
+                                  pad=pad, normalization=normalization, num_classes=num_classes, groups=in_channels,
+                                  bias=False)
+            self.c2 = NeoPGConv1d(in_channels * spreading_factor, out_channels, ksize=1, equalized=equalized,
+                                  pixelnorm=pixelnorm, act=act, do=do, do_mode=do_mode, spectral=spectral,
+                                  normalization=normalization, num_classes=num_classes, bias=False)
         else:
-            self.c1 = RecurrentModule(cell_type, ch_in, ch_out, **cell_settings)
-            self.c2 = NeoPGConv1d(ch_out * (2 if cell_settings['bidirectional'] else 1), ch_out, equalized=equalized,
-                                  ksize=1, normalization=normalization, **layer_settings)
+            self.c1 = NeoPGConv1d(in_channels, out_channels, ksize, equalized=equalized, pad=pad,
+                                  pixelnorm=pixelnorm, act=act, do=do, do_mode=do_mode, spectral=spectral,
+                                  phase_shuffle=phase_shuffle, normalization=normalization, num_classes=num_classes)
+
+    def forward(self, x, y=None):
+        x = self.c1(x, y)
+        if self.is_separable:
+            return self.c2(x, y)
+        return x
+
+
+class GBlock(nn.Module):
+    def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_kernel_size=None, ch_by_ch=False,
+                 normalization=None, residual=False, inception=False, **layer_settings):
+        super(GBlock, self).__init__()
+        is_first = initial_kernel_size is not None
+        if inception and not is_first:
+            c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=1, normalization=normalization,
+                             **layer_settings)
+            c2 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
+                             **layer_settings)
+            c3 = GeneralConv(ch_in, ch_out, equalized=equalized,
+                             ksize=(ksize * 2 - 1) if ksize < 7 else ((ksize + 1) // 4 * 2 + 1),
+                             normalization=normalization, **layer_settings)
+            c1 = Concatenate(nn.ModuleList([c1, c2, c3]))
+            c2 = GeneralConv(ch_out * 3, ch_out, equalized=equalized, ksize=1, normalization=normalization,
+                             **layer_settings)
+        else:
+            c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, normalization=normalization,
+                             **layer_settings)
+            if is_first:
+                del layer_settings['spreading_factor']
+            c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
+                             pad=initial_kernel_size - 1 if is_first else None, normalization=normalization,
+                             spreading_factor=0 if is_first else layer_settings['spreading_factor'], **layer_settings)
+        self.c1 = c1
+        self.c2 = c2
         if residual and not is_first:
-            self.bypass = NeoPGConv1d(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
+            self.bypass = GeneralConv(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
+                                      spreading_factor=layer_settings['spreading_factor'],
                                       spectral=layer_settings['spectral'])
         else:
             self.bypass = None
@@ -406,15 +438,17 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
-                 equalized, inception, self_attention_layer, self_attention_size, num_classes, latent_size=256,
-                 upsample='linear', normalize_latents=True, pixelnorm=True, activation='lrelu', dropout=0.1,
-                 residual=False, do_mode='mul', spectral_norm=False, ch_by_ch=False, normalization=None, cell_type=None,
-                 cell_num_layers=1, cell_bidirectional=False):
+                 equalized, inception, self_attention_layer, self_attention_size, num_classes, spreading_factor,
+                 latent_size=256, upsample='linear', normalize_latents=True, pixelnorm=True, activation='lrelu',
+                 dropout=0.1, residual=False, do_mode='mul', spectral_norm=False, ch_by_ch=False, normalization=None):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(math.log(resolution, progression_scale))
-        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
+        if isinstance(progression_scale, (list, tuple)):
+            R = len(progression_scale)
+        else:
+            R = int(math.log(resolution, progression_scale))
+            assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -423,31 +457,39 @@ class Generator(nn.Module):
             latent_size = nf(initial_size - 2)
         self.normalize_latents = normalize_latents
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
-                              num_classes=num_classes)
+                              num_classes=num_classes, spreading_factor=spreading_factor)
+        if isinstance(progression_scale, (list, tuple)):
+            initial_kernel_size = np.prod(progression_scale[:initial_size])
+        else:
+            initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(initial_size - 1), num_channels, ksize=kernel_size, equalized=equalized,
-                             initial_size=initial_size, ch_by_ch=ch_by_ch, normalization=normalization,
+                             initial_kernel_size=initial_kernel_size, ch_by_ch=ch_by_ch, normalization=normalization,
                              residual=residual, **layer_settings)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
             self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer), self_attention_size)
         else:
             self.self_attention = None
-        cell_settings = dict(num_layers=cell_num_layers, dropout=dropout, bidirectional=cell_bidirectional)
         self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
                                             ch_by_ch=ch_by_ch, normalization=normalization, residual=residual,
-                                            inception=inception, cell_type=cell_type, cell_settings=cell_settings,
-                                            **layer_settings) for i in range(initial_size, R)])
+                                            inception=inception, **layer_settings) for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
+        self.progression_scale = progression_scale
+        is_single = not isinstance(progression_scale, (list, tuple))
         if upsample == 'linear':
-            self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample, align_corners=True)
+            self.upsampler = nn.ModuleList([nn.Upsample(
+                scale_factor=progression_scale if is_single else progression_scale[i], mode=upsample,
+                align_corners=True) for i in range(initial_size, R)])
         elif upsample == 'nearest':
-            self.upsampler = nn.Upsample(scale_factor=progression_scale, mode=upsample)
-        elif upsample == 'cubic' and progression_scale == 2:
-            self.upsampler = nn.ConvTranspose1d(1, 1, kernel_size=7, stride=2, bias=False, padding=3)  # 2*L-1 :|
-            self.upsampler.weight.data = torch.tensor([[[-0.0625, 0.0, 0.5625, 1.0, 0.5625, 0.0, -0.0625]]])
+            self.upsampler = nn.ModuleList(
+                [nn.Upsample(scale_factor=progression_scale if is_single else progression_scale[i], mode=upsample) for i
+                 in range(initial_size, R)])
+        # elif upsample == 'cubic' and progression_scale == 2:
+        #     self.upsampler = nn.ConvTranspose1d(1, 1, kernel_size=7, stride=2, bias=False, padding=3)  # 2*L-1 :|
+        #     self.upsampler.weight.data = torch.tensor([[[-0.0625, 0.0, 0.5625, 1.0, 0.5625, 0.0, -0.0625]]])
         else:
             raise ValueError()
 
@@ -464,9 +506,9 @@ class Generator(nn.Module):
             for i in range(self.depth - 1):
                 if i == self.self_attention_layer:
                     h = self.self_attention(h)
-                h = self.upsampler(h)
+                h = self.upsampler[i](h)
                 h = self.blocks[i](h, y)
-            h = self.upsampler(h)
+            h = self.upsampler[self.depth - 1](h)
             ult = self.blocks[self.depth - 1](h, y, True)
             if self.alpha < 1.0:
                 if self.depth > 1:
@@ -480,48 +522,42 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, initial_size=None, temporal=False, num_stat_channels=1, ksize=3,
-                 equalized=True, spectral=False, normalization=None, residual=False, inception=False, cell_type=None,
-                 cell_settings=None, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, temporal=False, num_stat_channels=1,
+                 ksize=3, equalized=True, spectral=False, normalization=None, residual=False, inception=False,
+                 **layer_settings):
         super(DBlock, self).__init__()
-        is_last = initial_size is not None
+        is_last = initial_kernel_size is not None
         if residual and not is_last:
-            self.bypass = NeoPGConv1d(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
-                                      spectral=spectral)
+            self.bypass = GeneralConv(ch_in, ch_out, ksize=1, equalized=equalized, pixelnorm=False, act=None,
+                                      spectral=spectral, spreading_factor=layer_settings['spreading_factor'])
         else:
             self.bypass = None
-        self.fromRGB = NeoPGConv1d(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
+        self.fromRGB = GeneralConv(num_channels, ch_in, ksize=1, pixelnorm=False, equalized=equalized,
                                    spectral=spectral,
                                    normalization=None if normalization == 'batch_norm' else normalization)
         if num_stat_channels > 0 and is_last:
             self.net = [MinibatchStddev(temporal, num_stat_channels)]
         else:
             self.net = []
-        if cell_type is None or is_last:
-            if inception and not is_last:
-                c1 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=1,
-                                 normalization=normalization, **layer_settings)
-                c2 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=ksize,
-                                 normalization=normalization, **layer_settings)
-                c3 = NeoPGConv1d(ch_in, ch_out, equalized=equalized, spectral=spectral,
-                                 ksize=(ksize * 2 - 1) if ksize < 7 else ((ksize + 1) // 4 * 2 + 1),
-                                 normalization=normalization, **layer_settings)
-                self.net.append(Concatenate(nn.ModuleList([c1, c2, c3])))
-                self.net.append(NeoPGConv1d(ch_out * 3, ch_out, equalized=equalized, spectral=spectral, ksize=1,
-                                            normalization=normalization, **layer_settings))
-            else:
-                self.net.append(
-                    NeoPGConv1d(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
-                                spectral=spectral, normalization=normalization, **layer_settings))
-                self.net.append(
-                    NeoPGConv1d(ch_in, ch_out, ksize=(2 ** initial_size) if is_last else ksize,
-                                pad=0 if is_last else None,
-                                equalized=equalized, spectral=spectral, normalization=normalization, **layer_settings))
+        if inception and not is_last:
+            c1 = GeneralConv(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=1,
+                             normalization=normalization, **layer_settings)
+            c2 = GeneralConv(ch_in, ch_out, equalized=equalized, spectral=spectral, ksize=ksize,
+                             normalization=normalization, **layer_settings)
+            c3 = GeneralConv(ch_in, ch_out, equalized=equalized, spectral=spectral,
+                             ksize=(ksize * 2 - 1) if ksize < 7 else ((ksize + 1) // 4 * 2 + 1),
+                             normalization=normalization, **layer_settings)
+            self.net.append(Concatenate(nn.ModuleList([c1, c2, c3])))
+            self.net.append(GeneralConv(ch_out * 3, ch_out, equalized=equalized, spectral=spectral, ksize=1,
+                                        normalization=normalization, **layer_settings))
         else:
-            self.net.append(RecurrentModule(cell_type, ch_in, ch_out, **cell_settings))
             self.net.append(
-                NeoPGConv1d(ch_out * (2 if cell_settings['bidirectional'] else 1), ch_out, equalized=equalized, ksize=1,
-                            normalization=normalization, spectral=spectral, **layer_settings))
+                GeneralConv(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
+                            spectral=spectral, normalization=normalization, **layer_settings))
+            self.net.append(
+                GeneralConv(ch_in, ch_out, ksize=initial_kernel_size if is_last else ksize,
+                            pad=0 if is_last else None,
+                            equalized=equalized, spectral=spectral, normalization=normalization, **layer_settings))
         self.net = nn.Sequential(*self.net)
 
     def forward(self, x, first=False):
@@ -535,36 +571,42 @@ class DBlock(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
-                 kernel_size, inception, self_attention_layer, self_attention_size, num_classes, downsample='average',
-                 pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul', spectral_norm=False, phase_shuffle=0,
-                 temporal_stats=False, num_stat_channels=1, normalization=None, residual=False, cell_type=None,
-                 cell_num_layers=1, cell_bidirectional=False):
+                 kernel_size, inception, self_attention_layer, self_attention_size, num_classes, spreading_factor,
+                 downsample='average', pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul',
+                 spectral_norm=False, phase_shuffle=0, temporal_stats=False, num_stat_channels=1, normalization=None,
+                 residual=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(math.log(resolution, progression_scale))
-        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
-        self.R = R
+        if isinstance(progression_scale, (list, tuple)):
+            self.R = R = len(progression_scale)
+        else:
+            R = int(math.log(resolution, progression_scale))
+            assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
+            self.R = R
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
 
-        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode)
-        last_block = DBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels, initial_size=initial_size,
-                            temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
-                            residual=residual, equalized=equalized, spectral=spectral_norm, normalization=normalization,
-                            **layer_settings)
+        layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode,
+                              spreading_factor=spreading_factor)
+        if isinstance(progression_scale, (list, tuple)):
+            initial_kernel_size = np.prod(progression_scale[:initial_size])
+        else:
+            initial_kernel_size = progression_scale ** initial_size
+        last_block = DBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels,
+                            initial_kernel_size=initial_kernel_size, temporal=temporal_stats,
+                            num_stat_channels=num_stat_channels, ksize=kernel_size, residual=residual,
+                            equalized=equalized, spectral=spectral_norm, normalization=normalization, **layer_settings)
         layer_settings.update(phase_shuffle=phase_shuffle)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
             self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer), self_attention_size)
         else:
             self.self_attention = None
-        cell_settings = dict(num_layers=cell_num_layers, dropout=dropout, bidirectional=cell_bidirectional)
         self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size, equalized=equalized,
-                                            initial_size=None, residual=residual, spectral=spectral_norm,
-                                            normalization=normalization, inception=inception, cell_type=cell_type,
-                                            cell_settings=cell_settings, **layer_settings) for i in
+                                            initial_kernel_size=None, residual=residual, spectral=spectral_norm,
+                                            normalization=normalization, inception=inception, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
             self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
@@ -578,10 +620,15 @@ class Discriminator(nn.Module):
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
+        is_single = not isinstance(progression_scale, (list, tuple))
         if downsample == 'average':
-            self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
+            self.downsampler = nn.ModuleList(
+                [nn.AvgPool1d(kernel_size=progression_scale if is_single else progression_scale[-i]) for i in
+                 reversed(range(initial_size, R))])
         elif downsample == 'stride':
-            self.downsampler = DownSample(scale_factor=progression_scale)
+            self.downsampler = nn.ModuleList(
+                [DownSample(scale_factor=progression_scale if is_single else progression_scale[i]) for i in
+                 reversed(range(initial_size, R))])
 
     def set_gamma(self, new_gamma):
         if self.self_attention is not None:
@@ -591,15 +638,15 @@ class Discriminator(nn.Module):
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
-            h = self.downsampler(h)
+            h = self.downsampler[-self.depth](h)
             if self.alpha < 1.0:
-                xlowres = self.downsampler(xhighres)
+                xlowres = self.downsampler[-self.depth](xhighres)
                 preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
                 h = h * self.alpha + (1 - self.alpha) * preult_rgb
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
-                h = self.downsampler(h)
+                h = self.downsampler[-i + 1](h)
             if (self.self_attention_layer is not None) and i == (self.max_depth - self.self_attention_layer):
                 h = self.self_attention(h)
         h = h.squeeze(-1)
@@ -607,3 +654,72 @@ class Discriminator(nn.Module):
         if y:
             o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True)
         return o, h
+
+
+if __name__ == '__main__':
+    g = Generator(2, (100, 5, 256), 2, 32, 16, 8, 3, True, False, None, 32, 0, 32)
+    i = torch.randn(32, 32)
+    g.depth = 0
+    g.alpha = 1
+    print(g(i).shape)
+    g.depth = 1
+    g.alpha = 0.5
+    print(g(i).shape)
+    g.depth = 3
+    g.alpha = 0.5
+    print(g(i).shape)
+    g = Generator([4, 2, 2, 4, 2, 2], (100, 5, 256), 2, 32, 16, 8, 3, True, False, None, 32, 0, 32)
+    g.depth = 0
+    g.alpha = 1
+    print(g(i).shape)
+    g.depth = 1
+    g.alpha = 0.5
+    print(g(i).shape)
+    g.depth = 3
+    g.alpha = 0.5
+    print(g(i).shape)
+    d = Discriminator(2, (100, 5, 256), 2, 32, 16, 8, True, 3, False, False, 32, 0)
+    d.depth = 0
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 4))[0].shape)
+    d.depth = 2
+    d.alpha = 0.5
+    print(d(torch.randn(32, 5, 16))[0].shape)
+    d.depth = 5
+    d.alpha = 0.5
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 5
+    d.alpha = 0
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 5
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 6
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 256))[0].shape)
+    print('*' * 20)
+    d = Discriminator([4, 2, 2, 4, 2, 2], (100, 5, 256), 2, 32, 16, 8, True, 3, False, False, 32, 0)
+    d.depth = 0
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 8))[0].shape)
+    d.depth = 1
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 16))[0].shape)
+    d.depth = 1
+    d.alpha = 0.5
+    print(d(torch.randn(32, 5, 16))[0].shape)
+    d.depth = 2
+    d.alpha = 0.5
+    print(d(torch.randn(32, 5, 64))[0].shape)
+    d.depth = 3
+    d.alpha = 0.5
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 3
+    d.alpha = 0
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 3
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 128))[0].shape)
+    d.depth = 4
+    d.alpha = 1
+    print(d(torch.randn(32, 5, 256))[0].shape)

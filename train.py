@@ -14,6 +14,7 @@ from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, 
 import numpy as np
 import torch
 import os
+import time
 import signal
 import yaml
 import subprocess
@@ -52,9 +53,11 @@ default_params = OrderedDict(
     self_attention_layer=None,  # starts from 0
     self_attention_size=32,
     drnn=False,
-    progression_scale=2,
+    progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
-    audio=False
+    audio=False,
+    gen_gif=False,
+    spreading_factor=0
 )
 
 
@@ -117,8 +120,8 @@ def main(params):
         for cs in ['linear_svm', 'rbf_svm', 'decision_tree', 'random_forest']:
             val_stats.append(cs + '_all')
         stats_to_log.extend(['validation.' + x for x in val_stats])
-        #TODO times channels
-        #stats_to_log.extend(['nn_validation.'+x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']])
+        # TODO times channels
+        # stats_to_log.extend(['nn_validation.'+x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']])
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
 
     if params['drnn']:
@@ -145,7 +148,7 @@ def main(params):
                       dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
-                      self_attention_layer=params['self_attention_layer'],
+                      self_attention_layer=params['self_attention_layer'], spreading_factor=params['spreading_factor'],
                       self_attention_size=params['self_attention_size'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
@@ -153,6 +156,7 @@ def main(params):
                           dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
+                          spreading_factor=params['spreading_factor'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],
                           self_attention_size=params['self_attention_size'], **params['Discriminator'])
     assert G.max_depth == D.max_depth
@@ -167,8 +171,10 @@ def main(params):
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
     logger.log('exp name: {}'.format(params['exp_name']))
-    # TODO do this on HPC(at least print time :D)
-    # logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
+    try:
+        logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
+    except:
+        logger.log('current time: {}'.format(time.time()))
     logger.log('dataset shape: {}'.format(dataset.shape))
     logger.log('Total number of parameters in Generator: {}'.format(num_params(G)))
     logger.log('Total number of parameters in Discriminator: {}'.format(num_params(D)))
@@ -233,7 +239,7 @@ def main(params):
             FixedNoise(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
                        dataset_params['max_freq'], dataset_params['seq_len'], params['audio'],
                        **params['OutputGenerator']))
-        if not params['audio']:
+        if not params['audio'] and params['gen_gif']:
             trainer.register_plugin(
                 GifGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
                              dataset_params['max_freq'], params['OutputGenerator']['output_snapshot_ticks'],

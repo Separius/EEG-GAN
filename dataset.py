@@ -9,8 +9,8 @@ from scipy.io.wavfile import read as wav_read
 
 class EEGDataset(Dataset):
     def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.5, max_freq=80,
-                 num_channels=5, per_user=True, use_abs=False,
-                 model_dataset_depth_offset=2, dataset_freq=80):  # start from 2^2 instead of 2^0
+                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80,
+                 model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -21,6 +21,12 @@ class EEGDataset(Dataset):
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.use_abs = use_abs
+        if isinstance(self.progression_scale, (list, tuple)):
+            self.max_dataset_depth = len(self.progression_scale)
+            assert self.seq_len == np.prod(self.progression_scale)
+        else:
+            self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
+        self.min_dataset_depth = self.model_dataset_depth_offset
         sizes = []
         for i in range(num_files):
             with open(self.all_files[i]) as f:
@@ -34,15 +40,14 @@ class EEGDataset(Dataset):
         for i in range(num_files):
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
-                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[::int(dataset_freq / max_freq)][
+                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[
+                          ::int(dataset_freq / max_freq)][
                           :num_points[i]]
                     self.datas[i][j, :] = tmp
-            if per_user and self.sizes[i]>0:
+            if per_user and self.sizes[i] > 0:
                 self.datas[i] = self.normalize(self.datas[i])
         if not per_user:
             self.normalize_all(num_files)
-        self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
-        self.min_dataset_depth = self.model_dataset_depth_offset
         self.description = {
             'len': len(self),
             'shape': self.shape,
@@ -84,15 +89,14 @@ class EEGDataset(Dataset):
     def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
         datapoint = datapoint.astype(np.float32)
         depthdiff = (datapoint_depth - target_depth)
+        if isinstance(self.progression_scale, (list, tuple)):
+            return datapoint[:, ::(np.prod(self.progression_scale[-depthdiff:]))]
         return datapoint[:, ::(self.progression_scale ** depthdiff)]
 
     def load_file(self, item):
         i, k = self.data_pointers[item]
         res = self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
         return res
-
-    def infer_max_dataset_depth(self, datapoint):
-        return int(math.log(datapoint.shape[-1], self.progression_scale))
 
     def __getitem__(self, item):
         datapoint = self.load_file(item)
@@ -105,8 +109,13 @@ class EEGDataset(Dataset):
         if self.alpha == 1:
             return datapoint
         c, t = datapoint.shape
-        t = datapoint.reshape(c, t // self.progression_scale, self.progression_scale).mean(axis=2).repeat(
-            self.progression_scale, 1)
+        if isinstance(self.progression_scale, (list, tuple)):
+            t = datapoint.reshape(c, t // self.progression_scale[self.model_depth],
+                                  self.progression_scale[self.model_depth]).mean(axis=2).repeat(
+                self.progression_scale[self.model_depth], axis=1)
+        else:
+            t = datapoint.reshape(c, t // self.progression_scale, self.progression_scale).mean(axis=2).repeat(
+                self.progression_scale, axis=1)
         return datapoint + (t - datapoint) * (1 - self.alpha)
 
 
@@ -181,3 +190,20 @@ class AudioDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         return torch.from_numpy(datapoint.astype('float32'))
+
+
+if __name__ == '__main__':
+    def t1(a, label):
+        print(label)
+        print(a.max_dataset_depth, a[0].shape, a.model_depth)
+        a.alpha = 0.5
+        a.model_depth += 1
+        print(a[0].shape)
+        print('*'*20)
+    progression_scale = 2
+    a = EEGDataset(progression_scale, dir_path='./data/eeg', num_files=10, seq_len=256, model_dataset_depth_offset=2)
+    t1(a, 'single')
+    progression_scale = [4, 2, 8, 2, 2]
+    a = EEGDataset(progression_scale, dir_path='./data/eeg', num_files=10, seq_len=256, model_dataset_depth_offset=2)
+    t1(a, 'list')
+
