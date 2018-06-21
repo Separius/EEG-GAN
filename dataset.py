@@ -4,12 +4,11 @@ import torch
 import math
 import os
 import glob
-from scipy.io.wavfile import read as wav_read
 
 
 class EEGDataset(Dataset):
-    def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.5, max_freq=80,
-                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80,
+    def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.25, max_freq=80,
+                 num_channels=5, per_user=True, use_abs=True, dataset_freq=80,
                  model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
         self.model_depth = 0
         self.alpha = 1.0
@@ -117,93 +116,3 @@ class EEGDataset(Dataset):
             t = datapoint.reshape(c, t // self.progression_scale, self.progression_scale).mean(axis=2).repeat(
                 self.progression_scale, axis=1)
         return datapoint + (t - datapoint) * (1 - self.alpha)
-
-
-class AudioDataset(Dataset):
-    def __init__(self, progression_scale, dir_path='./data/audio', num_files=100, seq_len=16384, stride=0.5,
-                 max_freq=16000, num_channels=1, dataset_freq=16000,
-                 model_dataset_depth_offset=3):  # start from 4^3 = 64
-        self.model_depth = 0
-        self.alpha = 1.0
-        self.model_dataset_depth_offset = model_dataset_depth_offset
-        self.dir_path = dir_path
-        self.all_files = glob.glob(os.path.join(dir_path, '*.wav'))[:num_files]
-        self.seq_len = seq_len
-        self.progression_scale = progression_scale
-        self.stride = int(seq_len * stride)
-        sizes = []
-        for i in range(num_files):
-            read_len = len(wav_read(self.all_files[i])[1])
-            all_data_len = read_len // (dataset_freq // max_freq)
-            sizes.append(max(int(np.ceil((all_data_len - self.seq_len + 1) / self.stride)), 0))
-        self.sizes = sizes
-        self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
-        num_points = [(self.sizes[i] - 1) * self.stride + self.seq_len for i in range(num_files)]
-        self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
-        for i in range(num_files):
-            tmp = wav_read(self.all_files[i])[1][::(dataset_freq // max_freq)][:num_points[i]].astype(np.float32)
-            self.datas[i][0, :] = self.normalize(tmp)
-        self.max_dataset_depth = self.infer_max_dataset_depth(self.load_file(0))
-        self.min_dataset_depth = self.model_dataset_depth_offset
-        self.description = {
-            'len': len(self),
-            'shape': self.shape,
-            'depth_range': (self.min_dataset_depth, self.max_dataset_depth)
-        }
-
-    def normalize(self, arr):
-        arr_max = arr.max()
-        arr_min = arr.min()
-        return ((arr - arr_min) / (arr_max - arr_min)) * 2.0 - 1.0
-
-    @property
-    def data(self):
-        return self.datas
-
-    @property
-    def shape(self):
-        return (len(self),) + self.load_file(0).shape
-
-    def __len__(self):
-        return len(self.data_pointers)
-
-    def get_datapoint_version(self, datapoint, datapoint_depth, target_depth):
-        if datapoint_depth == target_depth:
-            return datapoint
-        return self.create_datapoint_from_depth(datapoint, datapoint_depth, target_depth)
-
-    def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
-        datapoint = datapoint.astype(np.float32)
-        depthdiff = (datapoint_depth - target_depth)
-        return datapoint[:, ::(self.progression_scale ** depthdiff)]
-
-    def load_file(self, item):
-        i, k = self.data_pointers[item]
-        res = self.datas[i][k * self.stride:k * self.stride + self.seq_len]
-        return res
-
-    def infer_max_dataset_depth(self, datapoint):
-        return int(math.log(datapoint.shape[-1], self.progression_scale))
-
-    def __getitem__(self, item):
-        datapoint = self.load_file(item)
-        datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
-                                               self.model_depth + self.model_dataset_depth_offset)
-        return torch.from_numpy(datapoint.astype('float32'))
-
-
-if __name__ == '__main__':
-    def t1(a, label):
-        print(label)
-        print(a.max_dataset_depth, a[0].shape, a.model_depth)
-        a.alpha = 0.5
-        a.model_depth += 1
-        print(a[0].shape)
-        print('*'*20)
-    progression_scale = 2
-    a = EEGDataset(progression_scale, dir_path='./data/eeg', num_files=10, seq_len=256, model_dataset_depth_offset=2)
-    t1(a, 'single')
-    progression_scale = [4, 2, 8, 2, 2]
-    a = EEGDataset(progression_scale, dir_path='./data/eeg', num_files=10, seq_len=256, model_dataset_depth_offset=2)
-    t1(a, 'list')
-

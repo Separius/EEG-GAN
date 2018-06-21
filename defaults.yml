@@ -29,10 +29,8 @@ kernel_size: 3
 #inception: false
 #self_attention_layer: null
 #self_attention_size: 32
-#drnn: false
 #progression_scale: 2 # single number or a list where prod(list) == seq_len
 #num_classes: 0
-#audio: false
 #gen_gif: false
 #spreading_factor: 0
 
@@ -88,46 +86,13 @@ kernel_size: 3
 
 #ClassifierValidator.output_snapshot_ticks: 20
 
-#EEGDataset.dir_path: './data/eeg'
-#EEGDataset.num_files: 860
-EEGDataset.seq_len: 256
-EEGDataset.stride: 0.5
-EEGDataset.max_freq: 80
-#EEGDataset.num_channels: 5
-#EEGDataset.per_user: true
-#EEGDataset.use_abs: false
-EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
-#EEGDataset.dataset_freq: 80
-
-#DilatedGenerator.latent_size: 256
-#DilatedGenerator.normalize_latents: true
-#DilatedGenerator.pixelnorm: true
-#DilatedGenerator.activation: 'lrelu'
-#DilatedGenerator.dropout: 0.1
-#DilatedGenerator.do_mode: 'mul'
-#DilatedGenerator.spectral_norm: false
-#DilatedGenerator.ch_by_ch: false
-#DilatedGenerator.normalization: null
-#DilatedGenerator.recurrent_dropout: 0.1
-#DilatedGenerator.bidir: false
-#DilatedGenerator.n_layers: 2
-#DilatedGenerator.cell_type: 'gru'
-
-#DilatedDiscriminator.activation: 'lrelu'
-#DilatedDiscriminator.dropout: 0.1
-#DilatedDiscriminator.do_mode: 'mul'
-#DilatedDiscriminator.spectral_norm: false
-#DilatedDiscriminator.normalization: null
-#DilatedDiscriminator.recurrent_dropout: 0.1
-#DilatedDiscriminator.bidir: false
-#DilatedDiscriminator.n_layers: 2
-#DilatedDiscriminator.cell_type: 'gru'
-
-#AudioDataset.dir_path: './data/audio'
-#AudioDataset.num_files: 100
-#AudioDataset.seq_len: 16384
-#AudioDataset.stride: 0.5
-#AudioDataset.max_freq: 16000
-#AudioDataset.num_channels: 1
-#AudioDataset.dataset_freq: 16000
-#AudioDataset.model_dataset_depth_offset: 3
+##EEGDataset.dir_path: './data/eeg'
+##EEGDataset.num_files: 860
+#EEGDataset.seq_len: 256
+#EEGDataset.stride: 0.25
+#EEGDataset.max_freq: 80
+##EEGDataset.num_channels: 5
+##EEGDataset.per_user: true
+##EEGDataset.use_abs: true
+#EEGDataset.model_dataset_depth_offset: 2 # start from progression_scale^2 instead of progression_scale^0
+##EEGDataset.dataset_freq: 80

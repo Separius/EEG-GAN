@@ -3,9 +3,7 @@ import time
 from datetime import timedelta
 from glob import glob
 import torch
-from scipy.io import wavfile
 import numpy as np
-from sklearn.neighbors import BallTree
 from torch.autograd import Variable
 from torch.utils.trainer.plugins import LossMonitor, Logger
 from torch.utils.trainer.plugins.plugin import Plugin
@@ -183,12 +181,11 @@ class AbsoluteTimeMonitor(Plugin):
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
-    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50, use_3way_test=False):
+    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
-        self._best_val_loss = float('+inf')  # TODO use the validator's loss for this
-        # TODO use_3way_test here
+        self._best_val_loss = float('+inf')
 
     def register(self, trainer):
         self.trainer = trainer
@@ -216,7 +213,7 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, is_audio, samples_count=8,
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
                  output_snapshot_ticks=10):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
@@ -225,7 +222,6 @@ class OutputGenerator(Plugin):
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
         self.max_freq = max_freq
-        self.is_audio = is_audio
 
     def register(self, trainer):
         self.trainer = trainer
@@ -256,23 +252,14 @@ class OutputGenerator(Plugin):
             plt.close(fig)
         return images
 
-    def get_audios(self, generated):
-        return [generated[i, 0, :] for i in range(len(generated))]
-
     def epoch(self, epoch_index):
         gen_input = cudize(Variable(self.sample_fn(self.samples_count)))
         out = generate_samples(self.trainer.G, gen_input)
         frequency = self.max_freq * out.shape[2] / self.seq_len
         res_len = min(self.res_len, out.shape[2])
-        if self.is_audio:
-            images = self.get_audios(out[:, :, :res_len])
-        else:
-            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         for i, image in enumerate(images):
-            if self.is_audio:
-                wavfile.write(os.path.join(self.checkpoints_dir, '{}_{}.wav'.format(epoch_index, i)), frequency, image)
-            else:
-                misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
+            misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
     def end(self, *args):
         self.epoch(*args)
@@ -287,23 +274,16 @@ class FixedNoise(OutputGenerator):
         out = generate_samples(self.trainer.G, self.gen_input)
         frequency = self.max_freq * out.shape[2] / self.seq_len
         res_len = min(self.res_len, out.shape[2])
-        if self.is_audio:
-            images = self.get_audios(out[:, :, :res_len])
-        else:
-            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
         for i, image in enumerate(images):
-            if self.is_audio:
-                wavfile.write(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.wav'.format(epoch_index, i)), frequency,
-                              image)
-            else:
-                misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
+            misc.imsave(os.path.join(self.checkpoints_dir, 'fixed_{}_{}.png'.format(epoch_index, i)), image)
 
 
 class GifGenerator(OutputGenerator):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len, is_audio,
+    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, output_snapshot_ticks, res_len,
                  num_frames=30, fps=5):
-        super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, res_len, is_audio,
+        super(GifGenerator, self).__init__(sample_fn, checkpoints_dir, seq_len, max_freq, res_len,
                                            samples_count=num_frames, output_snapshot_ticks=output_snapshot_ticks)
         self.fps = fps
 
@@ -459,55 +439,6 @@ class ClassifierValidator(Plugin):
         valid_dict = {'d_loss': d_loss}
         valid_dict.update(get_accuracy(reals, fakes))
         self.update_stats(valid_dict)
-
-    def end(self, *args):
-        self.epoch(*args)
-
-
-class NearestNeighborValidator(Plugin):
-    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
-        super(NearestNeighborValidator, self).__init__([(1, 'epoch'), (1, 'end')])
-        self.sample_fn = sample_fn
-        self.valid_set = valid_set
-        self.real_tree = None
-        self.last_depth = None
-        self.output_snapshot_ticks = output_snapshot_ticks
-
-    def get_real_tree(self):
-        if self.last_depth == self.trainer.D.depth:
-            return self.real_tree
-        all_real = torch.cat([batch for batch in self.valid_set], dim=0).cpu().numpy()
-        self.real_tree = [BallTree(all_real[:, i, :], leaf_size=30, metric='euclidean') for i in
-                          range(all_real.shape[1])]
-        self.last_depth = self.trainer.D.depth
-        return self.real_tree
-
-    def register(self, trainer):
-        self.trainer = trainer
-        self.trainer.stats['nn_validation'] = {'log_format': ':.4f'}
-        # ['nn_validation.' + x for x in ['rrd', 'rfd', 'rri', 'rfi', 'frd', 'ffd', 'fri', 'ffi']] * channels
-
-    def update_stats(self, new_dict):
-        self.stats = new_dict
-        for k, v in new_dict.items():
-            self.trainer.stats['nn_validation'][k] = v
-
-    def epoch(self, epoch):
-        if len(self.valid_set) == 0:
-            return
-        if (epoch - 1) % self.output_snapshot_ticks != 0:
-            self.update_stats(self.stats)
-            return
-        self.trainer.G.eval()
-        fakes = []
-        for batch in self.valid_set:
-            x_fake = self.trainer.G(cudize(Variable(self.sample_fn(batch.shape[0])))).detach()
-            fakes.append(x_fake)
-        fakes = torch.cat(fakes, dim=0).data.cpu().numpy()
-        fakes = [BallTree(fakes[:, i, :], leaf_size=30, metric='euclidean') for i in range(fakes.shape[1])]
-        reals = self.get_real_tree()
-        self.trainer.G.train()
-        self.update_stats(dict())  # TODO fill the dict with queries(kdt.query(X, k=2, return_distance=True))
 
     def end(self, *args):
         self.epoch(*args)

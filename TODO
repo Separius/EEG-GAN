@@ -1,16 +1,17 @@
 Code:
     [ ] connection network => change D
-    [ ] F(o1, o2, o3) = o4 => change G
-    [ ] Z1,0,0,0,Z2,0,0,0,Z3 => change G => Compatibility Network([Con(real1), Con(real2)] = high)
-    [ ] test all on CPU
+    [ ] F(o1, o2, o3) = o4 => change G => + runner script
+    [ ] Z1,0,0,0,Z2,0,0,0,Z3 => change G => Compatibility Network([Con(real1), Con(real2)] = high) -> + runner script => make it end to end
+    [ ] test all on CPU + check resume
     [ ] test all on GPU
     [ ] gang of D?
 Eval:
-    seeing => generate.py
-    3-mmd
+    seeing => generate.py => use plugins there
     alish features => call matlab with .mat args
     easy test conditional
-    runner script
+    runner script => update defaults.yml and make sure it is overridden by given params
+    use the validation result! (5 bad results after warm_up + bad D_loss for 20 + bad G_loss after 20)
+
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur

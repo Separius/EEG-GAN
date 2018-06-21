@@ -1,4 +1,3 @@
-import pickle
 import glob
 
 reports = dict()

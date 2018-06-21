@@ -24,6 +24,7 @@ def hjorth_vectorized(X, D):
 def spectral_entropy_vectorized(Power_Ratio):
     return -np.sum(Power_Ratio * np.log(Power_Ratio + 1e-6), axis=1) / np.log(Power_Ratio.shape[1])
 
+
 def pfd(X, D=None):
     """Compute Petrosian Fractal Dimension of a time series from either two
     cases below:
@@ -44,8 +45,9 @@ def pfd(X, D=None):
             N_delta += 1
     n = len(X)
     return np.log10(n) / (
-        np.log10(n) + np.log10(n / n + 0.4 * N_delta)
+            np.log10(n) + np.log10(n / n + 0.4 * N_delta)
     )
+
 
 def hfd(X, Kmax):
     """ Compute Hjorth Fractal Dimension of a time series X, kmax
@@ -67,6 +69,7 @@ def hfd(X, Kmax):
 
     (p, r1, r2, s) = np.linalg.lstsq(x, L)
     return p[0]
+
 
 def information_based_similarity(x, y, n):
     """Calculates the information based similarity of two time series x
@@ -157,7 +160,7 @@ def information_based_similarity(x, y, n):
     for i in range(0, 2):
         Encoder = np.diff(Input[i])
         for j in range(0, len(Input[i]) - 1):
-            if(Encoder[j] > 0):
+            if (Encoder[j] > 0):
                 SymbolicSeq[i].append(1)
             else:
                 SymbolicSeq[i].append(0)

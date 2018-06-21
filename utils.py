@@ -9,18 +9,6 @@ from sklearn import svm, tree
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 
-try:
-    from sru.cuda_functional import SRU
-except:
-    SRU = torch.nn.GRU
-    print('SRU is not available, using GRU instead')
-try:
-    from qrnn.torchqrnn import QRNN
-except:
-    QRNN = torch.nn.GRU
-    print('QRNN is not available, using GRU instead')
-cell_dict = {'rnn': torch.nn.RNN, 'gru': torch.nn.GRU, 'lstm': torch.nn.LSTM, 'sru': SRU, 'qrnn': QRNN}
-
 
 def generate_samples(generator, gen_input):
     out = generator.forward(gen_input)
@@ -101,10 +89,6 @@ def get_structured_params(params):
 
 def cudize(thing):
     return thing.cuda() if torch.cuda.is_available() else thing
-
-
-def var(tensor):
-    return torch.autograd.Variable(cudize(tensor), requires_grad=False)
 
 
 def ll(loss):
@@ -190,13 +174,7 @@ def get_features(x, is_numpy=False):
     return all_features
 
 
-def get_recurrent_cell(cell_type):
-    return cell_dict[cell_type.lower()]
-
-
-def cnn2rnn(x):
-    return x.permute(2, 0, 1)
-
-
-def rnn2cnn(x):
-    return x.permute(1, 2, 0)
+def pixel_norm(h):
+    mean = torch.mean(h * h, dim=1, keepdim=True)
+    dom = torch.rsqrt(mean + 1e-8)
+    return h * dom
