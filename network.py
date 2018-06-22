@@ -1,5 +1,6 @@
 import numpy as np
 import math
+import torch
 from torch import nn
 import torch.nn.functional as F
 from spectral_norm import spectral_norm as spectral_norm_wrapper
@@ -108,28 +109,50 @@ class Generator(nn.Module):
         if self.self_attention is not None:
             self.self_attention.gamma = new_gamma
 
-    def forward(self, x, y=None):
+    def consistent_forward(self, z1, z2, stage=2, y=None):
+        # NOTE that it assumes that training is finished and alpha=1
+        h = torch.cat((z1, z1), dim=0)
+        h = h.unsqueeze(2)
+        if self.normalize_latents:
+            h = pixel_norm(h)
+        h = self.block0(h, y, self.depth == 0)
+        for i in range(self.depth - 1):
+            if i == stage:
+                h2 = h[1:, ...]
+                h1 = h[0:1, ...].expand_as(h2)
+                h = torch.cat((h1, h2), dim=2)
+            if i == self.self_attention_layer:
+                h = self.self_attention(h)
+            h = self.upsampler[i](h)
+            h = self.blocks[i](h, y)
+        h = self.upsampler[self.depth - 1](h)
+        return self.blocks[self.depth - 1](h, y, True)
+
+    def forward(self, x, y=None, intermediate=False):
         h = x.unsqueeze(2)
         if self.normalize_latents:
             h = pixel_norm(h)
         h = self.block0(h, y, self.depth == 0)
-        if self.depth > 0:
-            for i in range(self.depth - 1):
-                if i == self.self_attention_layer:
-                    h = self.self_attention(h)
-                h = self.upsampler[i](h)
-                h = self.blocks[i](h, y)
-            h = self.upsampler[self.depth - 1](h)
-            ult = self.blocks[self.depth - 1](h, y, True)
-            if self.alpha < 1.0:
-                if self.depth > 1:
-                    preult_rgb = self.blocks[self.depth - 2].toRGB(h)
-                else:
-                    preult_rgb = self.block0.toRGB(h)
-            else:
-                preult_rgb = 0.0
-            h = preult_rgb * (1.0 - self.alpha) + ult * self.alpha
+        if self.depth > 0 and not intermediate:
+            h = self.after_first(h, y)
         return h
+
+    def after_first(self, h, y=None):
+        for i in range(self.depth - 1):
+            if i == self.self_attention_layer:
+                h = self.self_attention(h)
+            h = self.upsampler[i](h)
+            h = self.blocks[i](h, y)
+        h = self.upsampler[self.depth - 1](h)
+        ult = self.blocks[self.depth - 1](h, y, True)
+        if self.alpha < 1.0:
+            if self.depth > 1:
+                preult_rgb = self.blocks[self.depth - 2].toRGB(h)
+            else:
+                preult_rgb = self.block0.toRGB(h)
+        else:
+            preult_rgb = 0.0
+        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha
 
 
 class DBlock(nn.Module):
@@ -247,7 +270,15 @@ class Discriminator(nn.Module):
         if self.self_attention is not None:
             self.self_attention.gamma = new_gamma
 
-    def forward(self, x, y=None):
+    def consistent_forward(self, x, y=None):
+        seq_len = x.size(2)
+        step = seq_len // 4
+        repeats = seq_len // step - 1
+        x = torch.cat([x[..., i * step:i * step + seq_len // 2] for i in range(repeats)], dim=0)
+        o, _ = self.forward(x, y)
+        return o.unsqueeze().view(repeats, -1).mean(dim=0)  # larger value is better
+
+    def forward(self, x, y=None, intermediate=False):
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
@@ -260,6 +291,8 @@ class Discriminator(nn.Module):
             h = self.blocks[-i](h)
             if i > 1:
                 h = self.downsampler[-i + 1](h)
+            if intermediate and i == 2:
+                return h
             if (self.self_attention_layer is not None) and i == (self.max_depth - self.self_attention_layer):
                 h = self.self_attention(h)
         h = h.squeeze(-1)

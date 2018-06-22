@@ -20,6 +20,9 @@ class EEGDataset(Dataset):
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.use_abs = use_abs
+        self.max_freq = max_freq
+        self.per_user = per_user
+        self.dataset_freq = dataset_freq
         if isinstance(self.progression_scale, (list, tuple)):
             self.max_dataset_depth = len(self.progression_scale)
             assert self.seq_len == np.prod(self.progression_scale)
