@@ -141,14 +141,24 @@ class LRScheduler(Plugin):
 
 class EfficientLossMonitor(LossMonitor):
 
-    def __init__(self, loss_no, stat_name):
+    def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup):
         super(EfficientLossMonitor, self).__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
+        self.threshold = monitor_threshold
+        self.warmup = monitor_warmup
 
     def _get_value(self, iteration, *args):
         val = args[self.loss_no]
         return val.item()
+
+    def epoch(self, idx):
+        super(EfficientLossMonitor, self).epoch(idx)
+        if idx > self.warmup:
+            loss_value = self.trainer.stats[self.stat_name]['epoch_mean']
+            if abs(loss_value) > self.threshold:
+                print('loss value exceeded the threshold')
+                exit(0)
 
 
 class AbsoluteTimeMonitor(Plugin):
@@ -226,7 +236,8 @@ class OutputGenerator(Plugin):
     def register(self, trainer):
         self.trainer = trainer
 
-    def get_images(self, seq_len, frequency, epoch, generated):
+    @staticmethod
+    def get_images(seq_len, frequency, epoch, generated):
         num_channels = generated.shape[1]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)

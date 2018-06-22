@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import cudize
+from utils import cudize, simple_argparser
 import os
 from tqdm import trange
 import pickle
@@ -20,14 +20,17 @@ class PredictorNet(nn.Module):
 
 
 if __name__ == '__main__':
-    snapshot_epoch = 1000
-    minis = 20000
-    batch_size = 32
-    lr = 0.001
-    checkpoints_path = 'results/exp_01'
+    default_params = dict(
+        snapshot_epoch=1000,
+        minis=20000,
+        batch_size=32,
+        lr=0.001,
+        checkpoints_path='results/exp_01',
+        pattern='network-snapshot-{}-{}.dat'
+    )
+    params = simple_argparser(default_params)
 
-    pattern = 'network-snapshot-{}-{}.dat'
-    G = torch.load(os.path.join(checkpoints_path, pattern.format('generator', snapshot_epoch)),
+    G = torch.load(os.path.join(params['checkpoints_path'], params['pattern'].format('generator', params['snapshot_epoch'])),
                    map_location=lambda storage, location: storage)
     latent_size = G.latent_size
     sample = G(torch.randn(1, latent_size), intermediate=True)
@@ -37,9 +40,9 @@ if __name__ == '__main__':
     G.eval()
     loss_function = nn.MSELoss()
     C = cudize(PredictorNet(num_channels, seq_len))
-    optimizer = torch.optim.Adam(C.parameters(), lr=lr)
-    for i in trange(minis):
-        z = cudize(torch.randn(batch_size, latent_size))
+    optimizer = torch.optim.Adam(C.parameters(), lr=params['lr'])
+    for i in trange(params['minis']):
+        z = cudize(torch.randn(params['batch_size'], latent_size))
         d = G(z, intermediate=True).detach()
         optimizer.zero_grad()
         loss = loss_function(C(d[:, :, :-1]), d[:, :, -1])
@@ -47,12 +50,12 @@ if __name__ == '__main__':
         optimizer.step()
         if i % 200 == 0:
             print(loss.item())
-    torch.save(C, os.path.join(checkpoints_path, 'predictor_network.pth'))
-    z = cudize(torch.randn(batch_size*4, latent_size))
+    torch.save(C, os.path.join(params['checkpoints_path'], 'predictor_network.pth'))
+    z = cudize(torch.randn(params['batch_size'] * 4, latent_size))
     C.eval()
     h = G(z, intermediate=True).detach()
-    for _ in range(seq_len*4):
-        n = C(h[:, :, -(seq_len-1):])
+    for _ in range(seq_len * 4):
+        n = C(h[:, :, -(seq_len - 1):])
         h = torch.cat((h, n.unsqueeze(2)), dim=2)
     generated = G.after_first(h).data.cpu().numpy()
-    pickle.dump(generated, open(os.path.join(checkpoints_path, 'predictor_generated.pkl'), 'rb'))
+    pickle.dump(generated, open(os.path.join(params['checkpoints_path'], 'predictor_generated.pkl'), 'rb'))

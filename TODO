@@ -1,32 +1,30 @@
-Code:
-    [ ] test all on CPU + check resume
-    [ ] test all on GPU
-
-    [ ] generate.py => use plugins there
-    [ ] easy test conditional -> get_data, run_model
-    [ ] runner script => update defaults.yml and note that it is overridden by conf_file
-    [ ] use the validation result! (5 bad results after warm_up + bad D_loss for 20 + bad G_loss after 20)
-    [ ] alish features => call matlab with .mat args
-
+Test:
+    Test all on CPU
+    check resume
+    check connection
+    generate.py
+    mat_val
+    Test all on GPU
+    check compat
+    check predictor
+    check monitor
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur
-        hinge
-        wgan_gp + ct
-        wgan_theirs + ct
-        num_epochs + transition + train
+        loss: hinge, wgan_gp(+ct),  wgan_theirs+ct
+        scheduler: num_epochs + transition + train
     Structure:
         progress: num layers, initial size, depth_manager_offset, progression_scale
         channel by channel
         stats layer
-        num features: min, max, base
+        num features: min, max, base, min=max
         residual
-        kernel size
+        kernel size: 3, 5, 7, 9, 11
         inception
-        self attention
-        separable
+        self attention: layer, size, num_samples
+        separable: spreading_factor
     Normalization x2:
-        dropout
+        dropout: mode, strength
         phase shuffle
         pixel norm
         spectral norm
@@ -34,7 +32,7 @@ Configs:
         layer norm
         weight norm
     SeqLen:
-        ConnectionNet
-        PredictionNet
-        StaticCompatibilityNet
-        DynamicCompatibilityNet
+        ConnectionNet: d_layer, network_structure, eval_metric
+        PredictionNet: network_structure, eval_metric
+        StaticCompatibilityNet: eval_metric
+        DynamicCompatibilityNet: eval_metric, network_structure, d_layer

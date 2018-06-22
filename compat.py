@@ -1,7 +1,7 @@
 import torch
 import os
 import numpy as np
-from utils import pixel_norm, cudize, load_pkl
+from utils import pixel_norm, cudize, load_pkl, simple_argparser
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from dataset import EEGDataset
@@ -27,12 +27,18 @@ class CompatibleDataset(Dataset):
         for i in range(self.negative_samples - 1):
             if self.connection_network is not None:
                 if np.random.rand() < 0.2:
-                    res.append(torch.randn(1, z_dim))
+                    if params['cudify_dataset']:
+                        res.append(cudize(torch.randn(1, z_dim)))
+                    else:
+                        res.append(torch.randn(1, z_dim))
                     continue
             if np.random.rand() < 0.5:
                 data = self.eeg_dataset[int(np.random.rand() * len(self))][:, :self.seq_len]
             else:
-                data = self.generator(torch.randn(z_dim))
+                if params['cudify_dataset']:
+                    data = self.generator(cudize(torch.randn(z_dim)))
+                else:
+                    data = self.generator(torch.randn(z_dim))
             res.append(self.feature_extract(data).unsqueeze(0))
         return torch.cat(res, dim=0)
 
@@ -67,8 +73,8 @@ def run_g_zeroth_stage(G, z):
 
 def run_static(gen, disc, pop_size=64, stage=2, y=None, ratio=0.95):
     latent_size = gen.latent_size
-    z1 = torch.randn(1, latent_size)
-    z2 = z1.unsqueeze(0) * ratio + torch.randn(pop_size, latent_size) * (1.0 - ratio)
+    z1 = cudize(torch.randn(1, latent_size))
+    z2 = z1.unsqueeze(0) * ratio + cudize(torch.randn(pop_size, latent_size)) * (1.0 - ratio)
     fake = gen.consistent_forward(z1, z2, stage=stage, y=y)
     scores = disc.consistent_forward(fake, y=y)
     return fake[scores.argmax().item(), ...], scores
@@ -83,7 +89,7 @@ def margin_ranking_rank(right, wrong, margin=0):
 
 
 def pick_loss(pred):
-    return F.cross_entropy(pred, torch.zeros(pred.size(0)).long())
+    return F.cross_entropy(pred, cudize(torch.zeros(pred.size(0)).long()))
 
 
 def calc_channels(start, end, num_layers):
@@ -110,9 +116,9 @@ class CompatNet(nn.Module):
             fc1 = self.fc2
             fc2 = self.fc1
             x2, x1 = x1, x2
-        k = x2.size(2)
-        # TODO is this right?
-        x2 = x2.view(-1, x2.size(1))
+        # NOTE that is assumes: x1 is NxIn ; x2 is NxKxIn
+        k = x2.size(1)
+        x2 = x2.view(-1, x2.size(2))
         x1 = fc1(x1)
         x2 = fc2(x2)
         x2.view(x1.size(0), k, -1)
@@ -130,27 +136,38 @@ class InfiniteRandomSampler(RandomSampler):
 
 
 if __name__ == '__main__':
-    checkpoints_path = 'results/exp_01'
-    snapshot_epoch = 1000
-    pattern = 'network-snapshot-{}-{}.dat'
-    is_static = True
-    eeg_dataset_address = './data/256.pkl'
-    batch_size = 16
-    negative_samples = 4
-    is_connection = False
+    default_params = dict(
+        checkpoints_path='results/exp_01',
+        snapshot_epoch=1000,
+        pattern='network-snapshot-{}-{}.dat',
+        is_static=True,
+        eeg_dataset_address='./data/256.pkl',
+        batch_size=16,
+        negative_samples=4,
+        is_connection=False,
+        cudify_dataset=False
+    )
+    params = simple_argparser(default_params)
 
-    G = torch.load(os.path.join(checkpoints_path, pattern.format('generator', snapshot_epoch)),
-                   map_location=lambda storage, location: storage)
-    D = torch.load(os.path.join(checkpoints_path, pattern.format('discriminator', snapshot_epoch)),
-                   map_location=lambda storage, location: storage)
-    if is_static:
+    G = torch.load(
+        os.path.join(params['checkpoints_path'], params['pattern'].format('generator', params['snapshot_epoch'])),
+        map_location=lambda storage, location: storage)
+    D = torch.load(
+        os.path.join(params['checkpoints_path'], params['pattern'].format('discriminator', params['snapshot_epoch'])),
+        map_location=lambda storage, location: storage)
+    if params['is_static']:
         G = cudize(G)
         D = cudize(D)
         G.eval()
         D.eval()
         run_static(G, D)
     else:
-        eeg_dataset_base = load_pkl(eeg_dataset_address)
+        if params['cudify_dataset']:
+            G = cudize(G)
+            D = cudize(D)
+        G.eval()
+        D.eval()
+        eeg_dataset_base = load_pkl(params['eeg_dataset_address'])
         progression_scale = eeg_dataset_base.progression_scale
         if isinstance(eeg_dataset_base.progression_scale, list):
             progression_scale = progression_scale + [2]
@@ -164,20 +181,22 @@ if __name__ == '__main__':
                                  model_dataset_depth_offset=eeg_dataset_base.model_dataset_depth_offset)
         eeg_dataset.model_depth = eeg_dataset_base.model_depth
         eeg_dataset.alpha = 1
-        if is_connection:
-            C = torch.load(os.path.join(checkpoints_path, 'connection_network.pth'),
+        if params['is_connection']:
+            C = torch.load(os.path.join(params['checkpoints_path'], 'connection_network.pth'),
                            map_location=lambda storage, location: storage)
+            if params['cudify_dataset']:
+                C = cudize(C)
+            C.eval()
         else:
             C = None
-        # TODO cudize everything?
-        cds1 = CompatibleDataset(eeg_dataset, G, D, is_fisrt=True, negative_samples=negative_samples,
+        cds1 = CompatibleDataset(eeg_dataset, G, D, is_fisrt=True, negative_samples=params['negative_samples'],
                                  connection_network=C)
-        cds2 = CompatibleDataset(eeg_dataset, G, D, is_fisrt=False, negative_samples=negative_samples,
+        cds2 = CompatibleDataset(eeg_dataset, G, D, is_fisrt=False, negative_samples=params['negative_samples'],
                                  connection_network=C)
-        dl1 = DataLoader(cds1, batch_size, sampler=InfiniteRandomSampler(cds1), num_workers=2, pin_memory=False,
-                         drop_last=True)
-        dl2 = DataLoader(cds2, batch_size, sampler=InfiniteRandomSampler(cds1), num_workers=2, pin_memory=False,
-                         drop_last=True)
+        dl1 = DataLoader(cds1, params['batch_size'], sampler=InfiniteRandomSampler(cds1), num_workers=2,
+                         pin_memory=False, drop_last=True)
+        dl2 = DataLoader(cds2, params['batch_size'], sampler=InfiniteRandomSampler(cds1), num_workers=2,
+                         pin_memory=False, drop_last=True)
         dl1i = dl1.__iter__()
         sample = dl1i.next()
         dl2i = dl2.__iter__()
@@ -186,11 +205,14 @@ if __name__ == '__main__':
         for i in range(10000):
             is_first = np.random.rand() < 0.5
             x1, x2 = dl1i.next() if is_first else dl2i.next()
-            o = net(cudize(x1), cudize(x2), is_first)
+            if params['cudify_dataset']:
+                o = net(x1, x2, is_first)
+            else:
+                o = net(cudize(x1), cudize(x2), is_first)
             l = pick_loss(o)
             optimizer.zero_grad()
             l.backward()
             optimizer.step()
             if i % 200 == 0:
                 print(l.item())
-        torch.save(net, os.path.join(checkpoints_path, 'compatibility_network.pth'))
+        torch.save(net, os.path.join(params['checkpoints_path'], 'compatibility_network.pth'))

@@ -54,7 +54,9 @@ default_params = OrderedDict(
     progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
     gen_gif=False,
-    spreading_factor=0
+    spreading_factor=0,  # for the separable conv
+    monitor_threshold=100,
+    monitor_warmup=5
 )
 
 
@@ -194,7 +196,8 @@ def main(params):
     trainer.register_plugin(
         DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager']))
     for i, loss_name in enumerate(losses):
-        trainer.register_plugin(EfficientLossMonitor(i, loss_name))
+        trainer.register_plugin(
+            EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup']))
 
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     if params['validation_split'] > 0:
@@ -247,6 +250,7 @@ if __name__ == "__main__":
         print('loading config_file')
         params.update(yaml.load(open(params['config_file'], 'r')))
     params = get_structured_params(params)
+    np.random.seed(params['random_seed'])
     torch.manual_seed(params['random_seed'])
     if torch.cuda.is_available():
         torch.cuda.set_device(params['cuda_device'])

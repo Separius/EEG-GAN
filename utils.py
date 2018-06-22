@@ -8,6 +8,8 @@ from scipy.stats import kurtosis, skew
 from sklearn import svm, tree
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
+from argparse import ArgumentParser
+from functools import partial
 
 
 def generate_samples(generator, gen_input):
@@ -178,3 +180,11 @@ def pixel_norm(h):
     mean = torch.mean(h * h, dim=1, keepdim=True)
     dom = torch.rsqrt(mean + 1e-8)
     return h * dom
+
+
+def simple_argparser(default_params):
+    parser = ArgumentParser()
+    for k in default_params:
+        parser.add_argument('--{}'.format(k), type=partial(generic_arg_parse, hinttype=type(default_params[k])))
+    parser.set_defaults(**default_params)
+    return get_structured_params(vars(parser.parse_args()))

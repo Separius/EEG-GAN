@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import cudize
+from utils import cudize, simple_argparser
 import os
 from tqdm import trange
 from mmd import mix_rbf_mmd2
@@ -32,23 +32,26 @@ class ConnectionNet(nn.Module):
 
 
 if __name__ == '__main__':
-    snapshot_epoch = 1000
-    minis = 20000
-    batch_size = 32
-    lr = 0.001
-    checkpoints_path = 'results/exp_01'
-    l_mean = 0.01
-    l_std = 0.001
-    l_mmd = 1.0
+    default_params = dict(
+        snapshot_epoch=1000,
+        minis=20000,
+        batch_size=32,
+        lr=0.001,
+        checkpoints_path='results/exp_01',
+        l_mean=0.01,
+        l_std=0.001,
+        l_mmd=1.0
+    )
+    params = simple_argparser(default_params)
 
     # sigma for MMD
     base = 1.0
     sigma_list = [1, 2, 4, 8, 16]
     sigma_list = [sigma / base for sigma in sigma_list]
     pattern = 'network-snapshot-{}-{}.dat'
-    G = torch.load(os.path.join(checkpoints_path, pattern.format('generator', snapshot_epoch)),
+    G = torch.load(os.path.join(params['checkpoints_path'], pattern.format('generator', params['snapshot_epoch'])),
                    map_location=lambda storage, location: storage)
-    D = torch.load(os.path.join(checkpoints_path, pattern.format('discriminator', snapshot_epoch)),
+    D = torch.load(os.path.join(params['checkpoints_path'], pattern.format('discriminator', params['snapshot_epoch'])),
                    map_location=lambda storage, location: storage)
     latent_size = G.latent_size
     sample = D(G(torch.randn(1, latent_size)), intermediate=True)
@@ -60,17 +63,17 @@ if __name__ == '__main__':
     G.eval()
     loss_function = nn.MSELoss()
     C = cudize(ConnectionNet(num_channels, seq_len, latent_size))
-    optimizer = torch.optim.Adam(C.parameters(), lr=lr)
-    for i in trange(minis):
-        z = cudize(torch.randn(batch_size, latent_size))
+    optimizer = torch.optim.Adam(C.parameters(), lr=params['lr'])
+    for i in trange(params['minis']):
+        z = cudize(torch.randn(params['batch_size'], latent_size))
         d = D(G(z), intermediate=True).detach()
         optimizer.zero_grad()
         p = C(d)
         loss = loss_function(p, z)
-        loss = loss + l_mean * (p.mean(dim=-1) ** 2).mean() + l_std * ((p.std(dim=-1) - 1.0) ** 2).mean()
-        loss = loss + l_mmd * torch.sqrt(F.relu(mix_rbf_mmd2(z, p, sigma_list)))
+        loss = loss + params['l_mean'] * (p.mean(dim=-1) ** 2).mean() + params['l_std'] * ((p.std(dim=-1) - 1.0) ** 2).mean()
+        loss = loss + params['l_mmd'] * torch.sqrt(F.relu(mix_rbf_mmd2(z, p, sigma_list)))
         loss.backward()
         optimizer.step()
         if i % 200 == 0:
             print(loss.item())
-    torch.save(C, os.path.join(checkpoints_path, 'connection_network.pth'))
+    torch.save(C, os.path.join(params['checkpoints_path'], 'connection_network.pth'))
