@@ -5,9 +5,9 @@ num_data_workers: 1
 total_kimg: 70
 fmap_base: 64
 fmap_max: 64
-fmap_min: 4
+fmap_min: 16
 Generator.latent_size: null
-Trainer.tick_kimg_default: 1
+Trainer.tick_kimg_default: 2
 DepthManager.minibatch_default: 64
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
@@ -36,8 +36,8 @@ loss_type: 'hinge' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 Trainer.grad_clip: null #null or a float
 Trainer.D_training_repeats: 1
 gen_gif: false
-OutputGenerator.output_snapshot_ticks: 25
-SaverPlugin.network_snapshot_ticks: 50
+OutputGenerator.output_snapshot_ticks: 100
+SaverPlugin.network_snapshot_ticks: 100
 
 monitor_threshold: 100
 monitor_warmup: 12
@@ -54,7 +54,7 @@ verbose: false
 
 kernel_size: 3
 inception: false
-equalized: true
+equalized: false
 spreading_factor: 0
 Generator.residual: false
 Generator.ch_by_ch: false
@@ -65,11 +65,11 @@ Discriminator.temporal_stats: false
 Discriminator.num_stat_channels: 0
 Discriminator.residual: false
 
-Generator.pixelnorm: true
+Generator.pixelnorm: false
 Discriminator.pixelnorm: false
-Generator.spectral_norm: false
+Generator.spectral_norm: true
 Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-Discriminator.spectral_norm: false
+Discriminator.spectral_norm: true
 Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
 resume_network: ''

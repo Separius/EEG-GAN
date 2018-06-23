@@ -99,7 +99,7 @@ def main(params):
     if not params['verbose']:
         result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
-    if not params['equalized']:
+    if not params['equalized'] and params['loss_type'] != 'hinge':
         print('there is a bug(don' + "'" + 't know where) that does not let you use unequalized nets, switching back')
         params['equalized'] = True
 

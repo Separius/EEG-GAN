@@ -8,8 +8,6 @@ Test:
     check predictor
     Test all on GPU
     check mat_val
-    equalized_bug
-    spectral_norm config => wgan_gp.loss == 10, hinge.loss == 2
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur
