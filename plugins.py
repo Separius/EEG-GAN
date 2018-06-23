@@ -25,7 +25,6 @@ class DepthManager(Plugin):
                  tick_kimg_default,
                  attention_start_depth=None,
                  attention_transition_kimg=200,
-                 depth_offset=0,
                  minibatch_default=64,
                  minibatch_overrides={6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4},  # starts from depth_offset+1
                  tick_kimg_overrides={6: 4, 7: 4, 8: 3, 9: 3, 10: 2, 11: 2, 12: 1},  # starts from depth_offset+1
@@ -43,9 +42,9 @@ class DepthManager(Plugin):
         self.trainer = None
         self.depth = -1
         self.alpha = -1
-        self.depth_offset = depth_offset
+        self.depth_offset = 0
         self.max_depth = max_depth
-        self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(depth_offset, max_depth,
+        self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(0, max_depth,
                                                                                         lod_training_kimg,
                                                                                         lod_training_kimg_overrides,
                                                                                         lod_transition_kimg,
@@ -58,7 +57,7 @@ class DepthManager(Plugin):
         self.trainer.stats['minibatch_size'] = self.minibatch_default
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
         if self.start_gamma is not None:
-            self.trainer.stats['gamma'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
+            self.trainer.stats['gamma'] = {'log_name': 'gamma', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
         self.iteration()
 
     @staticmethod

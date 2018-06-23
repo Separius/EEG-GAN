@@ -66,7 +66,6 @@
 
 #DepthManager.attention_start_depth: null
 #DepthManager.attention_transition_kimg: 200
-#DepthManager.depth_offset: 0
 #DepthManager.minibatch_default: 64
 #DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
 #DepthManager.tick_kimg_overrides: {6: 4, 7: 4, 8: 3, 9: 3, 10: 2, 11: 2, 12: 1}  # starts from depth_offset+1

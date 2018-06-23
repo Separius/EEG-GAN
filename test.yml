@@ -2,11 +2,11 @@
 
 exp_name: 'test'
 num_data_workers: 1
-total_kimg: 20
+total_kimg: 24
 fmap_base: 64
-fmap_max: 32
-fmap_min: 8
-Generator.latent_size: 32
+fmap_max: 64
+fmap_min: 4
+Generator.latent_size: null
 Trainer.tick_kimg_default: 1
 DepthManager.minibatch_default: 64
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
@@ -28,35 +28,35 @@ EEGDataset.per_user: true
 EEGDataset.use_abs: true
 EEGDataset.dataset_freq: 80
 
-###############CHANGE THESE###############
-verbose: false
+###############   TESTED   ###############
 cuda_device: 0
+
+loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+Trainer.grad_clip: null #null or a float
+Trainer.D_training_repeats: 1
+gen_gif: false
+OutputGenerator.output_snapshot_ticks: 25
+SaverPlugin.network_snapshot_ticks: 50
+
+monitor_threshold: 100
+monitor_warmup: 12
+
+self_attention_layer: 4
+DepthManager.attention_start_depth: 5
+DepthManager.attention_transition_kimg: 2
+
+progression_scale: [2, 2, 2, 2, 4, 2, 4, 2]
+EEGDataset.seq_len: 1024
+EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
+###############CHANGE THESE###############
+verbose: true
 
 resume_network: ''
 resume_time: 0
 Trainer.resume_nimg: 0
 
-loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
-Trainer.grad_clip: null #null or a float
-Trainer.D_training_repeats: 1
-
 validation_split: 0
-gen_gif: false
-SaverPlugin.network_snapshot_ticks: 50
-OutputGenerator.output_snapshot_ticks: 10
 ClassifierValidator.output_snapshot_ticks: 20
-
-self_attention_layer: null
-DepthManager.attention_start_depth: null
-DepthManager.attention_transition_kimg: 2
-
-progression_scale: 2
-DepthManager.depth_offset: 0
-EEGDataset.seq_len: 256
-EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
-
-monitor_threshold: 100
-monitor_warmup: 5
 
 equalized: true
 kernel_size: 3

@@ -101,6 +101,8 @@ def main(params):
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
+    if not params['self_attention_layer'] is None:
+        stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     num_channels = dataset.shape[1]
     if params['validation_split'] > 0:
@@ -113,8 +115,6 @@ def main(params):
             val_stats.append(cs + '_all')
         stats_to_log.extend(['validation.' + x for x in val_stats])
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
-
-    latent_size = params['Generator']['latent_size']
 
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
@@ -136,6 +136,7 @@ def main(params):
                           spreading_factor=params['spreading_factor'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],
                           **params['Discriminator'])
+    latent_size = G.latent_size
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
@@ -143,10 +144,11 @@ def main(params):
         from torchsummary import summary
         G.set_gamma(1)
         G.depth = G.max_depth
-        summary(G, (latent_size,))
+        summary(G, (G.latent_size,))
         D.set_gamma(1)
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
+        exit()
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
         logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
@@ -256,3 +258,4 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(params['random_seed'])
     enable_benchmark()
     main(params)
+    print('training finished!')

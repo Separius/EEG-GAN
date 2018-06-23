@@ -70,7 +70,7 @@ class Generator(nn.Module):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
 
         if latent_size is None:
-            latent_size = nf(initial_size - 2)
+            latent_size = nf(0)
         self.normalize_latents = normalize_latents
         layer_settings = dict(pixelnorm=pixelnorm, act=activation, do=dropout, do_mode=do_mode, spectral=spectral_norm,
                               num_classes=num_classes, spreading_factor=spreading_factor)
@@ -78,17 +78,18 @@ class Generator(nn.Module):
             initial_kernel_size = progression_scale ** initial_size
         else:
             initial_kernel_size = np.prod(progression_scale[:initial_size])
-        self.block0 = GBlock(latent_size, nf(initial_size - 1), num_channels, ksize=kernel_size, equalized=equalized,
+        self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, ch_by_ch=ch_by_ch, normalization=normalization,
                              residual=residual, **layer_settings)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer))
+            self.self_attention = SelfAttention(nf(self_attention_layer+1))
         else:
             self.self_attention = None
-        self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
-                                            ch_by_ch=ch_by_ch, normalization=normalization, residual=residual,
-                                            inception=inception, **layer_settings) for i in range(initial_size, R)])
+        self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
+                                            ksize=kernel_size, equalized=equalized, ch_by_ch=ch_by_ch,
+                                            normalization=normalization, residual=residual, inception=inception,
+                                            **layer_settings) for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
         self.latent_size = latent_size
@@ -111,7 +112,7 @@ class Generator(nn.Module):
 
     def consistent_forward(self, z1, z2, stage=2, y=None):
         # NOTE that it assumes that training is finished and alpha=1
-        h = torch.cat((z1, z1), dim=0)
+        h = torch.cat((z1, z2), dim=0)
         h = h.unsqueeze(2)
         if self.normalize_latents:
             h = pixel_norm(h)
@@ -231,19 +232,20 @@ class Discriminator(nn.Module):
             initial_kernel_size = np.prod(progression_scale[:initial_size])
         else:
             initial_kernel_size = progression_scale ** initial_size
-        last_block = DBlock(nf(initial_size - 1), nf(initial_size - 2), num_channels,
+        last_block = DBlock(nf(1), nf(0), num_channels,
                             initial_kernel_size=initial_kernel_size, temporal=temporal_stats,
                             num_stat_channels=num_stat_channels, ksize=kernel_size, residual=residual,
                             equalized=equalized, spectral=spectral_norm, normalization=normalization, **layer_settings)
         layer_settings.update(phase_shuffle=phase_shuffle)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer))
+            self.self_attention = SelfAttention(nf(self_attention_layer + 1))
         else:
             self.self_attention = None
-        self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size, equalized=equalized,
-                                            initial_kernel_size=None, residual=residual, spectral=spectral_norm,
-                                            normalization=normalization, inception=inception, **layer_settings) for i in
+        self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
+                                            ksize=kernel_size, equalized=equalized, initial_kernel_size=None,
+                                            residual=residual, spectral=spectral_norm, normalization=normalization,
+                                            inception=inception, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
             self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
@@ -251,7 +253,7 @@ class Discriminator(nn.Module):
                 self.class_emb = spectral_norm_wrapper(self.class_emb)
         else:
             self.class_emb = None
-        self.linear = nn.Linear(nf(initial_size - 2), 1)
+        self.linear = nn.Linear(nf(0), 1)
         if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
         self.depth = 0
@@ -259,7 +261,7 @@ class Discriminator(nn.Module):
         self.max_depth = len(self.blocks) - 1
         if downsample == 'average':
             self.downsampler = nn.ModuleList(
-                [nn.AvgPool1d(kernel_size=progression_scale if is_single else progression_scale[-i]) for i in
+                [nn.AvgPool1d(kernel_size=progression_scale if is_single else progression_scale[i]) for i in
                  reversed(range(initial_size, R))])
         elif downsample == 'stride':
             self.downsampler = nn.ModuleList(
@@ -293,7 +295,7 @@ class Discriminator(nn.Module):
                 h = self.downsampler[-i + 1](h)
             if intermediate and i == 2:
                 return h
-            if (self.self_attention_layer is not None) and i == (self.max_depth - self.self_attention_layer):
+            if (self.self_attention_layer is not None) and i == (self.self_attention_layer+2):
                 h = self.self_attention(h)
         h = h.squeeze(-1)
         o = self.linear(h)
