@@ -1,99 +1,79 @@
 # python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data256.pkl --cuda_device 0
 
-#result_dir: 'results'
 exp_name: 'test'
-#lr_rampup_kimg: 50
-#G_lr_max: 0.001
-#D_lr_max: 0.001
-total_kimg: 20
-#resume_network: ''
-#resume_time: 0
 num_data_workers: 1
-#random_seed: 1337
-#grad_lambda: 10.0
-#iwass_epsilon: 0.001
-#save_dataset: ''
-#load_dataset: ''
-#loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
-#cuda_device: 0
-#validation_split: 0
-#LAMBDA_2: 2
-#optimizer: 'adam' # adam, amsgrad, ttur
-#config_file: null
-#verbose: false
+total_kimg: 20
 fmap_base: 64
 fmap_max: 32
 fmap_min: 8
-#equalized: true
-kernel_size: 3
-#inception: false
-#self_attention_layer: null
-#progression_scale: 2
-#num_classes: 0
-#gen_gif: false
-#spreading_factor: 0
-#monitor_threshold: 100
-#monitor_warmup: 5
-
-#Trainer.grad_clip: null #null or a float
-#Trainer.D_training_repeats: 1
-Trainer.tick_kimg_default: 1
-#Trainer.resume_nimg: 0
-
 Generator.latent_size: 32
-#Generator.upsample: 'linear' #linear, nearest
-#Generator.normalize_latents: true
-#Generator.pixelnorm: true
-#Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
-#Generator.dropout: 0.1
-#Generator.residual: false
-#Generator.do_mode: 'mul' #mul, drop, prop
-#Generator.spectral_norm: false
-#Generator.ch_by_ch: false
-#Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-
-#Discriminator.downsample: 'average' #average, stride
-#Discriminator.pixelnorm: false
-#Discriminator.activation: 'lrelu'
-#Discriminator.dropout: 0.1
-#Discriminator.do_mode: 'mul'
-#Discriminator.spectral_norm: false
-#Discriminator.phase_shuffle: 0
-#Discriminator.temporal_stats: false
-#Discriminator.num_stat_channels: 1
-#Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
-#Discriminator.residual: false
-
-#DepthManager.attention_start_depth: null
-DepthManager.attention_transition_kimg: 2
-#DepthManager.depth_offset: 0
-#DepthManager.minibatch_default: 64
-#DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
+Trainer.tick_kimg_default: 1
+DepthManager.minibatch_default: 64
+DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
 DepthManager.lod_training_kimg: 2
 DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
 DepthManager.lod_transition_kimg: 1
 DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
-
-#SaverPlugin.keep_old_checkpoints: true
-#SaverPlugin.network_snapshot_ticks: 50
-#SaverPlugin.use_3way_test: false
-
-#OutputGenerator.samples_count: 8
-#OutputGenerator.output_snapshot_ticks: 10
-
-#GifGenerator.num_frames: 30
-#GifGenerator.fps: 5
-
-#ClassifierValidator.output_snapshot_ticks: 20
-
-#EEGDataset.dir_path: './data/eeg'
-#EEGDataset.num_files: 860
-EEGDataset.seq_len: 256
+SaverPlugin.keep_old_checkpoints: true
+OutputGenerator.samples_count: 4
+GifGenerator.num_frames: 10
+GifGenerator.fps: 3
+EEGDataset.dir_path: './data/eeg'
+EEGDataset.num_files: 60
 EEGDataset.stride: 0.5
 EEGDataset.max_freq: 80
-#EEGDataset.num_channels: 5
-#EEGDataset.per_user: true
-#EEGDataset.use_abs: false
+EEGDataset.num_channels: 5
+EEGDataset.per_user: true
+EEGDataset.use_abs: true
+EEGDataset.dataset_freq: 80
+
+###############CHANGE THESE###############
+verbose: false
+cuda_device: 0
+
+resume_network: ''
+resume_time: 0
+Trainer.resume_nimg: 0
+
+loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+Trainer.grad_clip: null #null or a float
+Trainer.D_training_repeats: 1
+
+validation_split: 0
+gen_gif: false
+SaverPlugin.network_snapshot_ticks: 50
+OutputGenerator.output_snapshot_ticks: 10
+ClassifierValidator.output_snapshot_ticks: 20
+
+self_attention_layer: null
+DepthManager.attention_start_depth: null
+DepthManager.attention_transition_kimg: 2
+
+progression_scale: 2
+DepthManager.depth_offset: 0
+EEGDataset.seq_len: 256
 EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
-#EEGDataset.dataset_freq: 80
+
+monitor_threshold: 100
+monitor_warmup: 5
+
+equalized: true
+kernel_size: 3
+inception: false
+spreading_factor: 0
+Generator.pixelnorm: true
+Generator.residual: false
+Generator.do_mode: 'mul' #mul, drop, prop
+Generator.spectral_norm: false
+Generator.ch_by_ch: false
+Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
+Discriminator.pixelnorm: false
+Discriminator.activation: 'lrelu'
+Discriminator.do_mode: 'mul'
+Discriminator.spectral_norm: false
+Discriminator.phase_shuffle: 0
+Discriminator.temporal_stats: false
+Discriminator.num_stat_channels: 1
+Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+Discriminator.residual: false

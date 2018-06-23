@@ -77,7 +77,6 @@
 
 #SaverPlugin.keep_old_checkpoints: true
 #SaverPlugin.network_snapshot_ticks: 50
-#SaverPlugin.use_3way_test: false
 
 #OutputGenerator.samples_count: 8
 #OutputGenerator.output_snapshot_ticks: 10
