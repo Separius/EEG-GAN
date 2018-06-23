@@ -109,11 +109,16 @@ def get_accuracy(real, fake):
     y = np.concatenate((np.ones(real[0].shape[0]), np.zeros(fake[0].shape[0])), axis=0)
     result = dict()
     if len(real) != 1:
+        means = []
         for i, (real_ch, fake_ch) in enumerate(zip(real, fake)):
-            result.update(evaluate_classifier(np.concatenate((real_ch, fake_ch), axis=0), y, '_ch_{}'.format(i)))
-    result.update(
-        evaluate_classifier(np.concatenate((np.concatenate(real, axis=1), np.concatenate(fake, axis=1)), axis=0), y,
-                            '_all'))
+            for v in evaluate_classifier(np.concatenate((real_ch, fake_ch), axis=0), y, '_ch_{}'.format(i)).values():
+                means.append(v)
+        result['ch_acc'] = sum(means) / len(means)
+    means = []
+    for v in evaluate_classifier(np.concatenate((np.concatenate(real, axis=1), np.concatenate(fake, axis=1)), axis=0),
+                                 y, '_all').values():
+        means.append(v)
+    result['mul_acc'] = sum(means) / len(means)
     return result
 
 
@@ -193,3 +198,11 @@ def simple_argparser(default_params):
 def enable_benchmark():
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True  # for fast training(if network input size is almost constant)
+
+
+def map_location(storage, location):
+    return storage
+
+
+def load_model(model_path):
+    return torch.load(model_path, map_location=map_location)

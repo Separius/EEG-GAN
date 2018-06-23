@@ -1,11 +1,5 @@
 Test:
-    Test all on CPU:
-        resume
-        validation
-    check connection
-    check generate.py
     check compat
-    check predictor
     Test all on GPU
     check mat_val
 Configs:

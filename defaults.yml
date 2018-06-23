@@ -6,7 +6,7 @@
 #G_lr_max: 0.001
 #D_lr_max: 0.001
 #total_kimg: 4000
-#resume_network: ''
+#resume_network: '' # 001-test/network-snapshot-{}-000025.dat
 #resume_time: 0
 #num_data_workers: 3
 #random_seed: 1337
@@ -34,6 +34,7 @@
 #spreading_factor: 0
 #monitor_threshold: 100
 #monitor_warmup: 5
+#monitor_patience: 5
 
 #Trainer.grad_clip: null #null or a float
 #Trainer.D_training_repeats: 1

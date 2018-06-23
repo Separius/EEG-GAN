@@ -2,18 +2,18 @@
 
 exp_name: 'test'
 num_data_workers: 1
-total_kimg: 70
+total_kimg: 40
 fmap_base: 64
 fmap_max: 64
-fmap_min: 16
+fmap_min: 8
 Generator.latent_size: null
-Trainer.tick_kimg_default: 2
+Trainer.tick_kimg_default: 1
 DepthManager.minibatch_default: 64
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_training_kimg: 5
+DepthManager.lod_training_kimg: 2
 DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 5
+DepthManager.lod_transition_kimg: 2
 DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
 SaverPlugin.keep_old_checkpoints: true
 OutputGenerator.samples_count: 4
@@ -30,6 +30,7 @@ EEGDataset.dataset_freq: 80
 optimizer: 'ttur'
 
 ###############   TESTED   ###############
+verbose: false
 cuda_device: 0
 
 loss_type: 'hinge' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
@@ -37,7 +38,7 @@ Trainer.grad_clip: null #null or a float
 Trainer.D_training_repeats: 1
 gen_gif: false
 OutputGenerator.output_snapshot_ticks: 100
-SaverPlugin.network_snapshot_ticks: 100
+SaverPlugin.network_snapshot_ticks: 20
 
 monitor_threshold: 100
 monitor_warmup: 12
@@ -46,15 +47,13 @@ self_attention_layer: null
 DepthManager.attention_start_depth: 5
 DepthManager.attention_transition_kimg: 2
 
-progression_scale: [2, 2, 2, 2, 4, 2, 4, 2]
-EEGDataset.seq_len: 1024
+progression_scale: [2, 2, 2, 2, 4, 2, 4]
+EEGDataset.seq_len: 512
 EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
-###############CHANGE THESE###############
-verbose: false
 
 kernel_size: 3
 inception: false
-equalized: false
+equalized: true
 spreading_factor: 0
 Generator.residual: false
 Generator.ch_by_ch: false
@@ -65,16 +64,17 @@ Discriminator.temporal_stats: false
 Discriminator.num_stat_channels: 0
 Discriminator.residual: false
 
-Generator.pixelnorm: false
+Generator.pixelnorm: true
 Discriminator.pixelnorm: false
-Generator.spectral_norm: true
+Generator.spectral_norm: false
 Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-Discriminator.spectral_norm: true
+Discriminator.spectral_norm: false
 Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
 resume_network: ''
 resume_time: 0
 Trainer.resume_nimg: 0
 
-validation_split: 0
+validation_split: 0.1
 ClassifierValidator.output_snapshot_ticks: 20
+###############CHANGE THESE###############

@@ -1,7 +1,7 @@
 import torch
 import os
 import numpy as np
-from utils import cudize, load_pkl, simple_argparser, enable_benchmark
+from utils import cudize, load_pkl, simple_argparser, enable_benchmark, load_model
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from dataset import EEGDataset
@@ -145,12 +145,10 @@ if __name__ == '__main__':
     )
     params = simple_argparser(default_params)
 
-    G = torch.load(
-        os.path.join(params['checkpoints_path'], params['pattern'].format('generator', params['snapshot_epoch'])),
-        map_location=lambda storage, location: storage)
-    D = torch.load(
-        os.path.join(params['checkpoints_path'], params['pattern'].format('discriminator', params['snapshot_epoch'])),
-        map_location=lambda storage, location: storage)
+    G = load_model(
+        os.path.join(params['checkpoints_path'], params['pattern'].format('generator', params['snapshot_epoch'])))
+    D = load_model(
+        os.path.join(params['checkpoints_path'], params['pattern'].format('discriminator', params['snapshot_epoch'])))
     if params['is_static']:
         G = cudize(G)
         D = cudize(D)
@@ -183,8 +181,7 @@ if __name__ == '__main__':
         eeg_dataset.model_depth = eeg_dataset_base.model_depth
         eeg_dataset.alpha = 1
         if params['is_connection']:
-            C = torch.load(os.path.join(params['checkpoints_path'], 'connection_network.pth'),
-                           map_location=lambda storage, location: storage)
+            C = load_model(os.path.join(params['checkpoints_path'], 'connection_network.pth'))
             if params['cudify_dataset']:
                 C = cudize(C)
             C.eval()

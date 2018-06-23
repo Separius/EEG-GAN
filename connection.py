@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from utils import cudize, simple_argparser, enable_benchmark
+from utils import cudize, simple_argparser, enable_benchmark, load_model, num_params, trainable_params
 import os
-from tqdm import trange
+from tqdm import tqdm
 from mmd import mix_rbf_mmd2
 import torch.nn.functional as F
 
@@ -12,18 +12,16 @@ class ConnectionNet(nn.Module):
     # NOTE connection network can be trained with the GAN, real_loss += mmd only, fake_loss += mmd+mse
     def __init__(self, input_channels, input_len, output_size):
         super(ConnectionNet, self).__init__()
-        self.net = [nn.Conv1d(input_channels, input_channels, kernel_size=5, padding=2)]
+        self.net = [nn.Conv1d(input_channels, input_channels * 2, kernel_size=5, padding=2, stride=2)]
+        self.net.append(nn.ReLU())
+        self.net.append(nn.Conv1d(input_channels * 2, input_channels, kernel_size=3, padding=1))
         self.net.append(nn.ReLU())
         self.net.append(nn.Conv1d(input_channels, input_channels * 2, kernel_size=3, padding=1, stride=2))
         self.net.append(nn.ReLU())
-        self.net.append(nn.Conv1d(input_channels * 2, input_channels, kernel_size=3, padding=1, stride=2))
-        self.net.append(nn.ReLU())
-        self.net.append(nn.Conv1d(input_channels, input_channels * 2, kernel_size=3, padding=1))
-        self.net.append(nn.ReLU())
-        self.net.append(nn.Conv1d(input_channels * 2, input_channels, kernel_size=3, padding=1, stride=2))
+        self.net.append(nn.Conv1d(input_channels * 2, input_channels, kernel_size=3, padding=1))
         self.net.append(nn.ReLU())
         self.net = nn.Sequential(*self.net)
-        self.linear = nn.Linear(input_len // 8 * input_channels, output_size)
+        self.linear = nn.Linear(input_len // 4 * input_channels, output_size)
 
     def forward(self, x):
         x = self.net(x)
@@ -33,28 +31,28 @@ class ConnectionNet(nn.Module):
 
 if __name__ == '__main__':
     default_params = dict(
-        snapshot_epoch=1000,
-        minis=20000,
+        snapshot_epoch='000040',
+        minis=100000,
         batch_size=32,
         lr=0.001,
-        checkpoints_path='results/exp_01',
-        l_mean=0.01,
-        l_std=0.001,
-        l_mmd=1.0
+        checkpoints_path='results/001-test',
+        l_mean=0,
+        l_std=0,
+        l_mmd=1.0,
+        log_step=50
     )
     params = simple_argparser(default_params)
 
-    # sigma for MMD
     base = 1.0
     sigma_list = [1, 2, 4, 8, 16]
     sigma_list = [sigma / base for sigma in sigma_list]
     pattern = 'network-snapshot-{}-{}.dat'
-    G = torch.load(os.path.join(params['checkpoints_path'], pattern.format('generator', params['snapshot_epoch'])),
-                   map_location=lambda storage, location: storage)
-    D = torch.load(os.path.join(params['checkpoints_path'], pattern.format('discriminator', params['snapshot_epoch'])),
-                   map_location=lambda storage, location: storage)
+    G = load_model(os.path.join(params['checkpoints_path'], pattern.format('generator', params['snapshot_epoch'])))
+    D = load_model(os.path.join(params['checkpoints_path'], pattern.format('discriminator', params['snapshot_epoch'])))
     latent_size = G.latent_size
     sample = D(G(torch.randn(1, latent_size)), intermediate=True)
+    print('latent size:', latent_size)
+    print('intermediate result of D:', sample.shape)
     num_channels = sample.size(1)
     seq_len = sample.size(2)
     D = cudize(D)
@@ -63,18 +61,24 @@ if __name__ == '__main__':
     G.eval()
     loss_function = nn.MSELoss()
     C = cudize(ConnectionNet(num_channels, seq_len, latent_size))
-    optimizer = torch.optim.Adam(C.parameters(), lr=params['lr'])
+    optimizer = torch.optim.Adam(trainable_params(C), lr=params['lr'])
+    print('number of parameters:', num_params(C))
     enable_benchmark()
-    for i in trange(params['minis']):
+    mini_range = tqdm(range(params['minis']))
+    for i in range(params['minis']):
         z = cudize(torch.randn(params['batch_size'], latent_size))
         d = D(G(z), intermediate=True).detach()
         optimizer.zero_grad()
         p = C(d)
-        loss = loss_function(p, z)
-        loss = loss + params['l_mean'] * (p.mean(dim=-1) ** 2).mean() + params['l_std'] * ((p.std(dim=-1) - 1.0) ** 2).mean()
-        loss = loss + params['l_mmd'] * torch.sqrt(F.relu(mix_rbf_mmd2(z, p, sigma_list)))
+        loss_mse = loss_function(p, z)
+        loss_mean = (p.mean(dim=-1) ** 2).mean()
+        loss_std = ((p.std(dim=-1) - 1.0) ** 2).mean()
+        loss_mmd = torch.sqrt(F.relu(mix_rbf_mmd2(z, p, sigma_list)))
+        loss = loss_mse + params['l_mean'] * loss_mean + params['l_std'] * loss_std + params['l_mmd'] * loss_mmd
         loss.backward()
         optimizer.step()
-        if i % 200 == 0:
-            print(loss.item())
-    torch.save(C, os.path.join(params['checkpoints_path'], 'connection_network.pth'))
+        if i % params['log_step'] == 0:
+            mini_range.set_description('loss_total: '+str(loss.item())+' loss_mse: '+str(loss_mse.item()))
+        mini_range.update()
+    mini_range.close()
+    torch.save(C.cpu(), os.path.join(params['checkpoints_path'], 'connection_network.pth'))

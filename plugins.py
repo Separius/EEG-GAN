@@ -140,12 +140,14 @@ class LRScheduler(Plugin):
 
 class EfficientLossMonitor(LossMonitor):
 
-    def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup):
+    def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup, monitor_patience):
         super(EfficientLossMonitor, self).__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
         self.threshold = monitor_threshold
         self.warmup = monitor_warmup
+        self.patience = monitor_patience
+        self.counter = 0
 
     def _get_value(self, iteration, *args):
         val = args[self.loss_no]
@@ -156,8 +158,12 @@ class EfficientLossMonitor(LossMonitor):
         if idx > self.warmup:
             loss_value = self.trainer.stats[self.stat_name]['epoch_mean']
             if abs(loss_value) > self.threshold:
-                print('loss value exceeded the threshold')
-                exit(0)
+                self.counter += 1
+                if self.counter > self.patience:
+                    print('loss value exceeded the threshold')
+                    exit(0)
+            else:
+                self.counter = 0
 
 
 class AbsoluteTimeMonitor(Plugin):
@@ -366,7 +372,7 @@ class AggregationGraphValidator(Plugin):
         self.plot_bounds(self.real_bounds, fake_bounds, self.real_bounds_f, fake_bounds_f, res_len, frequency, epoch)
 
     def plot_bounds(self, real_bounds, fake_bounds, f_real_bounds, f_fake_bounds, seq_len, frequency, epoch):
-        num_channels = real_bounds.shape[0]
+        num_channels = real_bounds[0].shape[0]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         fig, (axs) = plt.subplots(num_channels, 2)
@@ -448,6 +454,7 @@ class ClassifierValidator(Plugin):
         self.trainer.D.train()
         valid_dict = {'d_loss': d_loss}
         valid_dict.update(get_accuracy(reals, fakes))
+        # NOTE that we can stop training based on these values like SavePlugin
         self.update_stats(valid_dict)
 
     def end(self, *args):

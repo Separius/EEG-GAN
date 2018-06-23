@@ -262,7 +262,8 @@ class ConditionalGroupNorm(nn.Module):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, padding=0, is_spectral=False, is_weight_norm=False, groups=1):
+    def __init__(self, c_in, c_out, k_size, padding=0, is_spectral=False, is_weight_norm=False, groups=1,
+                 equalized=True):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=False, groups=groups)
         if is_spectral:
@@ -271,7 +272,10 @@ class EqualizedConv1d(nn.Module):
             self.conv = weight_norm_wrapper(self.conv)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).zero_())
-        self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
+        if equalized:
+            self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
+        else:
+            self.scale = 1.0
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
 
     def forward(self, x):
@@ -299,15 +303,8 @@ class NeoPGConv1d(nn.Module):
                  do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0, groups=1):
         super(NeoPGConv1d, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
-        if equalized:
-            conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, is_spectral=spectral,
-                                   is_weight_norm=normalization == 'weight_norm', groups=groups)
-        else:
-            conv = nn.Conv1d(ch_in, ch_out, ksize, padding=pad, groups=groups)
-            if spectral:
-                conv = spectral_norm_wrapper(conv)
-            if normalization == 'weight_norm':
-                conv = weight_norm_wrapper(conv)
+        conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, is_spectral=spectral,
+                               is_weight_norm=normalization == 'weight_norm', groups=groups, equalized=equalized)
         norm = None
         if normalization:
             if normalization == 'layer_norm':

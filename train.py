@@ -10,7 +10,7 @@ from torch.utils.data.sampler import SequentialSampler, SubsetRandomSampler
 from plugins import FixedNoise, OutputGenerator, ClassifierValidator, GifGenerator, SaverPlugin, LRScheduler, \
     AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, TeeLogger, AggregationGraphValidator
 from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir, num_params, \
-    create_params, generic_arg_parse, get_structured_params, enable_benchmark
+    create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model
 import numpy as np
 import torch
 import os
@@ -28,7 +28,7 @@ default_params = OrderedDict(
     G_lr_max=0.001,
     D_lr_max=0.001,
     total_kimg=4000,
-    resume_network='',
+    resume_network='',  # 001-test/network-snapshot-{}-000025.dat
     resume_time=0,
     num_data_workers=3,
     random_seed=1337,
@@ -55,7 +55,8 @@ default_params = OrderedDict(
     gen_gif=False,
     spreading_factor=0,  # for the separable conv
     monitor_threshold=100,
-    monitor_warmup=5
+    monitor_warmup=5,
+    monitor_patience=5
 )
 
 
@@ -70,8 +71,8 @@ class InfiniteRandomSampler(SubsetRandomSampler):
 
 def load_models(resume_network, result_dir, logger):
     logger.log('Resuming {}'.format(resume_network))
-    G = torch.load(os.path.join(result_dir, resume_network.format('generator')))
-    D = torch.load(os.path.join(result_dir, resume_network.format('discriminator')))
+    G = load_model(os.path.join(result_dir, resume_network.format('generator')))
+    D = load_model(os.path.join(result_dir, resume_network.format('discriminator')))
     return G, D
 
 
@@ -99,10 +100,6 @@ def main(params):
     if not params['verbose']:
         result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
-    if not params['equalized'] and params['loss_type'] != 'hinge':
-        print('there is a bug(don' + "'" + 't know where) that does not let you use unequalized nets, switching back')
-        params['equalized'] = True
-
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
@@ -111,15 +108,16 @@ def main(params):
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     num_channels = dataset.shape[1]
     if params['validation_split'] > 0:
-        val_stats = ['d_loss']
+        val_stats = ['d_loss', 'mul_acc']
         if num_channels != 1:
-            for ch in range(num_channels):
-                for cs in ['linear_svm', 'rbf_svm', 'decision_tree', 'random_forest']:
-                    val_stats.append(cs + '_ch_' + str(ch))
-        for cs in ['linear_svm', 'rbf_svm', 'decision_tree', 'random_forest']:
-            val_stats.append(cs + '_all')
+            val_stats.append('ch_acc')
         stats_to_log.extend(['validation.' + x for x in val_stats])
 
+    if params['verbose'] and params['resume_network']:
+        print('resuming does not work in verbose mode')
+        params['verbose'] = False
+    if not params['verbose']:
+        logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
     if params['resume_network'] and not params['verbose']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
@@ -154,7 +152,6 @@ def main(params):
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
         exit()
-    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
         logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
@@ -204,7 +201,8 @@ def main(params):
         DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager']))
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(
-            EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup']))
+            EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup'],
+                                 params['monitor_patience']))
 
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     if params['validation_split'] > 0:
@@ -213,7 +211,7 @@ def main(params):
                                 **params['ClassifierValidator']))
         trainer.register_plugin(AggregationGraphValidator(lambda x: random_latents(x, latent_size), valid_data_loader,
                                                           params['ClassifierValidator']['output_snapshot_ticks'],
-                                                          result_dir, params['OutputGenerator']['seq_len'],
+                                                          result_dir, dataset_params['seq_len'],
                                                           dataset_params['seq_len'], dataset_params['max_freq']))
     trainer.register_plugin(
         OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
