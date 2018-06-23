@@ -11,7 +11,7 @@ default_params = {
     'generator_path': '',
     'num_samples': 128,
     'is_dir': False,
-    'num_pics': 0,
+    'num_pics': 8,
     'frequency': 80
 }
 

@@ -28,7 +28,6 @@
 #kernel_size: 3
 #inception: false
 #self_attention_layer: null
-#self_attention_size: 32
 #progression_scale: 2 # single number or a list where prod(list) == seq_len
 #num_classes: 0
 #gen_gif: false

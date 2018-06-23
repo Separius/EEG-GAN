@@ -1,12 +1,14 @@
 import torch
 import os
 import numpy as np
-from utils import pixel_norm, cudize, load_pkl, simple_argparser
+from utils import cudize, load_pkl, simple_argparser, enable_benchmark
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from dataset import EEGDataset
 from torch.utils.data.sampler import RandomSampler
 import torch.nn as nn
+from plugins import OutputGenerator
+from PIL import Image
 
 
 class CompatibleDataset(Dataset):
@@ -36,9 +38,9 @@ class CompatibleDataset(Dataset):
                 data = self.eeg_dataset[int(np.random.rand() * len(self))][:, :self.seq_len]
             else:
                 if params['cudify_dataset']:
-                    data = self.generator(cudize(torch.randn(z_dim)))
+                    data = self.generator(cudize(torch.randn(z_dim))).detach()
                 else:
-                    data = self.generator(torch.randn(z_dim))
+                    data = self.generator(torch.randn(z_dim)).detach()
             res.append(self.feature_extract(data).unsqueeze(0))
         return torch.cat(res, dim=0)
 
@@ -46,7 +48,7 @@ class CompatibleDataset(Dataset):
         intermediate = self.discriminator(data.unsqueeze(0), intermediate=True)
         if self.connection_network is not None:
             return self.connection_network(intermediate)
-        return intermediate.view(-1)
+        return intermediate.view(-1).detach()
 
     def __getitem__(self, index):
         real_data = self.eeg_dataset[index]  # tensor: ch, seq_len
@@ -62,13 +64,6 @@ class CompatibleDataset(Dataset):
 
     def __len__(self):
         raise len(self.eeg_dataset)
-
-
-def run_g_zeroth_stage(G, z):
-    if G.normalize_latents:
-        z = pixel_norm(z)
-    res = [G.block0.c1(z[:, :, i:i + 1]) for i in range(z.size(2))]
-    return G.after_first(G.block0.c2(torch.cat(res, dim=2)))
 
 
 def run_static(gen, disc, pop_size=64, stage=2, y=None, ratio=0.95):
@@ -121,8 +116,8 @@ class CompatNet(nn.Module):
         x2 = x2.view(-1, x2.size(2))
         x1 = fc1(x1)
         x2 = fc2(x2)
-        x2.view(x1.size(0), k, -1)
-        x1.view(x1.size(0), 1, -1)
+        x2 = x2.view(x1.size(0), k, -1)
+        x1 = x1.view(x1.size(0), 1, -1)
         return (x1 * x2).sum(-1)
 
 
@@ -145,7 +140,8 @@ if __name__ == '__main__':
         batch_size=16,
         negative_samples=4,
         is_connection=False,
-        cudify_dataset=False
+        cudify_dataset=False,
+        frequency=80
     )
     params = simple_argparser(default_params)
 
@@ -160,7 +156,12 @@ if __name__ == '__main__':
         D = cudize(D)
         G.eval()
         D.eval()
-        run_static(G, D)
+        generated, scores = run_static(G, D)
+        print(scores)
+        generated = generated.unsqueeze(0)
+        image = OutputGenerator.get_images(generated.size(-1), params['frequency'], 0, generated)[0]
+        image = Image.fromarray(image, 'RGB')
+        image.show()
     else:
         if params['cudify_dataset']:
             G = cudize(G)
@@ -202,6 +203,7 @@ if __name__ == '__main__':
         dl2i = dl2.__iter__()
         net = cudize(CompatNet(sample.size(1)))
         optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+        enable_benchmark()
         for i in range(10000):
             is_first = np.random.rand() < 0.5
             x1, x2 = dl1i.next() if is_first else dl2i.next()

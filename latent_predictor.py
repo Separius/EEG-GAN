@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import cudize, simple_argparser
+from utils import cudize, simple_argparser, enable_benchmark
 import os
 from tqdm import trange
 import pickle
@@ -41,6 +41,7 @@ if __name__ == '__main__':
     loss_function = nn.MSELoss()
     C = cudize(PredictorNet(num_channels, seq_len))
     optimizer = torch.optim.Adam(C.parameters(), lr=params['lr'])
+    enable_benchmark()
     for i in trange(params['minis']):
         z = cudize(torch.randn(params['batch_size'], latent_size))
         d = G(z, intermediate=True).detach()

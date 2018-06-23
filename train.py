@@ -10,7 +10,7 @@ from torch.utils.data.sampler import SequentialSampler, SubsetRandomSampler
 from plugins import FixedNoise, OutputGenerator, ClassifierValidator, GifGenerator, SaverPlugin, LRScheduler, \
     AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, TeeLogger, AggregationGraphValidator
 from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir, num_params, \
-    create_params, generic_arg_parse, get_structured_params
+    create_params, generic_arg_parse, get_structured_params, enable_benchmark
 import numpy as np
 import torch
 import os
@@ -50,7 +50,6 @@ default_params = OrderedDict(
     kernel_size=3,
     inception=False,
     self_attention_layer=None,  # starts from 0
-    self_attention_size=32,
     progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
     gen_gif=False,
@@ -127,7 +126,7 @@ def main(params):
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
                       self_attention_layer=params['self_attention_layer'], spreading_factor=params['spreading_factor'],
-                      self_attention_size=params['self_attention_size'], **params['Generator'])
+                      **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
         D = Discriminator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
@@ -136,7 +135,7 @@ def main(params):
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
                           spreading_factor=params['spreading_factor'],
                           inception=params['inception'], self_attention_layer=params['self_attention_layer'],
-                          self_attention_size=params['self_attention_size'], **params['Discriminator'])
+                          **params['Discriminator'])
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
@@ -255,4 +254,5 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.set_device(params['cuda_device'])
         torch.cuda.manual_seed_all(params['random_seed'])
+    enable_benchmark()
     main(params)

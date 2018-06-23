@@ -53,7 +53,7 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
-                 equalized, inception, self_attention_layer, self_attention_size, num_classes, spreading_factor,
+                 equalized, inception, self_attention_layer, num_classes, spreading_factor,
                  latent_size=256, upsample='linear', normalize_latents=True, pixelnorm=True, activation='lrelu',
                  dropout=0.1, residual=False, do_mode='mul', spectral_norm=False, ch_by_ch=False, normalization=None):
         super(Generator, self).__init__()
@@ -83,7 +83,7 @@ class Generator(nn.Module):
                              residual=residual, **layer_settings)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer), self_attention_size)
+            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer))
         else:
             self.self_attention = None
         self.blocks = nn.ModuleList([GBlock(nf(i - 1), nf(i), num_channels, ksize=kernel_size, equalized=equalized,
@@ -207,7 +207,7 @@ class DBlock(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
-                 kernel_size, inception, self_attention_layer, self_attention_size, num_classes, spreading_factor,
+                 kernel_size, inception, self_attention_layer, num_classes, spreading_factor,
                  downsample='average', pixelnorm=False, activation='lrelu', dropout=0.1, do_mode='mul',
                  spectral_norm=False, phase_shuffle=0, temporal_stats=False, num_stat_channels=1, normalization=None,
                  residual=False):
@@ -238,7 +238,7 @@ class Discriminator(nn.Module):
         layer_settings.update(phase_shuffle=phase_shuffle)
         self.self_attention_layer = self_attention_layer
         if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer), self_attention_size)
+            self.self_attention = SelfAttention(nf(initial_size - 1 + self_attention_layer))
         else:
             self.self_attention = None
         self.blocks = nn.ModuleList([DBlock(nf(i), nf(i - 1), num_channels, ksize=kernel_size, equalized=equalized,

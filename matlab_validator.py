@@ -14,7 +14,8 @@ default_params = {
 
 def call_matlab(data):
     scipy.io.savemat('tmp.mat', data)
-    ans = subprocess.check_output(["matlab", "validator.matlab", "tmp.mat"]).strip()
+    ans = subprocess.check_output(
+        ["matlab", "--in", "validator.matlab", "--out", "tmp.mat", "--freq", str(default_params['frequency'])]).strip()
     subprocess.check_output(["rm", "tmp.mat"])
     return ans
 

@@ -28,7 +28,6 @@ fmap_min: 8
 kernel_size: 3
 #inception: false
 #self_attention_layer: null
-#self_attention_size: 32
 #progression_scale: 2
 #num_classes: 0
 #gen_gif: false

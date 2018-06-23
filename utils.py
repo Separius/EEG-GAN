@@ -188,3 +188,8 @@ def simple_argparser(default_params):
         parser.add_argument('--{}'.format(k), type=partial(generic_arg_parse, hinttype=type(default_params[k])))
     parser.set_defaults(**default_params)
     return get_structured_params(vars(parser.parse_args()))
+
+
+def enable_benchmark():
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True  # for fast training(if network input size is almost constant)

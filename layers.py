@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import math
 from torch import nn
 import torch.nn.functional as F
 from utils import cudize, pixel_norm
@@ -137,14 +138,14 @@ class ChannelByChannelOut(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, channels_in, key_length):
+    def __init__(self, channels_in):
         super(SelfAttention, self).__init__()
         self.gamma = 0
-        self.channels_in = channels_in
-        self.key_length = key_length
-        self.to_key = nn.Conv1d(channels_in, key_length, kernel_size=1)
-        self.to_query = nn.Conv1d(channels_in, key_length, kernel_size=1)
+        d_key = channels_in // 8
+        self.to_key = nn.Conv1d(channels_in, d_key, kernel_size=1)
+        self.to_query = nn.Conv1d(channels_in, d_key, kernel_size=1)
         self.softmax = nn.Softmax(dim=1)
+        self.scale = math.sqrt(d_key)
 
     def forward(self, v):
         if self.gamma == 0:
@@ -154,7 +155,7 @@ class SelfAttention(nn.Module):
         q = self.to_query(v)
         e1 = q.unsqueeze(3).repeat(1, 1, 1, T).permute(0, 1, 3, 2)
         e2 = k.unsqueeze(3).repeat(1, 1, 1, T)
-        a = self.softmax((e1 * e2).sum(dim=1))  # a is (N, T(normalized), T)
+        a = self.softmax((e1 * e2).sum(dim=1) / self.scale)  # a is (N, T(normalized), T)
         a = torch.bmm(v, a)
         return v + self.gamma * a
 

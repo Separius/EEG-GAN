@@ -1,13 +1,13 @@
 Test:
+    check monitor
     Test all on CPU
     check resume
     check connection
-    generate.py
-    mat_val
-    Test all on GPU
+    check generate.py
+    check mat_val
     check compat
     check predictor
-    check monitor
+    Test all on GPU
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur
