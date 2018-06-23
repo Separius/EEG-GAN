@@ -1,5 +1,5 @@
 Test:
-    check compat
+    check compat :: conn
     Test all on GPU
     check mat_val
 Configs:

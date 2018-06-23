@@ -278,7 +278,7 @@ class Discriminator(nn.Module):
         repeats = seq_len // step - 1
         x = torch.cat([x[..., i * step:i * step + seq_len // 2] for i in range(repeats)], dim=0)
         o, _ = self.forward(x, y)
-        return o.unsqueeze().view(repeats, -1).mean(dim=0)  # larger value is better
+        return o.view(repeats, -1).mean(dim=0)  # larger value is better
 
     def forward(self, x, y=None, intermediate=False):
         xhighres = x
