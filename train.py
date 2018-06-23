@@ -96,7 +96,12 @@ def main(params):
             save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
-    result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
+    if not params['verbose']:
+        result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
+
+    if not params['equalized']:
+        print('there is a bug(don' + "'" + 't know where) that does not let you use unequalized nets, switching back')
+        params['equalized'] = True
 
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
@@ -114,9 +119,8 @@ def main(params):
         for cs in ['linear_svm', 'rbf_svm', 'decision_tree', 'random_forest']:
             val_stats.append(cs + '_all')
         stats_to_log.extend(['validation.' + x for x in val_stats])
-    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
 
-    if params['resume_network']:
+    if params['resume_network'] and not params['verbose']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
@@ -141,6 +145,7 @@ def main(params):
     G = cudize(G)
     D = cudize(D)
     if params['verbose']:
+        # NOTE a much better verbose mode can be implemented by running backward once
         from torchsummary import summary
         G.set_gamma(1)
         G.depth = G.max_depth
@@ -149,6 +154,7 @@ def main(params):
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
         exit()
+    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
         logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))

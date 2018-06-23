@@ -1,12 +1,15 @@
 Test:
-    Test all on CPU
-    check resume
+    Test all on CPU:
+        resume
+        validation
     check connection
     check generate.py
     check compat
     check predictor
     Test all on GPU
     check mat_val
+    equalized_bug
+    spectral_norm config => wgan_gp.loss == 10, hinge.loss == 2
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur

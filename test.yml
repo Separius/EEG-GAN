@@ -2,7 +2,7 @@
 
 exp_name: 'test'
 num_data_workers: 1
-total_kimg: 24
+total_kimg: 70
 fmap_base: 64
 fmap_max: 64
 fmap_min: 4
@@ -11,9 +11,9 @@ Trainer.tick_kimg_default: 1
 DepthManager.minibatch_default: 64
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_training_kimg: 2
+DepthManager.lod_training_kimg: 5
 DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 1
+DepthManager.lod_transition_kimg: 5
 DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
 SaverPlugin.keep_old_checkpoints: true
 OutputGenerator.samples_count: 4
@@ -27,11 +27,12 @@ EEGDataset.num_channels: 5
 EEGDataset.per_user: true
 EEGDataset.use_abs: true
 EEGDataset.dataset_freq: 80
+optimizer: 'ttur'
 
 ###############   TESTED   ###############
 cuda_device: 0
 
-loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+loss_type: 'hinge' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 Trainer.grad_clip: null #null or a float
 Trainer.D_training_repeats: 1
 gen_gif: false
@@ -41,7 +42,7 @@ SaverPlugin.network_snapshot_ticks: 50
 monitor_threshold: 100
 monitor_warmup: 12
 
-self_attention_layer: 4
+self_attention_layer: null
 DepthManager.attention_start_depth: 5
 DepthManager.attention_transition_kimg: 2
 
@@ -49,7 +50,27 @@ progression_scale: [2, 2, 2, 2, 4, 2, 4, 2]
 EEGDataset.seq_len: 1024
 EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
 ###############CHANGE THESE###############
-verbose: true
+verbose: false
+
+kernel_size: 3
+inception: false
+equalized: true
+spreading_factor: 0
+Generator.residual: false
+Generator.ch_by_ch: false
+Generator.do_mode: 'mul' #mul, drop, prop
+Discriminator.do_mode: 'mul'
+Discriminator.phase_shuffle: 0
+Discriminator.temporal_stats: false
+Discriminator.num_stat_channels: 0
+Discriminator.residual: false
+
+Generator.pixelnorm: true
+Discriminator.pixelnorm: false
+Generator.spectral_norm: false
+Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
+Discriminator.spectral_norm: false
+Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
 resume_network: ''
 resume_time: 0
@@ -57,23 +78,3 @@ Trainer.resume_nimg: 0
 
 validation_split: 0
 ClassifierValidator.output_snapshot_ticks: 20
-
-equalized: true
-kernel_size: 3
-inception: false
-spreading_factor: 0
-Generator.pixelnorm: true
-Generator.residual: false
-Generator.do_mode: 'mul' #mul, drop, prop
-Generator.spectral_norm: false
-Generator.ch_by_ch: false
-Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-Discriminator.pixelnorm: false
-Discriminator.activation: 'lrelu'
-Discriminator.do_mode: 'mul'
-Discriminator.spectral_norm: false
-Discriminator.phase_shuffle: 0
-Discriminator.temporal_stats: false
-Discriminator.num_stat_channels: 1
-Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
-Discriminator.residual: false
