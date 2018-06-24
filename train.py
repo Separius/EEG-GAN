@@ -54,8 +54,8 @@ default_params = OrderedDict(
     num_classes=0,
     gen_gif=False,
     spreading_factor=0,  # for the separable conv
-    monitor_threshold=100,
-    monitor_warmup=5,
+    monitor_threshold=30,
+    monitor_warmup=40,
     monitor_patience=5
 )
 
@@ -90,7 +90,7 @@ def main(params):
         print('loading dataset from file')
         dataset = load_pkl(params['load_dataset'])
     else:
-        print('loading dataset from scratch')
+        print('creating dataset from scratch')
         dataset = EEGDataset(params['progression_scale'], **dataset_params)
         if params['save_dataset'] or params['load_dataset']:
             print('saving dataset to file')

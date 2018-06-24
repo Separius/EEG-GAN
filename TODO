@@ -1,21 +1,20 @@
 Test:
-    check compat :: conn
     Test all on GPU
-    check mat_val
+    check mat_val + kill based on result + kill based on my validator's result
 Configs:
     Loss:
         optimizer: adam, amsgrad, ttur
-        loss: hinge, wgan_gp(+ct),  wgan_theirs+ct
+        loss: hinge, wgan_gp(+ct),  wgan_theirs(+ct)
         scheduler: num_epochs + transition + train
     Structure:
-        progress: num layers, initial size, depth_manager_offset, progression_scale
+        progress: num layers, initial size, progression_scale
         channel by channel
-        stats layer
+        stats layer: num_channels, temporal
         num features: min, max, base, min=max
         residual
         kernel size: 3, 5, 7, 9, 11
         inception
-        self attention: layer, size, num_samples
+        self attention: layer, training_duration, training_start
         separable: spreading_factor
     Normalization x2:
         dropout: mode, strength

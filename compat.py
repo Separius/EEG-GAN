@@ -67,7 +67,7 @@ class CompatibleDataset(Dataset):
         return len(self.eeg_dataset)
 
 
-def run_static(gen, disc, pop_size=64, stage=2, y=None, ratio=0.95):
+def run_static(gen, disc, pop_size=128, stage=3, ratio=0.95, y=None):
     latent_size = gen.latent_size
     z1 = cudize(torch.randn(1, latent_size))
     z2 = z1 * ratio + cudize(torch.randn(pop_size, latent_size)) * (1.0 - ratio)
@@ -144,7 +144,11 @@ if __name__ == '__main__':
         cudify_dataset=False,
         frequency=80,
         minis=2000,
-        log_step=50
+        log_step=50,
+        pop_size=128,
+        g_stage=3,
+        static_ratio=0.95,
+        static_output_location=None
     )
     params = simple_argparser(default_params)
 
@@ -157,10 +161,15 @@ if __name__ == '__main__':
         D = cudize(D)
         G.eval()
         D.eval()
-        generated, scores = run_static(G, D)
+        generated, scores = run_static(G, D, pop_size=params['pop_size'], stage=params['g_stage'],
+                                       ratio=params['static_ratio'])
         print('min:', scores.min().item(), 'max:', scores.max().item(), 'mean:', scores.mean().item())
         generated = generated.unsqueeze(0).data.cpu().numpy()
-        save_pkl(os.path.join(params['checkpoints_path'], 'static_compat_generated.pkl'), generated)
+        if params['static_output_location'] is None:
+            loc = os.path.join(params['checkpoints_path'], 'static_compat_generated.pkl')
+        else:
+            loc = params['static_output_location']
+        save_pkl(loc, generated)
     else:
         if params['cudify_dataset']:
             G = cudize(G)
