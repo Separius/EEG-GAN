@@ -1,80 +1,104 @@
-# python train.py --exp_name xxx --config_file defaults.yml --load_dataset results/data256.pkl --cuda_device 0
+# python train.py --exp_name xxx --config_file defaults.yml --load_dataset data/512.pkl --cuda_device 0
 
-exp_name: 'test'
-num_data_workers: 1
-total_kimg: 40
-fmap_base: 64
-fmap_max: 64
-fmap_min: 8
-Generator.latent_size: null
-Trainer.tick_kimg_default: 1
-DepthManager.minibatch_default: 64
-DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
-DepthManager.tick_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_training_kimg: 2
-DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 2
-DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
-SaverPlugin.keep_old_checkpoints: true
-OutputGenerator.samples_count: 4
-GifGenerator.num_frames: 10
-GifGenerator.fps: 3
-EEGDataset.dir_path: './data/eeg'
-EEGDataset.num_files: 60
-EEGDataset.stride: 0.5
-EEGDataset.max_freq: 80
-EEGDataset.num_channels: 5
-EEGDataset.per_user: true
-EEGDataset.use_abs: true
-EEGDataset.dataset_freq: 80
-optimizer: 'ttur'
-
-###############   TESTED   ###############
-verbose: false
-cuda_device: 0
-
-loss_type: 'hinge' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
-Trainer.grad_clip: null #null or a float
-Trainer.D_training_repeats: 1
-gen_gif: false
-OutputGenerator.output_snapshot_ticks: 100
-SaverPlugin.network_snapshot_ticks: 20
-
-monitor_threshold: 100
-monitor_warmup: 12
-
-self_attention_layer: null
-DepthManager.attention_start_depth: 5
-DepthManager.attention_transition_kimg: 2
-
-progression_scale: [2, 2, 2, 2, 4, 2, 4]
-EEGDataset.seq_len: 512
-EEGDataset.model_dataset_depth_offset: 2 # start from 4x4 instead of 1x1
-
+fmap_base: 2048
+fmap_max: 256
+fmap_min: 64
+Generator.latent_size: 256
 kernel_size: 3
-inception: false
-equalized: true
-spreading_factor: 0
-Generator.residual: false
-Generator.ch_by_ch: false
-Generator.do_mode: 'mul' #mul, drop, prop
-Discriminator.do_mode: 'mul'
-Discriminator.phase_shuffle: 0
-Discriminator.temporal_stats: false
-Discriminator.num_stat_channels: 0
-Discriminator.residual: false
+EEGDataset.model_dataset_depth_offset: 2 # start from progression_scale^2 instead of progression_scale^0
+EEGDataset.seq_len: 256 #init*2^7 => 8 layers
 
-Generator.pixelnorm: true
-Discriminator.pixelnorm: false
-Generator.spectral_norm: false
-Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
-Discriminator.spectral_norm: false
-Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
 
-resume_network: ''
-resume_time: 0
-Trainer.resume_nimg: 0
 
-validation_split: 0.1
-ClassifierValidator.output_snapshot_ticks: 20
-###############CHANGE THESE###############
+Trainer.D_training_repeats: 1
+
+progression_scale: 2 # single number or a list where prod(list) == seq_len
+
+DepthManager.minibatch_default: 128
+DepthManager.minibatch_overrides: {5: 64, 6: 64, 7: 32, 8: 32, 9: 16, 10: 16, 11: 8, 12: 8}  # starts from depth_offset+1
+DepthManager.tick_kimg_overrides: {5: 4, 6: 4, 7: 4, 8: 3, 9: 3, 10: 3, 11: 2, 12: 2}  # starts from depth_offset+1
+DepthManager.lod_training_kimg: 400
+DepthManager.lod_training_kimg_overrides: {1: 300, 2: 300, 3: 300, 4: 300}  # starts from depth_offset+1
+DepthManager.lod_transition_kimg: 100
+DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
+OutputGenerator.output_snapshot_ticks: 50
+
+#result_dir: 'results'
+#exp_name: ''
+#lr_rampup_kimg: 50
+#G_lr_max: 0.001
+#D_lr_max: 0.001
+#total_kimg: 4000
+#resume_network: '' # 001-test/network-snapshot-{}-000025.dat
+#resume_time: 0
+#num_data_workers: 3
+#random_seed: 1337
+#grad_lambda: 10.0
+#iwass_epsilon: 0.001
+#save_dataset: ''
+#load_dataset: ''
+#loss_type: 'wgan_gp' # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+#cuda_device: 0
+#validation_split: 0
+#LAMBDA_2: 2
+#optimizer: 'adam' # adam, amsgrad, ttur
+#config_file: null
+#verbose: false
+#equalized: true
+#inception: false
+#self_attention_layer: null
+#num_classes: 0
+#gen_gif: false
+#spreading_factor: 0
+#monitor_threshold: 30
+#monitor_warmup: 40
+#monitor_patience: 5
+
+#Trainer.grad_clip: null #null or a float
+#Trainer.tick_kimg_default: 5
+#Trainer.resume_nimg: 0
+
+#Generator.upsample: 'linear' #linear, nearest
+#Generator.normalize_latents: true
+#Generator.pixelnorm: true
+#Generator.activation: 'lrelu' #prelu, lrelu, relu, relu6, elu
+#Generator.dropout: 0.1
+#Generator.residual: false
+#Generator.do_mode: 'mul' #mul, drop, prop
+#Generator.spectral_norm: false
+#Generator.ch_by_ch: false
+#Generator.normalization: null #null, batch_norm, layer_norm, weight_norm
+
+#Discriminator.downsample: 'average' #average, stride
+#Discriminator.pixelnorm: false
+#Discriminator.activation: 'lrelu'
+#Discriminator.dropout: 0.1
+#Discriminator.do_mode: 'mul'
+#Discriminator.spectral_norm: false
+#Discriminator.phase_shuffle: 0
+#Discriminator.temporal_stats: false
+#Discriminator.num_stat_channels: 1
+#Discriminator.normalization: null #null, batch_norm, layer_norm, weight_norm
+#Discriminator.residual: false
+
+#DepthManager.attention_start_depth: null
+#DepthManager.attention_transition_kimg: 200
+
+#SaverPlugin.keep_old_checkpoints: true
+#SaverPlugin.network_snapshot_ticks: 50
+
+#OutputGenerator.samples_count: 8
+
+#GifGenerator.num_frames: 30
+#GifGenerator.fps: 5
+
+#ClassifierValidator.output_snapshot_ticks: 20
+
+##EEGDataset.dir_path: './data/eeg'
+EEGDataset.num_files: 20
+#EEGDataset.stride: 0.25
+EEGDataset.max_freq: 80
+#EEGDataset.num_channels: 5
+##EEGDataset.per_user: true
+##EEGDataset.use_abs: true
+##EEGDataset.dataset_freq: 80

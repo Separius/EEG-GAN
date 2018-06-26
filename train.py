@@ -25,16 +25,15 @@ default_params = OrderedDict(
     result_dir='results',
     exp_name='',
     lr_rampup_kimg=50,
-    G_lr_max=0.001,
-    D_lr_max=0.001,
+    G_lr_max=0.005,
+    D_lr_max=0.005,
     total_kimg=4000,
     resume_network='',  # 001-test/network-snapshot-{}-000025.dat
     resume_time=0,
-    num_data_workers=3,
-    random_seed=1337,
+    num_data_workers=2,
+    random_seed=1373,
     grad_lambda=10.0,
     iwass_epsilon=0.001,
-    save_dataset='',
     load_dataset='',
     loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
     cuda_device=0,
@@ -48,13 +47,11 @@ default_params = OrderedDict(
     fmap_min=64,
     equalized=True,
     kernel_size=3,
-    inception=False,
     self_attention_layer=None,  # starts from 0
     progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
     gen_gif=False,
-    spreading_factor=0,  # for the separable conv
-    monitor_threshold=30,
+    monitor_threshold=10,
     monitor_warmup=40,
     monitor_patience=5
 )
@@ -92,9 +89,9 @@ def main(params):
     else:
         print('creating dataset from scratch')
         dataset = EEGDataset(params['progression_scale'], **dataset_params)
-        if params['save_dataset'] or params['load_dataset']:
+        if params['load_dataset']:
             print('saving dataset to file')
-            save_pkl(params['save_dataset'] if params['save_dataset'] else params['load_dataset'], dataset)
+            save_pkl(params['load_dataset'], dataset)
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     if not params['verbose']:
@@ -118,7 +115,7 @@ def main(params):
         params['verbose'] = False
     if not params['verbose']:
         logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
-    if params['resume_network'] and not params['verbose']:
+    if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
         if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
@@ -126,18 +123,15 @@ def main(params):
         G = Generator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
                       dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
-                      kernel_size=params['kernel_size'], equalized=params['equalized'], inception=params['inception'],
-                      self_attention_layer=params['self_attention_layer'], spreading_factor=params['spreading_factor'],
-                      **params['Generator'])
+                      kernel_size=params['kernel_size'], equalized=params['equalized'],
+                      self_attention_layer=params['self_attention_layer'], **params['Generator'])
         if params['Discriminator']['spectral_norm']:
             params['Discriminator']['normalization'] = None
         D = Discriminator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
                           dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
-                          spreading_factor=params['spreading_factor'],
-                          inception=params['inception'], self_attention_layer=params['self_attention_layer'],
-                          **params['Discriminator'])
+                          self_attention_layer=params['self_attention_layer'], **params['Discriminator'])
     latent_size = G.latent_size
     assert G.max_depth == D.max_depth
     G = cudize(G)

@@ -1,31 +1,21 @@
-Test:
-    Test all on GPU
-    check mat_val + kill based on result + kill based on my validator's result
-Configs:
-    Loss:
-        optimizer: adam, amsgrad, ttur
-        loss: hinge, wgan_gp(+ct),  wgan_theirs(+ct)
-        scheduler: num_epochs + transition + train
-    Structure:
-        progress: num layers, initial size, progression_scale
-        channel by channel
-        stats layer: num_channels, temporal
-        num features: min, max, base, min=max
-        residual
-        kernel size: 3, 5, 7, 9, 11
-        inception
-        self attention: layer, training_duration, training_start
-        separable: spreading_factor
-    Normalization x2:
-        dropout: mode, strength
-        phase shuffle
-        pixel norm
-        spectral norm
-        batch norm
-        layer norm
-        weight norm
-    SeqLen:
-        ConnectionNet: d_layer, network_structure, eval_metric
-        PredictionNet: network_structure, eval_metric
-        StaticCompatibilityNet: eval_metric
-        DynamicCompatibilityNet: eval_metric, network_structure, d_layer
+TODO:
+    test everything on GPU
+    verbose mode with backward(loss calculation)
+    connection network with a D like arch
+    our_baseline: num_params + lr + batch_size + scheduler
+    their_baseline: read the paper again
+    morph code: both for static/dynamic and connection_based/not
+    position encoding generator: where?(use dm_offset?) + forward/backward?
+    conv discriminator
+    gang of D: how to balance loss over time?
+    condition: dataset, data_reader, evaluation
+    hinge and spectral norm: stable config(baseline)
+    kernel_size: 3, 5, 7, 9
+    wgan: orig, theirs x ct/not
+    stats layer: temporal, num_channels, cnn
+    num features: 2048, 512, same, ...
+    dropout: mode, strength x G/D
+    norm: pixel, batch, layer, none
+    wnorm: spectral, weight, none
+    shapes: initial size, seq len, depth_offset
+    validation: kill based on validation

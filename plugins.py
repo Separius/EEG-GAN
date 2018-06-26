@@ -23,15 +23,16 @@ class DepthManager(Plugin):
                  create_rlg,
                  max_depth,
                  tick_kimg_default,
+                 depth_offset=0,
                  attention_start_depth=None,
-                 attention_transition_kimg=200,
-                 minibatch_default=64,
-                 minibatch_overrides={6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4},  # starts from depth_offset+1
-                 tick_kimg_overrides={6: 4, 7: 4, 8: 3, 9: 3, 10: 2, 11: 2, 12: 1},  # starts from depth_offset+1
+                 attention_transition_kimg=400,
+                 minibatch_default=256,
+                 minibatch_overrides={4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16},  # starts from 1
+                 tick_kimg_overrides={4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1},  # starts from 1
                  lod_training_kimg=400,
-                 lod_training_kimg_overrides={1: 250, 2: 250, 3: 300, 4: 350},  # starts from depth_offset+1
-                 lod_transition_kimg=100,
-                 lod_transition_kimg_overrides={1: 50, 2: 60, 3: 80, 4: 90}):  # starts from depth_offset+1
+                 lod_training_kimg_overrides={1: 250, 2: 250, 3: 300, 4: 350},  # starts from 1
+                 lod_transition_kimg=200,
+                 lod_transition_kimg_overrides={1: 100, 2: 100, 3: 140, 4: 180}):  # starts from 1
         super(DepthManager, self).__init__([(1, 'iteration')])
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
@@ -42,7 +43,7 @@ class DepthManager(Plugin):
         self.trainer = None
         self.depth = -1
         self.alpha = -1
-        self.depth_offset = 0
+        self.depth_offset = depth_offset
         self.max_depth = max_depth
         self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(0, max_depth,
                                                                                         lod_training_kimg,
@@ -102,11 +103,11 @@ class DepthManager(Plugin):
         if depth != self.depth:
             self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
             self.depth = depth
-            minibatch_size = self.minibatch_overrides.get(depth, self.minibatch_default)
+            minibatch_size = self.minibatch_overrides.get(depth-self.depth_offset, self.minibatch_default)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
-            tick_duration_kimg = self.tick_kimg_overrides.get(depth, self.tick_kimg_default)
+            tick_duration_kimg = self.tick_kimg_overrides.get(depth-self.depth_offset, self.tick_kimg_default)
             self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
@@ -229,7 +230,7 @@ class SaverPlugin(Plugin):
 class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
-                 output_snapshot_ticks=10):
+                 output_snapshot_ticks=25):
         super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
@@ -406,7 +407,7 @@ class AggregationGraphValidator(Plugin):
 
 
 class ClassifierValidator(Plugin):
-    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=20):
+    def __init__(self, sample_fn, valid_set, output_snapshot_ticks=25):
         super(ClassifierValidator, self).__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.valid_set = valid_set

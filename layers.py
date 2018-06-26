@@ -262,10 +262,9 @@ class ConditionalGroupNorm(nn.Module):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, padding=0, is_spectral=False, is_weight_norm=False, groups=1,
-                 equalized=True):
+    def __init__(self, c_in, c_out, k_size, padding=0, is_spectral=False, is_weight_norm=False, equalized=True):
         super(EqualizedConv1d, self).__init__()
-        self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=False, groups=groups)
+        self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=False)
         if is_spectral:
             self.conv = spectral_norm_wrapper(self.conv)
         if is_weight_norm:
@@ -298,13 +297,13 @@ class ToRGB(nn.Module):
         return self.toRGB(x)
 
 
-class NeoPGConv1d(nn.Module):
+class GeneralConv(nn.Module):
     def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True, act='lrelu', do=0,
-                 do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0, groups=1):
-        super(NeoPGConv1d, self).__init__()
+                 do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0):
+        super(GeneralConv, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, is_spectral=spectral,
-                               is_weight_norm=normalization == 'weight_norm', groups=groups, equalized=equalized)
+                               is_weight_norm=normalization == 'weight_norm', equalized=equalized)
         norm = None
         if normalization:
             if normalization == 'layer_norm':
@@ -328,29 +327,3 @@ class NeoPGConv1d(nn.Module):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
         return self.net(self.conv(x))
-
-
-class GeneralConv(nn.Module):
-    def __init__(self, in_channels, out_channels, ksize, spreading_factor=0, equalized=True, pad=None,
-                 pixelnorm=True, act='lrelu', do=0, do_mode='mul', spectral=False, phase_shuffle=0, normalization=None,
-                 num_classes=0):
-        super(GeneralConv, self).__init__()
-        self.is_separable = (spreading_factor != 0)
-        if self.is_separable:
-            self.c1 = NeoPGConv1d(in_channels, in_channels * spreading_factor, ksize, equalized=equalized,
-                                  phase_shuffle=phase_shuffle, pixelnorm=pixelnorm,
-                                  act=act if act is not None else 'relu', do=do, do_mode=do_mode, spectral=spectral,
-                                  pad=pad, normalization=normalization, num_classes=num_classes, groups=in_channels)
-            self.c2 = NeoPGConv1d(in_channels * spreading_factor, out_channels, ksize=1, equalized=equalized,
-                                  pixelnorm=pixelnorm, act=act, do=do, do_mode=do_mode, spectral=spectral,
-                                  normalization=normalization, num_classes=num_classes)
-        else:
-            self.c1 = NeoPGConv1d(in_channels, out_channels, ksize, equalized=equalized, pad=pad,
-                                  pixelnorm=pixelnorm, act=act, do=do, do_mode=do_mode, spectral=spectral,
-                                  phase_shuffle=phase_shuffle, normalization=normalization, num_classes=num_classes)
-
-    def forward(self, x, y=None):
-        x = self.c1(x, y)
-        if self.is_separable:
-            return self.c2(x, y)
-        return x
