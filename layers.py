@@ -286,8 +286,7 @@ class ToRGB(nn.Module):
     def __init__(self, ch_in, num_channels, normalization=None, ch_by_ch=False, equalized=True):
         super(ToRGB, self).__init__()
         self.num_channels = num_channels
-        layer_settings = dict(ksize=1, pixelnorm=False, act=None, equalized=equalized, normalization=normalization,
-                              spreading_factor=0)
+        layer_settings = dict(ksize=1, pixelnorm=False, act=None, equalized=equalized, normalization=normalization)
         if ch_by_ch:
             self.toRGB = ChannelByChannelOut(ch_in, num_channels, **layer_settings)
         else:

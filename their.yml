@@ -48,7 +48,7 @@ DepthManager.tick_kimg_overrides: {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11
 DepthManager.lod_training_kimg: 200
 DepthManager.lod_training_kimg_overrides: {} # starts from 1
 DepthManager.lod_transition_kimg: 200
-DepthManager.lod_transition_kimg_overrides: {}) # starts from 1
+DepthManager.lod_transition_kimg_overrides: {} # starts from 1
 
 SaverPlugin.network_snapshot_ticks: 50
 OutputGenerator.samples_count: 8
