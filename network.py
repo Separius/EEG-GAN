@@ -106,6 +106,41 @@ class Generator(nn.Module):
         h = self.upsampler[self.depth - 1](h)
         return self.blocks[self.depth - 1](h, y, True)
 
+    def forward_multi_simple(self, z, y=None, unshared_stages=2):
+        # NOTE z in [z(N, L(Zg+Zt-1(or 0)+Zt(or 0)), 1)] or simple z ; unshared_stages == depth_manager.depth_offset
+        if isinstance(z, (tuple, list)):
+            if self.depth == 0:
+                raise ValueError()
+            ans = []
+            for x in z:
+                h = x.unsqueeze(2)
+                if self.normalize_latents:
+                    h = pixel_norm(h)
+                h = self.block0(h, y, self.depth == 0)
+                for i in range(unshared_stages):
+                    if i == self.self_attention_layer:
+                        h = self.self_attention(h)
+                    h = self.upsampler[i](h)
+                    h = self.blocks[i](h, y)
+                ans.append(h)
+            h = torch.cat(ans, dim=2)
+            for i in range(unshared_stages, self.depth - 1):
+                if i == self.self_attention_layer:
+                    h = self.self_attention(h)
+                h = self.upsampler[i](h)
+                h = self.blocks[i](h, y)
+            h = self.upsampler[self.depth - 1](h)
+            ult = self.blocks[self.depth - 1](h, y, True)
+            if self.alpha < 1.0:
+                if self.depth > 1:
+                    preult_rgb = self.blocks[self.depth - 2].toRGB(h)
+                else:
+                    preult_rgb = self.block0.toRGB(h)
+            else:
+                preult_rgb = 0.0
+            return preult_rgb * (1.0 - self.alpha) + ult * self.alpha
+        return self.forward(z, y)
+
     def forward(self, x, y=None, intermediate=False):
         h = x.unsqueeze(2)
         if self.normalize_latents:
@@ -152,11 +187,17 @@ class DBlock(nn.Module):
             GeneralConv(ch_in, ch_out, ksize=initial_kernel_size if is_last else ksize, pad=0 if is_last else None,
                         equalized=equalized, spectral=spectral, normalization=normalization, **layer_settings))
         self.net = nn.Sequential(*self.net)
+        self.is_last = initial_kernel_size
 
     def forward(self, x, first=False):
         if first:
             x = self.fromRGB(x)
-        return self.net(x)
+        if self.is_last is None:
+            return self.net(x)
+        else:
+            step = self.is_last // 4
+            t = int(math.floor((x.size(2) - self.is_last) / step + 1))
+            return torch.cat([self.net(x[:, :, i * step:i * step + self.is_last]) for i in range(t)], dim=2)
 
 
 class Discriminator(nn.Module):
@@ -202,7 +243,7 @@ class Discriminator(nn.Module):
                 self.class_emb = spectral_norm_wrapper(self.class_emb)
         else:
             self.class_emb = None
-        self.linear = nn.Linear(nf(0), 1)
+        self.linear = nn.Conv1d(nf(0), 1, kernel_size=1)
         if spectral_norm:
             self.linear = spectral_norm_wrapper(self.linear)
         self.depth = 0
@@ -246,8 +287,7 @@ class Discriminator(nn.Module):
                 return h
             if (self.self_attention_layer is not None) and i == (self.self_attention_layer + 2):
                 h = self.self_attention(h)
-        h = h.squeeze(-1)
-        o = self.linear(h)
+        o = self.linear(h).mean(dim=2)
         if y:
-            o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True)
+            o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True).mean(dim=2)
         return o, h

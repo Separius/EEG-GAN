@@ -136,15 +136,20 @@ def main(params):
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
+    D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
+                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'])
     if params['verbose']:
         # NOTE a much better verbose mode can be implemented by running backward once
         from torchsummary import summary
         G.set_gamma(1)
         G.depth = G.max_depth
-        summary(G, (G.latent_size,))
+        summary(G, (latent_size,))
         D.set_gamma(1)
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
+        D.training()
+        G.training()
+        D_loss_fun(D, G, G(cudize(torch.randn(1, latent_size))), cudize(torch.randn(1, latent_size))).backward()
         exit()
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
@@ -187,8 +192,6 @@ def main(params):
     lr_scheduler_d = LambdaLR(opt_d, rampup)
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
-    D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'])
     trainer = Trainer(D, G, D_loss_fun, G_loss, opt_d, opt_g, dataset, rl(mb_def), **params['Trainer'])
     max_depth = min(G.max_depth, D.max_depth)
     trainer.register_plugin(

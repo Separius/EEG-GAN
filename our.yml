@@ -5,22 +5,22 @@ G_lr_max: 0.001
 D_lr_max: 0.001
 grad_lambda: 10.0
 iwass_epsilon: 0.001
-loss_type: 'wgan_theirs'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+loss_type: 'wgan_gp'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 validation_split: 0
 LAMBDA_2: 2
 optimizer: 'adam'  # adam, amsgrad, ttur
 verbose: false
 
-fmap_base: 1024
-fmap_max: 128
+fmap_base: 2048
+fmap_max: 256
 fmap_min: 64
 equalized: true
-kernel_size: 9
+kernel_size: 3
 self_attention_layer: null  # starts from 0 or null
 monitor_threshold: 10
 monitor_warmup: 40
 monitor_patience: 5
-Trainer.D_training_repeats: 5
+Trainer.D_training_repeats: 1
 Trainer.tick_kimg_default: 5
 Generator.latent_size: 256
 Generator.normalize_latents: true
@@ -45,17 +45,17 @@ DepthManager.attention_transition_kimg: 400
 DepthManager.minibatch_default: 64
 DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4} # starts from 1
 DepthManager.tick_kimg_overrides: {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1} # starts from 1
-DepthManager.lod_training_kimg: 200
-DepthManager.lod_training_kimg_overrides: {} # starts from 1
-DepthManager.lod_transition_kimg: 200
-DepthManager.lod_transition_kimg_overrides: {}) # starts from 1
+DepthManager.lod_training_kimg: 400
+DepthManager.lod_training_kimg_overrides: {1: 250, 2: 250, 3: 300, 4: 350} # starts from 1
+DepthManager.lod_transition_kimg: 100
+DepthManager.lod_transition_kimg_overrides: {1: 50, 2: 60, 3: 80, 4: 90}) # starts from 1
 
 SaverPlugin.network_snapshot_ticks: 50
 OutputGenerator.samples_count: 8
 OutputGenerator.output_snapshot_ticks: 25
 ClassifierValidator.output_snapshot_ticks: 25
 EEGDataset.num_files: 860
-EEGDataset.seq_len: 512
+EEGDataset.seq_len: 256
 EEGDataset.stride: 0.25
 EEGDataset.use_abs: false
-EEGDataset.model_dataset_depth_offset: 4
+EEGDataset.model_dataset_depth_offset: 2

@@ -5,6 +5,8 @@ results/
 *.yml
 !defaults.yml
 !test.yml
+!our.yml
+!their.yml
 data/
 configs/
 *.pkl
