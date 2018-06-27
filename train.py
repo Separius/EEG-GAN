@@ -53,7 +53,8 @@ default_params = OrderedDict(
     gen_gif=False,
     monitor_threshold=10,
     monitor_warmup=40,
-    monitor_patience=5
+    monitor_patience=5,
+    gen_fixed=False
 )
 
 
@@ -118,19 +119,19 @@ def main(params):
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
-        if params['Generator']['spectral_norm'] and params['Generator']['normalization'] == 'weight_norm':
-            params['Generator']['normalization'] = 'batch_norm'
         G = Generator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
                       dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                       kernel_size=params['kernel_size'], equalized=params['equalized'],
+                      depth_offset=params['DepthManager']['depth_offset'],
                       self_attention_layer=params['self_attention_layer'], **params['Generator'])
-        if params['Discriminator']['spectral_norm']:
-            params['Discriminator']['normalization'] = None
+        if params['Discriminator']['param_norm'] == 'spectral':
+            params['Discriminator']['act_norm'] = None
         D = Discriminator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
                           dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                           fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
                           kernel_size=params['kernel_size'], equalized=params['equalized'],
+                          depth_offset=params['DepthManager']['depth_offset'],
                           self_attention_layer=params['self_attention_layer'], **params['Discriminator'])
     latent_size = G.latent_size
     assert G.max_depth == D.max_depth
@@ -214,10 +215,11 @@ def main(params):
         OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
                         dataset_params['max_freq'], dataset_params['seq_len'],
                         **params['OutputGenerator']))
-    trainer.register_plugin(
-        FixedNoise(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
-                   dataset_params['max_freq'], dataset_params['seq_len'],
-                   **params['OutputGenerator']))
+    if params['gen_fixed']:
+        trainer.register_plugin(
+            FixedNoise(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
+                       dataset_params['max_freq'], dataset_params['seq_len'],
+                       **params['OutputGenerator']))
     if params['gen_gif']:
         trainer.register_plugin(
             GifGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],

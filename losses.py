@@ -23,6 +23,7 @@ def calc_grad(x_hat, pred_hat):
                 only_inputs=True)[0]
 
 
+# TODO
 def G_loss(G, D, fake_latents_in):
     G.zero_grad()
     z = Variable(fake_latents_in)
@@ -31,6 +32,7 @@ def G_loss(G, D, fake_latents_in):
     return -d_fake.mean()
 
 
+# TODO
 def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad_lambda, LAMBDA_2):
     D.zero_grad()
     G.zero_grad()
@@ -47,7 +49,7 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad
             d_fake_mean = d_fake.mean()
             d_real_mean = d_real.mean()
             d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_epsilon
-            gp_gain = F.relu(d_real_mean-d_fake_mean)
+            gp_gain = F.relu(d_real_mean - d_fake_mean)
         else:
             d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_epsilon
             gp_gain = 1

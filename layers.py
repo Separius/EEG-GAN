@@ -2,68 +2,10 @@ import numpy as np
 import torch
 import math
 from torch import nn
-import torch.nn.functional as F
 from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
 from spectral_norm import spectral_norm as spectral_norm_wrapper
 from torch.nn.utils import weight_norm as weight_norm_wrapper
-
-
-class PhaseShuffle(nn.Module):
-    """
-    Performs phase shuffling, i.e. shifting feature axis of a 3D tensor
-    by a random integer in {-n, n} and performing reflection padding where
-    necessary
-    If batch shuffle is enabled, only a single shuffle is applied to the entire
-    batch, rather than each sample in the batch.
-    """
-
-    def __init__(self, shift_factor, batch_shuffle=False):
-        super(PhaseShuffle, self).__init__()
-        self.shift_factor = shift_factor
-        self.batch_shuffle = batch_shuffle
-
-    def forward(self, x):
-        if self.shift_factor == 0:
-            return x
-
-        if self.batch_shuffle:
-            k = int(torch.Tensor(1).random_(0, 2 * self.shift_factor + 1)) - self.shift_factor
-            if k == 0:
-                return x
-            if k > 0:
-                x_trunc = x[:, :, :-k]
-                pad = (k, 0)
-            else:
-                x_trunc = x[:, :, -k:]
-                pad = (0, -k)
-            x_shuffle = F.pad(x_trunc, pad, mode='reflect')
-        else:
-            k_list = torch.Tensor(x.shape[0]).random_(0, 2 * self.shift_factor + 1) - self.shift_factor
-            k_list = k_list.numpy().astype(int)
-            k_map = {}
-            for idx, k in enumerate(k_list):
-                k = int(k)
-                if k not in k_map:
-                    k_map[k] = []
-                k_map[k].append(idx)
-            x_shuffle = x.clone()
-            for k, idxs in k_map.items():
-                if k > 0:
-                    x_shuffle[idxs] = F.pad(x[idxs][..., :-k], (k, 0), mode='reflect')
-                else:
-                    x_shuffle[idxs] = F.pad(x[idxs][..., -k:], (0, -k), mode='reflect')
-        assert x_shuffle.shape == x.shape, "{}, {}".format(x_shuffle.shape, x.shape)
-        return x_shuffle
-
-
-class DownSample(nn.Module):
-    def __init__(self, scale_factor=2):
-        super(DownSample, self).__init__()
-        self.scale_factor = scale_factor
-
-    def forward(self, input):
-        return input[:, :, ::self.scale_factor]
 
 
 class PixelNorm(nn.Module):
@@ -123,20 +65,6 @@ class GDropLayer(nn.Module):
         return self.__class__.__name__ + param_str
 
 
-class ChannelByChannelOut(nn.Module):
-    def __init__(self, ch_in, ch_out, **layer_settings):
-        super(ChannelByChannelOut, self).__init__()
-        self.num_out = ch_out
-        self.out = nn.ModuleList(
-            [nn.Sequential(GeneralConv(ch_in + i, 1, **layer_settings), ScaledTanh()) for i in range(ch_out)])
-
-    def forward(self, x):
-        r = x
-        for o in self.out:
-            r = torch.cat([r, o(r)], dim=1)
-        return r[:, -self.num_out:, :]
-
-
 class SelfAttention(nn.Module):
     def __init__(self, channels_in):
         super(SelfAttention, self).__init__()
@@ -158,29 +86,6 @@ class SelfAttention(nn.Module):
         a = self.softmax((e1 * e2).sum(dim=1) / self.scale)  # a is (N, T(normalized), T)
         a = torch.bmm(v, a)
         return v + self.gamma * a
-
-
-def get_activation(act, ch_out):
-    if act == 'prelu':
-        return nn.PReLU(num_parameters=ch_out)
-    elif act == 'lrelu':
-        return nn.LeakyReLU(0.2, inplace=True)
-    elif act == 'relu':
-        return nn.ReLU(inplace=True)
-    elif act == 'relu6':
-        return nn.ReLU6(inplace=True)
-    elif act == 'elu':
-        return nn.ELU(inplace=True)
-    raise ValueError()
-
-
-class Concatenate(nn.Module):
-    def __init__(self, module_list):
-        super(Concatenate, self).__init__()
-        self.module_list = module_list
-
-    def forward(self, *args):
-        return torch.cat([m(*args) for m in self.module_list], dim=1)
 
 
 class MinibatchStddev(nn.Module):
@@ -262,12 +167,12 @@ class ConditionalGroupNorm(nn.Module):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, padding=0, is_spectral=False, is_weight_norm=False, equalized=True):
+    def __init__(self, c_in, c_out, k_size, padding=0, param_norm=None, equalized=True):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=False)
-        if is_spectral:
+        if param_norm == 'spectral':
             self.conv = spectral_norm_wrapper(self.conv)
-        if is_weight_norm:
+        elif param_norm == 'weight':
             self.conv = weight_norm_wrapper(self.conv)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).zero_())
@@ -282,47 +187,29 @@ class EqualizedConv1d(nn.Module):
         return x + self.bias.view(1, -1, 1).expand_as(x)
 
 
-class ToRGB(nn.Module):
-    def __init__(self, ch_in, num_channels, normalization=None, ch_by_ch=False, equalized=True):
-        super(ToRGB, self).__init__()
-        self.num_channels = num_channels
-        layer_settings = dict(ksize=1, pixelnorm=False, act=None, equalized=equalized, normalization=normalization)
-        if ch_by_ch:
-            self.toRGB = ChannelByChannelOut(ch_in, num_channels, **layer_settings)
-        else:
-            self.toRGB = nn.Sequential(GeneralConv(ch_in, num_channels, **layer_settings), ScaledTanh())
-
-    def forward(self, x):
-        return self.toRGB(x)
-
-
 class GeneralConv(nn.Module):
-    def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, pixelnorm=True, act='lrelu', do=0,
-                 do_mode='mul', spectral=False, phase_shuffle=0, normalization=None, num_classes=0):
+    def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, act=True, do=0, do_mode='mul', num_classes=0,
+                 act_norm=None, param_norm=None):
         super(GeneralConv, self).__init__()
         pad = (ksize - 1) // 2 if pad is None else pad
-        conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, is_spectral=spectral,
-                               is_weight_norm=normalization == 'weight_norm', equalized=equalized)
+        conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, param_norm=param_norm, equalized=equalized)
         norm = None
-        if normalization:
-            if normalization == 'layer_norm':
-                norm = ConditionalGroupNorm(ch_out, num_classes)
-            elif normalization == 'batch_norm':
-                norm = ConditionalBatchNorm(ch_out, num_classes)
+        if act_norm == 'layer':
+            norm = ConditionalGroupNorm(ch_out, num_classes)
+        elif act_norm == 'batch':
+            norm = ConditionalBatchNorm(ch_out, num_classes)
         self.conv = conv
         self.norm = norm
         self.net = []
         if act:
-            self.net.append(get_activation(act, ch_out))
-        if pixelnorm:
+            self.net.append(nn.ReLU(inplace=True))
+        if act_norm == 'pixel':
             self.net.append(PixelNorm())
         if do != 0:
             self.net.append(GDropLayer(strength=do, mode=do_mode))
-        if phase_shuffle != 0:
-            self.net.append(PhaseShuffle(phase_shuffle))
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, *args, **kwargs):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
         return self.net(self.conv(x))

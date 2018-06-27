@@ -8,8 +8,10 @@ import glob
 
 class EEGDataset(Dataset):
     def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.25, max_freq=80,
-                 num_channels=5, per_user=True, use_abs=True, dataset_freq=80,
+                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80, extra_len=None,
                  model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
+        if extra_len is None:
+            extra_len = seq_len
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -23,6 +25,7 @@ class EEGDataset(Dataset):
         self.max_freq = max_freq
         self.per_user = per_user
         self.dataset_freq = dataset_freq
+        self.extra_len = extra_len
         if isinstance(self.progression_scale, (list, tuple)):
             self.max_dataset_depth = len(self.progression_scale)
             assert self.seq_len == np.prod(self.progression_scale)
@@ -33,10 +36,10 @@ class EEGDataset(Dataset):
         for i in range(num_files):
             with open(self.all_files[i]) as f:
                 all_data_len = len(list(map(float, f.read().split()))) // (dataset_freq // max_freq)
-                sizes.append(max(int(np.ceil((all_data_len - self.seq_len + 1) / self.stride)), 0))
+                sizes.append(max(int(np.ceil((all_data_len - self.extra_len + 1) / self.stride)), 0))
         self.sizes = sizes
         self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
-        num_points = [((self.sizes[i] - 1) * self.stride + self.seq_len) if self.sizes[i] > 0 else 1 for i in
+        num_points = [((self.sizes[i] - 1) * self.stride + self.extra_len) if self.sizes[i] > 0 else 1 for i in
                       range(num_files)]
         self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
         for i in range(num_files):
@@ -78,7 +81,7 @@ class EEGDataset(Dataset):
 
     @property
     def shape(self):
-        return (len(self),) + self.load_file(0).shape
+        return (len(self), self.num_channels, self.seq_len)
 
     def __len__(self):
         return len(self.data_pointers)
@@ -97,7 +100,7 @@ class EEGDataset(Dataset):
 
     def load_file(self, item):
         i, k = self.data_pointers[item]
-        res = self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
+        res = self.datas[i][:, k * self.stride:k * self.stride + self.extra_len]
         return res
 
     def __getitem__(self, item):

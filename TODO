@@ -1,25 +1,18 @@
 TODO:
-    conv discriminator
-    position encoding generator:
-        where?(use dm_offset?) + forward/backward => Z=Zg||Pos||f(Zt+1)||g(Zt-1)
-        easier: (our D is dumb => Z=Zg||Zt||f(Zt-1))
+    dataset: more length + negative samples for D + G must generate fake (without global_z)
     **************************************************
     our_baseline: num_params + lr + batch_size + scheduler
     their_baseline: read the paper again
+    our_baseline2: high batch_size => higher lr + scheduler + num_repeats
+    our_hinge+SN: make a config with working hinge loss :D
     -------------------------------------------------
-    gang of D: how to balance loss over time?
-    morph code: both for static/dynamic and connection_based/not
+    act_norm: pixel, batch, layer, none
+    param_norm: spectral, weight, none
     kernel_size: 3, 5, 7, 9
-    wgan: orig, theirs x ct/not
+    wgan: orig, theirs x ct/not + num_repeats
     num features: 2048, 512, same, ...
     shapes: initial size, seq len, depth_offset
-    -------------------------------------------------
-    hinge and spectral norm: stable config(baseline)
-    stats layer: temporal, num_channels, as cnn layer
+    stats layer: temporal, num_channels
     dropout: mode, strength x G/D
-    norm: pixel, batch, layer, none
-    wnorm: spectral, weight, none
-    validation: kill based on validation
-    exp: self_attention, ch_by_ch
-    connection network with a D like arch
+    exp: self_attention, ch_by_ch, hing+SN, gang, score_net
     condition: dataset, data_reader, evaluation

@@ -79,6 +79,7 @@ class Trainer(object):
             torch.nn.utils.clip_grad_norm_(trainable_params(model), self.grad_clip)
 
     def train(self):
+        # TODO
         fake_latents_in = cudize(self.random_latents_generator())
         for i in range(self.D_training_repeats):
             real_images_expr = cudize(next(self.dataiter))
