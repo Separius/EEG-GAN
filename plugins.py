@@ -288,12 +288,13 @@ class OutputGenerator(Plugin):
 
 class TeeLogger(Logger):
 
-    def __init__(self, log_file, *args, **kwargs):
+    def __init__(self, log_file, exp_name, *args, **kwargs):
         super(TeeLogger, self).__init__(*args, **kwargs)
         self.log_file = open(log_file, 'a', 1)
+        self.exp_name = exp_name
 
     def log(self, msg):
-        print(msg, flush=True)
+        print(self.exp_name, msg, flush=True)
         self.log_file.write(msg + '\n')
 
     def epoch(self, epoch_idx):

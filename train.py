@@ -108,7 +108,7 @@ def main(params):
         print('resuming does not work in verbose mode')
         params['verbose'] = False
     if not params['verbose']:
-        logger = TeeLogger(os.path.join(result_dir, 'log.txt'), stats_to_log, [(1, 'epoch')])
+        logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     if params['resume_network']:
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:

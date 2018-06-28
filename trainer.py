@@ -135,7 +135,7 @@ class Trainer(object):
             fake_latents_in = cudize(self.random_latents_generator(t=self.extra_factor))
         fake_latents_in, mixed_latents = self.prepare_g_data(fake_latents_in, self.extra_factor, self.is_morph,
                                                              self.lambda_3)
-        G_loss = self.G_loss(self.G, self.D, fake_latents_in, (mixed_latents, fake_latents_in[1]))
+        G_loss = self.G_loss(self.G, self.D, fake_latents_in, mixed_latents)
         G_loss.backward()
         self._clip(self.G)
         self.optimizer_g.step()
