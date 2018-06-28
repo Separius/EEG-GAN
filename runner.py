@@ -2,7 +2,7 @@ from joblib import Parallel, delayed
 import queue
 import os
 
-N_GPU = 8
+N_GPU = 2
 
 q = queue.Queue(maxsize=N_GPU)
 for i in range(N_GPU):
@@ -11,7 +11,7 @@ for i in range(N_GPU):
 
 def runner(x):
     gpu = q.get()
-    cmd = "python train.py {} --cuda_device {}".format(x, gpu)
+    cmd = "python3 train.py {} --cuda_device {}".format(x, gpu)
     os.system(cmd)
     q.put(gpu)
 

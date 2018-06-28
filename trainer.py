@@ -121,7 +121,7 @@ class Trainer(object):
         return fake_latents_in, mixed_latents
 
     def train(self):
-        fake_latents_in = cudize(self.random_latents_generator(self.extra_factor))
+        fake_latents_in = cudize(self.random_latents_generator(t=self.extra_factor))
         for i in range(self.D_training_repeats):
             real_images_expr, real_images_mixed, fake_latents_in = self.prepare_d_data(cudize(next(self.dataiter)),
                                                                                        fake_latents_in,
@@ -132,7 +132,7 @@ class Trainer(object):
             D_loss.backward()
             self._clip(self.D)
             self.optimizer_d.step()
-            fake_latents_in = cudize(self.random_latents_generator())
+            fake_latents_in = cudize(self.random_latents_generator(t=self.extra_factor))
         fake_latents_in, mixed_latents = self.prepare_g_data(fake_latents_in, self.extra_factor, self.is_morph,
                                                              self.lambda_3)
         G_loss = self.G_loss(self.G, self.D, fake_latents_in, (mixed_latents, fake_latents_in[1]))
