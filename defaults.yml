@@ -1,23 +1,23 @@
 # python train.py --exp_name xxx --config_file defaults.yml --load_dataset data/512.pkl --cuda_device 0
 
 lr_rampup_kimg: 50
-G_lr_max: 0.001
-D_lr_max: 0.001
+G_lr_max: 0.005
+D_lr_max: 0.005
 grad_lambda: 10.0
 iwass_epsilon: 0.001
-loss_type: 'wgan_theirs'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+loss_type: 'wgan_gp'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 LAMBDA_2: 2
+LAMBDA_3: 1
 optimizer: 'adam'  # adam, amsgrad, ttur
 verbose: false
-
-fmap_base: 1024
-fmap_max: 128
+fmap_base: 2048
+fmap_max: 256
 fmap_min: 64
 equalized: true
-kernel_size: 9
+kernel_size: 3
 self_attention_layer: null  # starts from 0 or null (for G it means putting it after ith layer)
 monitor_threshold: 10
-Trainer.D_training_repeats: 5
+Trainer.D_training_repeats: 1
 Trainer.tick_kimg_default: 5
 
 Generator.latent_size: 256
@@ -39,18 +39,18 @@ Discriminator.calc_std: false
 DepthManager.depth_offset: 0 #starts form 0
 DepthManager.attention_start_depth: null #starts from depth_offset
 DepthManager.attention_transition_kimg: 400
-DepthManager.minibatch_default: 64
-DepthManager.minibatch_overrides: {6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8, 12: 4}  # starts from depth_offset+1
+DepthManager.minibatch_default: 256
+DepthManager.minibatch_overrides: {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}  # starts from depth_offset+1
 DepthManager.tick_kimg_overrides: {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1}  # starts from depth_offset+1
-DepthManager.lod_training_kimg: 200
-DepthManager.lod_training_kimg_overrides: {}  # starts from depth_offset+1
-DepthManager.lod_transition_kimg: 200
-DepthManager.lod_transition_kimg_overrides: {}  # starts from depth_offset+1
+DepthManager.lod_training_kimg: 250
+DepthManager.lod_training_kimg_overrides: {1: 150, 2: 200, 3: 200}  # starts from depth_offset+1
+DepthManager.lod_transition_kimg: 250
+DepthManager.lod_transition_kimg_overrides: {1: 150, 2: 200, 3: 200}  # starts from depth_offset+1
 SaverPlugin.network_snapshot_ticks: 50
 OutputGenerator.output_snapshot_ticks: 25
 
 EEGDataset.num_files: 860
-EEGDataset.seq_len: 512
+EEGDataset.seq_len: 256
 EEGDataset.use_abs: false
 EEGDataset.extra_factor: 1
-EEGDataset.model_dataset_depth_offset: 4 # starts from 0
+EEGDataset.model_dataset_depth_offset: 2 # starts from 0

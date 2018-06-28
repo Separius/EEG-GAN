@@ -2,11 +2,6 @@
 __pycache__/
 results/
 .ropeproject/
-*.yml
-!defaults.yml
-!test.yml
-!our.yml
-!their.yml
 data/
 configs/
 *.pkl
