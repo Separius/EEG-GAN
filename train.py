@@ -6,7 +6,7 @@ from functools import partial
 from trainer import Trainer
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
-from torch.utils.data.sampler import SequentialSampler, SubsetRandomSampler
+from torch.utils.data.sampler import SubsetRandomSampler
 from plugins import OutputGenerator, SaverPlugin, LRScheduler, AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, \
     TeeLogger
 from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir, num_params, \

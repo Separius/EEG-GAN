@@ -9,7 +9,6 @@ loss_type: 'wgan_gp'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
 LAMBDA_2: 2
 LAMBDA_3: 1
 optimizer: 'adam'  # adam, amsgrad, ttur
-verbose: false
 fmap_base: 2048
 fmap_max: 256
 fmap_min: 64

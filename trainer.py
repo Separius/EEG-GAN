@@ -117,7 +117,7 @@ class Trainer(object):
             fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
                                fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
             if lambda_3 != 0 and picked_factor > 1:
-                mixed_latents = (torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1)/3, fake_latents_in[1].size(2)), fake_latents_in[1])
+                mixed_latents = (cudize(torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1)/3, fake_latents_in[1].size(2))), fake_latents_in[1])
         return fake_latents_in, mixed_latents
 
     def train(self):

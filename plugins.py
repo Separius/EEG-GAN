@@ -152,8 +152,11 @@ class EfficientLossMonitor(LossMonitor):
         self.counter = 0
 
     def _get_value(self, iteration, *args):
-        val = args[self.loss_no]
-        return val.item()
+        val = args[self.loss_no].item()
+        if val != val:
+            print('loss value is NaN :((')
+            exit(0)
+        return val
 
     def epoch(self, idx):
         super(EfficientLossMonitor, self).epoch(idx)
