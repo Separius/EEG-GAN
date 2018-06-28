@@ -8,10 +8,8 @@ import glob
 
 class EEGDataset(Dataset):
     def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.25, max_freq=80,
-                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80, extra_len=None,
+                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80, extra_factor=1,
                  model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
-        if extra_len is None:
-            extra_len = seq_len
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -25,7 +23,7 @@ class EEGDataset(Dataset):
         self.max_freq = max_freq
         self.per_user = per_user
         self.dataset_freq = dataset_freq
-        self.extra_len = extra_len
+        self.extra_len = extra_factor * seq_len
         if isinstance(self.progression_scale, (list, tuple)):
             self.max_dataset_depth = len(self.progression_scale)
             assert self.seq_len == np.prod(self.progression_scale)

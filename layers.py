@@ -69,6 +69,7 @@ class SelfAttention(nn.Module):
     def __init__(self, channels_in):
         super(SelfAttention, self).__init__()
         self.gamma = 0
+        self.channels_in = channels_in
         d_key = max(channels_in // 8, 2)
         self.to_key = nn.Conv1d(channels_in, d_key, kernel_size=1)
         self.to_query = nn.Conv1d(channels_in, d_key, kernel_size=1)
@@ -86,6 +87,10 @@ class SelfAttention(nn.Module):
         a = self.softmax((e1 * e2).sum(dim=1) / self.scale)  # a is (N, T(normalized), T)
         a = torch.bmm(v, a)
         return v + self.gamma * a
+
+    def __repr__(self):
+        param_str = '(channels_in = {})'.format(self.channels_in)
+        return self.__class__.__name__ + param_str
 
 
 class MinibatchStddev(nn.Module):
@@ -213,3 +218,8 @@ class GeneralConv(nn.Module):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
         return self.net(self.conv(x))
+
+
+    def __repr__(self):
+        param_str = '(conv = {}, norm = {})'.format(self.conv.conv, self.norm)
+        return self.__class__.__name__ + param_str

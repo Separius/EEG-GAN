@@ -23,35 +23,49 @@ def calc_grad(x_hat, pred_hat):
                 only_inputs=True)[0]
 
 
-# TODO
-def G_loss(G, D, fake_latents_in):
+def G_loss(G, D, fake_latents_in, fake_latents_mixed, LAMBDA_3):
     G.zero_grad()
-    z = Variable(fake_latents_in)
-    g_ = G(z)
+    if not isinstance(fake_latents_in, (tuple, list)):
+        fake_latents_in = (fake_latents_in,)
+    z = (Variable(z) for z in fake_latents_in)
+    g_ = G(*z)
     d_fake, _ = D(g_)
-    return -d_fake.mean()
+    if fake_latents_mixed is None:
+        return -d_fake.mean()
+    z = (Variable(z) for z in fake_latents_mixed)
+    g_ = G(*z)
+    d_fake_mixed, _ = D(g_)
+    return -d_fake.mean() + LAMBDA_3 * d_fake_mixed.mean()
 
 
-# TODO
-def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad_lambda, LAMBDA_2):
+def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, iwass_epsilon, grad_lambda, LAMBDA_2,
+           LAMBDA_3):
     D.zero_grad()
     G.zero_grad()
     x_real = Variable(real_images_in)
     d_real, d_last_real = D(x_real)
+    if concatenated_real is not None:
+        d_con, _ = D(concatenated_real)
+    else:
+        d_con = cudize(torch.ones(1)) if loss_type == 'hinge' else cudize(torch.zeros(1))
     with torch.no_grad():
-        z = Variable(fake_latents_in)
-    g_ = Variable(G(z).data)
+        if not isinstance(fake_latents_in, (tuple, list)):
+            fake_latents_in = (fake_latents_in,)
+        z = (Variable(z) for z in fake_latents_in)
+    g_ = Variable(G(*z).data)
     d_fake, _ = D(g_)
     if loss_type == 'hinge':
-        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
+        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean() + F.relu(1.0 + d_con).mean() * LAMBDA_3
     else:
         if loss_type == 'wgan_theirs' or loss_type == 'wgan_theirs_ct':
             d_fake_mean = d_fake.mean()
             d_real_mean = d_real.mean()
-            d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_epsilon
+            d_con_mean = d_con.mean() * LAMBDA_3
+            d_loss = d_fake_mean - d_real_mean + d_con_mean + (
+                    d_fake_mean + d_real_mean + d_con_mean) ** 2 * iwass_epsilon
             gp_gain = F.relu(d_real_mean - d_fake_mean)
         else:
-            d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_epsilon
+            d_loss = d_fake.mean() - d_real.mean() + d_con.mean() * LAMBDA_3 + (d_real ** 2).mean() * iwass_epsilon
             gp_gain = 1
         if gp_gain != 0:
             alpha = get_mixing_factor(x_real.size(0))
@@ -65,6 +79,6 @@ def D_loss(D, G, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad
         if (loss_type == 'wgan_ct' or loss_type == 'wgan_theirs_ct') and D.training:
             d_real2, d_last_real2 = D(x_real)
             CT = LAMBDA_2 * (d_real - d_real2) ** 2
-            CT = CT + LAMBDA_2 * 0.1 * torch.mean((d_last_real - d_last_real2) ** 2, dim=1)
+            CT = CT + LAMBDA_2 * 0.1 * torch.mean((d_last_real - d_last_real2) ** 2, dim=1).mean(dim=1)
             d_loss = d_loss + torch.mean(torch.clamp(CT, min=0))
     return d_loss

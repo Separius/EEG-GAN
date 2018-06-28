@@ -13,7 +13,7 @@ from functools import partial
 
 
 def generate_samples(generator, gen_input):
-    out = generator.forward(gen_input)
+    out = generator.forward(*gen_input)
     out = out.cpu().data.numpy()
     return out
 
@@ -28,8 +28,10 @@ def load_pkl(fname):
         return load(f)
 
 
-def random_latents(num_latents, latent_size):
-    return torch.randn(num_latents, latent_size)
+def random_latents(num_latents, latent_size, t=1):
+    if t == 1:
+        return torch.randn(num_latents, latent_size)
+    return torch.randn(num_latents, latent_size // 4), torch.randn(num_latents, 3 * latent_size // 4, t)
 
 
 def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}-{exp_name}'):
@@ -90,6 +92,8 @@ def get_structured_params(params):
 
 
 def cudize(thing):
+    if isinstance(thing, (list, tuple)):
+        return (cudize(item) for item in thing)
     return thing.cuda() if torch.cuda.is_available() else thing
 
 

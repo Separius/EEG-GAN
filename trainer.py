@@ -1,12 +1,13 @@
 import heapq
 from utils import cudize, trainable_params
 import torch
+import numpy as np
 
 
 class Trainer(object):
 
-    def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, random_latents_generator,
-                 grad_clip=None, D_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
+    def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, random_latents_generator, extra_factor,
+                 lambda_3, is_morph, grad_clip=None, D_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
         self.D = D
         self.G = G
         self.D_loss = D_loss
@@ -33,6 +34,9 @@ class Trainer(object):
             's': [],
             'end': []
         }
+        self.extra_factor = extra_factor
+        self.lambda_3 = lambda_3
+        self.is_morph = is_morph
 
     def register_plugin(self, plugin):
         plugin.register(self)
@@ -78,18 +82,60 @@ class Trainer(object):
         if self.grad_clip:
             torch.nn.utils.clip_grad_norm_(trainable_params(model), self.grad_clip)
 
+    @staticmethod
+    def prepare_d_data(real_images_expr, fake_latents_in, extra_factor, is_morph, lambda_3):
+        real_images_mixed = None
+        if extra_factor != 1:
+            picked_factor = np.random.choice(extra_factor) + 1
+            new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 1)
+            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size + 1)
+            z_picked_factor = picked_factor * 2 - 1 if is_morph else picked_factor
+            fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
+                               fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
+            picked_len = picked_factor * real_images_expr.shape[2] // extra_factor
+            picked_start = np.random.choice(real_images_expr.shape[2] - picked_len + 1)
+            real_images_expr = real_images_expr[:, :, picked_start:picked_start + picked_len]
+            if lambda_3 != 0:
+                T = real_images_expr.size(2)
+                real_images_mixed_1 = torch.cat(
+                    (real_images_expr[::2, :, T // 2:], real_images_expr[1::2, :, :T // 2]), dim=2)
+                real_images_mixed_2 = torch.cat(
+                    (real_images_expr[1::2, :, T // 2:], real_images_expr[::2, :, :T // 2]), dim=2)
+                real_images_mixed = torch.cat((real_images_mixed_1, real_images_mixed_2), dim=0)
+                real_images_mixed = real_images_mixed[:new_batch_size, :, :]
+            real_images_expr = real_images_expr[:new_batch_size, :, :]
+        return real_images_expr, real_images_mixed, fake_latents_in
+
+    @staticmethod
+    def prepare_g_data(fake_latents_in, extra_factor, is_morph, lambda_3):
+        mixed_latents = None
+        if extra_factor != 1:
+            picked_factor = np.random.choice(extra_factor) + 1
+            new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 1)
+            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size + 1)
+            z_picked_factor = picked_factor * 2 - 1 if is_morph else picked_factor
+            fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
+                               fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
+            if lambda_3 != 0 and picked_factor > 1:
+                mixed_latents = (torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1)/3, fake_latents_in[1].size(2)), fake_latents_in[1])
+        return fake_latents_in, mixed_latents
+
     def train(self):
-        # TODO
-        fake_latents_in = cudize(self.random_latents_generator())
+        fake_latents_in = cudize(self.random_latents_generator(self.extra_factor))
         for i in range(self.D_training_repeats):
-            real_images_expr = cudize(next(self.dataiter))
+            real_images_expr, real_images_mixed, fake_latents_in = self.prepare_d_data(cudize(next(self.dataiter)),
+                                                                                       fake_latents_in,
+                                                                                       self.extra_factor, self.is_morph,
+                                                                                       self.lambda_3)
             self.cur_nimg += real_images_expr.size(0)
-            D_loss = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in)
+            D_loss = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in, real_images_mixed)
             D_loss.backward()
             self._clip(self.D)
             self.optimizer_d.step()
             fake_latents_in = cudize(self.random_latents_generator())
-        G_loss = self.G_loss(self.G, self.D, fake_latents_in)
+        fake_latents_in, mixed_latents = self.prepare_g_data(fake_latents_in, self.extra_factor, self.is_morph,
+                                                             self.lambda_3)
+        G_loss = self.G_loss(self.G, self.D, fake_latents_in, (mixed_latents, fake_latents_in[1]))
         G_loss.backward()
         self._clip(self.G)
         self.optimizer_g.step()

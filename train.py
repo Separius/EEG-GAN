@@ -7,8 +7,8 @@ from trainer import Trainer
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SequentialSampler, SubsetRandomSampler
-from plugins import FixedNoise, OutputGenerator, ClassifierValidator, GifGenerator, SaverPlugin, LRScheduler, \
-    AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, TeeLogger, AggregationGraphValidator
+from plugins import OutputGenerator, SaverPlugin, LRScheduler, AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, \
+    TeeLogger
 from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir, num_params, \
     create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model
 import numpy as np
@@ -37,7 +37,6 @@ default_params = OrderedDict(
     load_dataset='',
     loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
     cuda_device=0,
-    validation_split=0,
     LAMBDA_2=2,
     optimizer='adam',  # adam, amsgrad, ttur
     config_file=None,
@@ -47,14 +46,13 @@ default_params = OrderedDict(
     fmap_min=64,
     equalized=True,
     kernel_size=3,
-    self_attention_layer=None,  # starts from 0
+    self_attention_layer=None,  # starts from 0 or null (for G it means putting it after ith layer)
     progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
-    gen_gif=False,
     monitor_threshold=10,
-    monitor_warmup=40,
+    monitor_warmup=50,
     monitor_patience=5,
-    gen_fixed=False
+    LAMBDA_3=1
 )
 
 
@@ -105,11 +103,6 @@ def main(params):
         stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     num_channels = dataset.shape[1]
-    if params['validation_split'] > 0:
-        val_stats = ['d_loss', 'mul_acc']
-        if num_channels != 1:
-            val_stats.append('ch_acc')
-        stats_to_log.extend(['validation.' + x for x in val_stats])
 
     if params['verbose'] and params['resume_network']:
         print('resuming does not work in verbose mode')
@@ -122,8 +115,8 @@ def main(params):
         G = Generator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
                       dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
                       fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
-                      kernel_size=params['kernel_size'], equalized=params['equalized'],
-                      depth_offset=params['DepthManager']['depth_offset'],
+                      kernel_size=params['kernel_size'], is_extended=dataset_params['extra_factor'] != 1,
+                      depth_offset=params['DepthManager']['depth_offset'], equalized=params['equalized'],
                       self_attention_layer=params['self_attention_layer'], **params['Generator'])
         if params['Discriminator']['param_norm'] == 'spectral':
             params['Discriminator']['act_norm'] = None
@@ -138,19 +131,60 @@ def main(params):
     G = cudize(G)
     D = cudize(D)
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'])
+                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'], LAMBDA_3=params['LAMBDA_3'])
+    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'])
+    max_depth = min(G.max_depth, D.max_depth)
     if params['verbose']:
-        # NOTE a much better verbose mode can be implemented by running backward once
         from torchsummary import summary
+        from matplotlib import pyplot as plt
+        from PIL import Image
+        G.is_extended = False
         G.set_gamma(1)
         G.depth = G.max_depth
         summary(G, (latent_size,))
         D.set_gamma(1)
         D.depth = D.max_depth
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
-        D.training()
-        G.training()
-        D_loss_fun(D, G, G(cudize(torch.randn(1, latent_size))), cudize(torch.randn(1, latent_size))).backward()
+        D.train()
+        G.train()
+        dm = DepthManager(None, None, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager'])
+        print('start_gamma:', dm.start_gamma, '\tend_gamma:', dm.end_gamma, '\tmax_depth:', dm.max_depth,
+              '\tdepth_offset:', dm.depth_offset, '\tseq_len:', dataset_params['seq_len'], '\tdataset_offset:',
+              dataset_params['model_dataset_depth_offset'])
+        print('alpha_map:', dm.alpha_map)
+        print(D)
+        print(G)
+        points = [dm.calc_progress(i)[0] + dm.calc_progress(i)[1] - 1 for i in
+                  range(0, params['total_kimg'] * 1000, 1000)]
+        plt.plot(points)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        image = Image.fromarray(image, 'RGB')
+        image.show()
+        z = cudize(torch.randn(2, latent_size))
+        l = D_loss_fun(D, G, G(z), z, None)
+        l.backward()
+        print('non long loss:', l.item())
+        G.is_extended = True
+        z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
+        l = D_loss_fun(D, G, G(*z), z, None)
+        l.backward()
+        print('long loss:', l.item())
+        G.is_extended = False
+        print('d_final_basic: ', D(G(cudize(torch.randn(2, latent_size))))[1].shape)
+        G.is_extended = True
+        print('d_final_long: ', D(G(*z))[1].shape)
+        l = G_loss_fun(G, D, z, None)
+        print('generator loss:', l.item())
+        l.backward()
+        real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1)
+        l = D_loss_fun(D, G, real_images_expr, z_d, real_images_mixed)
+        l.backward()
+        z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1)
+        l = G_loss_fun(G, D, z_g, z_mixed)
+        l.backward()
         exit()
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
@@ -163,19 +197,15 @@ def main(params):
 
     mb_def = params['DepthManager']['minibatch_default']
     dataset_len = len(dataset)
-    indices = list(range(dataset_len))
-    np.random.shuffle(indices)
-    split = int(np.floor(params['validation_split'] * dataset_len))
-    train_idx, valid_idx = indices[split:], indices[:split]
-    valid_data_loader = DataLoader(dataset, batch_size=mb_def, sampler=SequentialSampler(valid_idx), drop_last=False,
-                                   num_workers=params['num_data_workers'])
+    train_idx = list(range(dataset_len))
+    np.random.shuffle(train_idx)
 
     def get_dataloader(minibatch_size):
         return DataLoader(dataset, minibatch_size, sampler=InfiniteRandomSampler(train_idx), worker_init_fn=worker_init,
                           num_workers=params['num_data_workers'], pin_memory=False, drop_last=True)
 
     def rl(bs):
-        return lambda: random_latents(bs, latent_size)
+        return partial(random_latents, num_latents=bs, latent_size=latent_size)
 
     if params['optimizer'] == 'ttur':
         params['D_lr_max'] = params['G_lr_max'] * 4.0
@@ -193,8 +223,8 @@ def main(params):
     lr_scheduler_d = LambdaLR(opt_d, rampup)
     lr_scheduler_g = LambdaLR(opt_g, rampup)
 
-    trainer = Trainer(D, G, D_loss_fun, G_loss, opt_d, opt_g, dataset, rl(mb_def), **params['Trainer'])
-    max_depth = min(G.max_depth, D.max_depth)
+    trainer = Trainer(D, G, D_loss_fun, G_loss_fun, opt_d, opt_g, dataset, rl(mb_def), dataset_params['extra_factor'],
+                      params['LAMBDA_3'], params['Generator']['is_morph'], **params['Trainer'])
     trainer.register_plugin(
         DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager']))
     for i, loss_name in enumerate(losses):
@@ -203,28 +233,10 @@ def main(params):
                                  params['monitor_patience']))
 
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
-    if params['validation_split'] > 0:
-        trainer.register_plugin(
-            ClassifierValidator(lambda x: random_latents(x, latent_size), valid_data_loader,
-                                **params['ClassifierValidator']))
-        trainer.register_plugin(AggregationGraphValidator(lambda x: random_latents(x, latent_size), valid_data_loader,
-                                                          params['ClassifierValidator']['output_snapshot_ticks'],
-                                                          result_dir, dataset_params['seq_len'],
-                                                          dataset_params['seq_len'], dataset_params['max_freq']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
-                        dataset_params['max_freq'], dataset_params['seq_len'],
+        OutputGenerator(lambda x: random_latents(x, latent_size, dataset_params['extra_factor']), result_dir,
+                        dataset_params['seq_len'], dataset_params['max_freq'], dataset_params['seq_len'],
                         **params['OutputGenerator']))
-    if params['gen_fixed']:
-        trainer.register_plugin(
-            FixedNoise(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
-                       dataset_params['max_freq'], dataset_params['seq_len'],
-                       **params['OutputGenerator']))
-    if params['gen_gif']:
-        trainer.register_plugin(
-            GifGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset_params['seq_len'],
-                         dataset_params['max_freq'], params['OutputGenerator']['output_snapshot_ticks'],
-                         dataset_params['seq_len'], **params['GifGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
     trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
     trainer.register_plugin(logger)
@@ -235,8 +247,7 @@ def main(params):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam,
-                       GifGenerator, ClassifierValidator, EEGDataset]
+    needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam, EEGDataset]
     excludes = {'Adam': {'lr', 'amsgrad', 'weight_decay'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(needarg_classes, excludes, default_overrides)

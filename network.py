@@ -32,8 +32,8 @@ class Generator(nn.Module):
     kernel_right = None
 
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
-                 equalized, self_attention_layer, num_classes, depth_offset, latent_size=256, normalize_latents=True,
-                 dropout=0.1, do_mode='mul', param_norm=None, act_norm='pixel', is_morph=False):
+                 equalized, self_attention_layer, num_classes, depth_offset, is_extended, latent_size=256,
+                 normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None, act_norm='pixel', is_morph=False):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -80,6 +80,7 @@ class Generator(nn.Module):
             self.context_maker = nn.Conv1d(temporal_latent_size, temporal_latent_size, kernel_size=3, padding=1)
         else:
             self.context_maker = None
+        self.is_extended = is_extended
 
     def set_gamma(self, new_gamma):
         if self.self_attention is not None:
@@ -109,7 +110,7 @@ class Generator(nn.Module):
     @staticmethod
     def morph(h, seq_len, num_z):
         N, C, _ = h.size()
-        half = seq_len // 2
+        half = max(seq_len // 2, 1)
         res = torch.autograd.Variable(cudize(torch.zeros(N, C, (num_z + 1) * half)))
         if Generator.kernel_middle is None or Generator.kernel_middle.size(0) != N:
             Generator.generate_kernels(N, C, half)
@@ -124,7 +125,7 @@ class Generator(nn.Module):
             res[:, :, half * i:half * (i + 2)] = k * x
         return res
 
-    def forward(self, z_global, z_temporal=None, y=None):  # glob=(N,z_dim) or glob=(N,z/4), temporal=(N,3z/4,T)
+    def forward(self, z_global, z_temporal=None, y=None):  # glob=(N,z_dim) or glob=(N,z/4,[T]), temporal=(N,3z/4,T)
         if self.depth < self.depth_offset:
             raise ValueError()
         if self.normalize_latents:
@@ -133,7 +134,11 @@ class Generator(nn.Module):
             z_global = z_global.unsqueeze(2)
         if z_temporal is None:
             h = z_global
+            if self.is_extended:
+                raise ValueError()
         else:
+            if not self.is_extended:
+                raise ValueError()
             if self.normalize_latents:
                 z_temporal = pixel_norm(z_temporal)
             if self.context_maker is not None:
@@ -188,7 +193,6 @@ class DBlock(nn.Module):
         return self.net(x)
 
 
-# TODO am i running the self attention in the right place (in respect to sa.start, sa.layer)
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
                  kernel_size, self_attention_layer, num_classes, depth_offset, dropout=0.1, do_mode='mul',
@@ -284,7 +288,7 @@ class Discriminator(nn.Module):
         if is_list:
             ans = res
         else:
-            step = self.final_receptive_field // 4
+            step = max(self.final_receptive_field // 4, 1)
             t = int(math.floor((h.size(2) - self.final_receptive_field) / step + 1))
             ans = [self.blocks[-i](h[:, :, j * step:j * step + self.final_receptive_field]) for j in range(t)]
         res = []

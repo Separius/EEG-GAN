@@ -18,7 +18,10 @@ default_params = {
 def output_samples(generator_path, num_samples):
     G = load_model(generator_path)
     G = cudize(G)
-    gen_input = cudize(Variable(random_latents(num_samples, G.latent_size)))  # TODO this is wrong
+    z = random_latents(num_samples, G.latent_size, 8 if G.is_extended else 1)
+    if not isinstance(z, (tuple, list)):
+        z = (z, )
+    gen_input = (cudize(Variable(x)) for x in z)
     output = generate_samples(G, gen_input)
     return output
 
