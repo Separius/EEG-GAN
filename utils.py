@@ -93,7 +93,7 @@ def get_structured_params(params):
 
 def cudize(thing):
     if isinstance(thing, (list, tuple)):
-        return (cudize(item) for item in thing)
+        return [cudize(item) for item in thing]
     return thing.cuda() if torch.cuda.is_available() else thing
 
 

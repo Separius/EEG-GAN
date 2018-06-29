@@ -1,8 +1,8 @@
 # python train.py --exp_name xxx --config_file defaults.yml --load_dataset data/512.pkl --cuda_device 0
 
 lr_rampup_kimg: 50
-G_lr_max: 0.004
-D_lr_max: 0.004
+G_lr_max: 0.001
+D_lr_max: 0.001
 grad_lambda: 10.0
 iwass_epsilon: 0.001
 loss_type: 'wgan_theirs'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
@@ -17,20 +17,20 @@ equalized: true
 kernel_size: 9
 self_attention_layer: null  # starts from 0 or null (for G it means putting it after ith layer)
 monitor_threshold: 10
-Trainer.D_training_repeats: 5
+Trainer.D_training_repeats: 3
 Trainer.tick_kimg_default: 5
 
-Generator.latent_size: 256
+Generator.latent_size: 128
 Generator.normalize_latents: true
-Generator.dropout: 0.15
+Generator.dropout: 0.2
 Generator.do_mode: 'mul' # mul, drop, prop
-Generator.param_norm: null # weight, spectral, null
+Generator.param_norm: 'spectral' # weight, spectral, null
 Generator.act_norm: 'pixel' # pixel, layer, batch, null
 Generator.is_morph: false
 
 Discriminator.do_mode: 'mul' # mul, drop, prop
-Discriminator.dropout: 0.15
-Discriminator.param_norm: null # weight, spectral, null
+Discriminator.dropout: 0.2
+Discriminator.param_norm: 'spectral' # weight, spectral, null
 Discriminator.temporal_stats: false
 Discriminator.num_stat_channels: 1
 Discriminator.act_norm: null # batch, layer, pixel, null
