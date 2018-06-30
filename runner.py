@@ -1,6 +1,7 @@
 from joblib import Parallel, delayed
 import queue
 import os
+import glob
 
 N_GPU = 2
 
@@ -16,4 +17,6 @@ def runner(x):
     q.put(gpu)
 
 
-Parallel(n_jobs=N_GPU, backend="threading")(delayed(runner)(line.strip()) for line in open('runner.cfg'))
+exps = set(line.strip() for line in open('runner.exclude'))
+exps = set(glob.glob('./confs/*.yml')) - exps
+Parallel(n_jobs=N_GPU, backend="threading")(delayed(runner)(exp) for exp in exps)

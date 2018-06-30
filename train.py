@@ -225,8 +225,8 @@ def main(params):
 
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun, opt_d, opt_g, dataset, rl(mb_def), dataset_params['extra_factor'],
                       params['LAMBDA_3'], params['Generator']['is_morph'], **params['Trainer'])
-    trainer.register_plugin(
-        DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager']))
+    trainer.register_plugin(DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'],
+                                         params['self_attention_layer'] is not None, **params['DepthManager']))
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(
             EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup'],

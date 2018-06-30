@@ -22,8 +22,8 @@ class DepthManager(Plugin):
                  create_rlg,
                  max_depth,
                  tick_kimg_default,
+                 has_attention,
                  depth_offset=0,  # starts form 0
-                 attention_start_depth=None,  # starts from depth_offset
                  attention_transition_kimg=300,
                  minibatch_default=256,
                  # all overrides start from depth_offset+1
@@ -50,7 +50,7 @@ class DepthManager(Plugin):
                                                                                         lod_training_kimg_overrides,
                                                                                         lod_transition_kimg,
                                                                                         lod_transition_kimg_overrides,
-                                                                                        attention_start_depth,
+                                                                                        has_attention,
                                                                                         attention_transition_kimg)
 
     def register(self, trainer):
@@ -63,7 +63,7 @@ class DepthManager(Plugin):
 
     @staticmethod
     def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
-                              lod_transition_kimg, lod_transition_kimg_overrides, attention_start_depth,
+                              lod_transition_kimg, lod_transition_kimg_overrides, has_attention,
                               attention_transition_kimg):
         start_gamma = None
         end_gamma = None
@@ -71,13 +71,13 @@ class DepthManager(Plugin):
         pointer = 0
         for i in range(start_depth, max_depth):
             pointer += int(lod_training_kimg_overrides.get(i + 1, lod_training_kimg) * 1000)
-            if i == attention_start_depth:
-                start_gamma = pointer
-                pointer += int(attention_transition_kimg * 1000)
-                end_gamma = pointer
             points.append(pointer)
             pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
             points.append(pointer)
+            if (i == max_depth - 1) and has_attention:
+                start_gamma = pointer
+                pointer += int(attention_transition_kimg * 1000)
+                end_gamma = pointer
         return points, (start_gamma, end_gamma)
 
     def calc_progress(self, cur_nimg=None):

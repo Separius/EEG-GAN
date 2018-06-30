@@ -46,8 +46,8 @@ fmap_base: 1024
 fmap_max: 128
 fmap_min: 64
 Generator.latent_size: 128
-EEGDataset.seq_len: 512
-load_dataset: 'data/512_o4.pkl'
+EEGDataset.seq_len: 2048
+load_dataset: 'data/2048_o4.pkl'
 
 Discriminator.param_norm: null # weight, spectral, null
 Generator.param_norm: null # weight, spectral, null

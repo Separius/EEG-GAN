@@ -42,12 +42,12 @@ DepthManager.minibatch_overrides: {4: 128, 5: 128, 6: 64, 7: 32, 8: 16, 9: 8}  #
 DepthManager.tick_kimg_overrides: {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2}  # starts from depth_offset+1
 
 
-fmap_base: 1024
+fmap_base: 2048
 fmap_max: 128
 fmap_min: 64
 Generator.latent_size: 128
-EEGDataset.seq_len: 512
-load_dataset: 'data/512_o4.pkl'
+EEGDataset.seq_len: 2048
+load_dataset: 'data/2048_o4.pkl'
 
 Discriminator.param_norm: null # weight, spectral, null
 Generator.param_norm: null # weight, spectral, null
