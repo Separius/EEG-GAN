@@ -6,24 +6,31 @@ from plugins import OutputGenerator
 from scipy import misc
 import os
 from tqdm import trange
+import math
+import numpy as np
 
 default_params = {
     'generator_path': '',
-    'num_samples': 128,
-    'num_pics': 8,
-    'frequency': 80
+    'num_samples': 1024,
+    'num_pics': 0,
+    'frequency': 80,
+    'max_batch_size': 128
 }
 
 
 def output_samples(generator_path, num_samples):
     G = load_model(generator_path)
     G = cudize(G)
-    z = random_latents(num_samples, G.latent_size, 8 if G.is_extended else 1)
-    if not isinstance(z, (tuple, list)):
-        z = (z, )
-    gen_input = (cudize(Variable(x)) for x in z)
-    output = generate_samples(G, gen_input)
-    return output
+    if num_samples < params['max_batch_size']:
+        params['max_batch_size'] = num_samples
+    outputs = []
+    for i in trange(int(math.ceil(num_samples / params['max_batch_size']))):
+        z = random_latents(params['max_batch_size'], G.latent_size, 8 if G.is_extended else 1)
+        if not isinstance(z, (tuple, list)):
+            z = (z, )
+        gen_input = (cudize(Variable(x)) for x in z)
+        outputs.append(generate_samples(G, gen_input))
+    return np.concatenate(outputs, axis=0)
 
 
 def save_pics(xx, generator):
@@ -36,7 +43,7 @@ def save_pics(xx, generator):
 if __name__ == '__main__':
     params = simple_argparser(default_params)
     if os.path.isdir(params['generator_path']):
-        params['generator_path'] = os.path.join(params['generator_path'], 'network-snapshot-generator-*.dat')
+        params['generator_path'] = os.path.join(params['generator_path'], '*-network-snapshot-generator-*.dat')
         all_generators = glob.glob(params['generator_path'])
         for i in trange(len(all_generators)):
             generator = all_generators[i]
