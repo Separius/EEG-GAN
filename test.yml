@@ -38,7 +38,6 @@ Discriminator.act_norm: null # batch, layer, pixel, null
 Discriminator.calc_std: false
 
 DepthManager.depth_offset: 0 #starts form 0
-DepthManager.attention_start_depth: 5 #starts from depth_offset
 DepthManager.attention_transition_kimg: 400
 DepthManager.minibatch_default: 256
 DepthManager.minibatch_overrides: {4: 128, 5: 128, 6: 64, 7: 32, 8: 16, 9: 8}  # starts from depth_offset+1

@@ -1,13 +1,13 @@
-from torch.autograd import Variable
-from utils import cudize, random_latents, generate_samples, simple_argparser, load_model
-import pickle
-import glob
-from plugins import OutputGenerator
-from scipy import misc
 import os
-from tqdm import trange
+import glob
 import math
+import pickle
 import numpy as np
+from scipy import misc
+from tqdm import trange, tqdm
+from torch.autograd import Variable
+from plugins import OutputGenerator
+from utils import cudize, random_latents, generate_samples, simple_argparser, load_model
 
 default_params = {
     'generator_path': '',
@@ -45,8 +45,7 @@ if __name__ == '__main__':
     if os.path.isdir(params['generator_path']):
         params['generator_path'] = os.path.join(params['generator_path'], '*-network-snapshot-generator-*.dat')
         all_generators = glob.glob(params['generator_path'])
-        for i in trange(len(all_generators)):
-            generator = all_generators[i]
+        for generator in tqdm(all_generators):
             xx = output_samples(generator, params['num_samples'])
             pickle.dump(xx, open(generator.replace('.dat', '.pkl'), 'wb'))
             save_pics(xx, generator)

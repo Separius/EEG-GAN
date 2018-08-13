@@ -1,20 +1,22 @@
-from torch.utils.data import Dataset
-import numpy as np
-import torch
-import math
 import os
+import math
 import glob
+import torch
+import numpy as np
+from torch.utils.data import Dataset
 
 
 class EEGDataset(Dataset):
-    def __init__(self, progression_scale, dir_path='./data/eeg', num_files=860, seq_len=256, stride=0.25, max_freq=80,
-                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80, extra_factor=1,
+    def __init__(self, progression_scale, dir_path='./data/eeg', num_files=None, seq_len=256, stride=0.25, max_freq=80,
+                 num_channels=5, per_user=True, use_abs=False, dataset_freq=80, extra_factor=1,  # for extension
                  model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
         self.dir_path = dir_path
-        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))[:num_files]
+        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        if num_files is not None:
+            self.all_files = self.all_files[:num_files]
         self.seq_len = seq_len
         self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
@@ -24,11 +26,7 @@ class EEGDataset(Dataset):
         self.per_user = per_user
         self.dataset_freq = dataset_freq
         self.extra_len = extra_factor * seq_len
-        if isinstance(self.progression_scale, (list, tuple)):
-            self.max_dataset_depth = len(self.progression_scale)
-            assert self.seq_len == np.prod(self.progression_scale)
-        else:
-            self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
+        self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
         sizes = []
         for i in range(num_files):
@@ -79,7 +77,7 @@ class EEGDataset(Dataset):
 
     @property
     def shape(self):
-        return (len(self), self.num_channels, self.seq_len)
+        return len(self), self.num_channels, self.seq_len
 
     def __len__(self):
         return len(self.data_pointers)
@@ -92,8 +90,6 @@ class EEGDataset(Dataset):
     def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
         datapoint = datapoint.astype(np.float32)
         depthdiff = (datapoint_depth - target_depth)
-        if isinstance(self.progression_scale, (list, tuple)):
-            return datapoint[:, ::(np.prod(self.progression_scale[-depthdiff:]))]
         return datapoint[:, ::(self.progression_scale ** depthdiff)]
 
     def load_file(self, item):

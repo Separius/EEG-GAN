@@ -1,16 +1,15 @@
-import numpy as np
 import math
 import torch
+import numpy as np
 from torch import nn
 import torch.nn.functional as F
-from spectral_norm import spectral_norm as spectral_norm_wrapper
-from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh
 from utils import pixel_norm, cudize
+from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, spectral_norm
 
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_kernel_size=None,
-                 **layer_settings):
+                 is_residual=False, **layer_settings):
         super(GBlock, self).__init__()
         is_first = initial_kernel_size is not None
         c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, **layer_settings)
@@ -20,10 +19,19 @@ class GBlock(nn.Module):
         self.c2 = c2
         self.toRGB = nn.Sequential(GeneralConv(ch_out, num_channels, ksize=1, act=False, equalized=equalized),
                                    ScaledTanh())
+        if not is_first and is_residual:
+            self.residual = nn.Sequential() if ch_in == ch_out else nn.Conv1d(ch_in, ch_out, kernel_size=1)
+        else:
+            self.residual = None
 
     def forward(self, x, y=None, last=False):
-        x = self.c2(self.c1(x, y), y)
-        return self.toRGB(x) if last else x
+        h = self.c2(self.c1(x, y), y)
+        if last:
+            return self.toRGB(h)
+        else:
+            if self.residual is not None:
+                h = h + self.residual(x)
+            return h
 
 
 class Generator(nn.Module):
@@ -169,8 +177,8 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, temporal=False, num_stat_channels=1,
-                 ksize=3, equalized=True, param_norm=None, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, temporal=False, is_residual=False,
+                 num_stat_channels=1, ksize=3, equalized=True, param_norm=None, **layer_settings):
         super(DBlock, self).__init__()
         is_last = initial_kernel_size is not None
         self.fromRGB = GeneralConv(num_channels, ch_in, ksize=1, equalized=equalized, param_norm=param_norm)
@@ -186,85 +194,88 @@ class DBlock(nn.Module):
                         equalized=equalized, param_norm=param_norm, **layer_settings))
         self.net = nn.Sequential(*self.net)
         self.is_last = initial_kernel_size
+        if is_residual and not is_last:
+            self.residual = nn.Sequential() if ch_in == ch_out else nn.Conv1d(ch_in, ch_out, kernel_size=1)
+        else:
+            self.residual = None
 
     def forward(self, x, first=False):
         if first:
             x = self.fromRGB(x)
-        return self.net(x)
+        h = self.net(x)
+        if self.residual:
+            h = h + self.residual(x)
+        return h
 
 
+# AGREEMENT, if depth_offset == None => window as the first layer
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
-                 kernel_size, self_attention_layer, num_classes, depth_offset, dropout=0.1, do_mode='mul',
-                 param_norm=None, temporal_stats=False, num_stat_channels=1, act_norm=None, calc_std=False):
+                 kernel_size, self_attention_layers, num_classes, depth_offset, dropout=0.1, do_mode='mul',
+                 residual=False, param_norm=None, temporal_stats=False, num_stat_channels=1, act_norm=None,
+                 calc_std=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        is_single = not isinstance(progression_scale, (list, tuple))
-        if is_single:
-            R = int(math.log(resolution, progression_scale))
-            assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
-            self.R = R
-        else:
-            self.R = R = len(progression_scale)
+        R = int(math.log(resolution, progression_scale))
+        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
+        self.R = R
+        self.progression_scale = progression_scale
+        self.initial_depth = initial_size
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
 
         layer_settings = dict(do=dropout, do_mode=do_mode, act_norm=act_norm)
-        if not is_single:
-            initial_kernel_size = np.prod(progression_scale[:initial_size])
-            self.final_receptive_field = np.prod(progression_scale[:initial_size + depth_offset])
-        else:
-            initial_kernel_size = progression_scale ** initial_size
+        initial_kernel_size = progression_scale ** initial_size
+        if depth_offset is not None:
             self.final_receptive_field = progression_scale ** (initial_size + depth_offset)
+        else:
+            self.final_receptive_field = None
         last_block = DBlock(nf(1), nf(0), num_channels, initial_kernel_size=initial_kernel_size,
                             temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
-                            equalized=equalized, param_norm=param_norm, **layer_settings)
-        self.self_attention_layer = self_attention_layer
-        if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(self_attention_layer + 1))
-        else:
-            self.self_attention = None
+                            equalized=equalized, param_norm=param_norm, is_residual=residual, **layer_settings)
+        self.self_attention = {self_attention_layer: SelfAttention(nf(self_attention_layer + 1)) for
+                               self_attention_layer in self_attention_layers}
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
                                             ksize=kernel_size, equalized=equalized, initial_kernel_size=None,
-                                            param_norm=param_norm, **layer_settings) for i in
+                                            param_norm=param_norm, is_residual=residual, **layer_settings) for i in
                                      range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
             self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
             if param_norm == 'spectral':
-                self.class_emb = spectral_norm_wrapper(self.class_emb)
+                self.class_emb = spectral_norm(self.class_emb)
         else:
             self.class_emb = None
         self.linear = nn.Conv1d(nf(0), 1, kernel_size=1)
         if param_norm == 'spectral':
-            self.linear = spectral_norm_wrapper(self.linear)
-        self.depth = depth_offset
+            self.linear = spectral_norm(self.linear)
+        self.depth = depth_offset if depth_offset is not None else 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
-        self.downsampler = nn.ModuleList(
-            [nn.AvgPool1d(kernel_size=progression_scale if is_single else progression_scale[i]) for i in
-             reversed(range(initial_size, R))])
+        self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
         self.depth_offset = depth_offset
         if calc_std:
-            self.calc_std = nn.Conv1d(nf(0), nf(0) // 16, kernel_size=1)
+            self.calc_std = nn.Conv1d(nf(0), nf(0) // 4, kernel_size=1)
         else:
             self.calc_std = None
 
     def set_gamma(self, new_gamma):
-        if self.self_attention is not None:
-            self.self_attention.gamma = new_gamma
+        for self_attention_layer in self.self_attention.values():
+            self_attention_layer.gamma = new_gamma
 
     def forward(self, x, y=None):
-        if self.depth < self.depth_offset:
+        if self.depth_offset is not None and (self.depth < self.depth_offset):
             raise ValueError()
         xhighres = x
-        if self.depth == self.depth_offset:
-            step = self.final_receptive_field // 4
-            t = int(math.floor((xhighres.size(2) - self.final_receptive_field) / step + 1))
+        if (self.depth_offset is None) or (self.depth == self.depth_offset):
+            if self.final_receptive_field is not None:
+                step = self.final_receptive_field // 4
+            else:
+                step = self.progression_scale ** (self.depth + self.initial_depth) // 4
+            t = int(math.floor((xhighres.size(2) - step * 4) / step + 1))
             i = self.depth + 1
-            hs = [self.blocks[-i](xhighres[:, :, j * step:j * step + self.final_receptive_field], True) for j in
-                  range(t)]
+            hs = [self.blocks[-i](xhighres[:, :, j * step:j * step + step * 4], True) for j in range(t)]
             is_list = True
         else:
             hs = (self.blocks[-(self.depth + 1)](xhighres, True),)
@@ -272,19 +283,20 @@ class Discriminator(nn.Module):
         res = []
         for h in hs:
             if self.depth > 0:
-                h = self.downsampler[-self.depth](h)
+                h = self.downsampler(h)
                 if self.alpha < 1.0:
-                    xlowres = self.downsampler[-self.depth](xhighres)
+                    xlowres = self.downsampler(xhighres)
                     preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
                     h = h * self.alpha + (1 - self.alpha) * preult_rgb
             res.append(h)
-        for i in range(self.depth, self.depth_offset + 1, -1):
+        depth_offset = self.depth if self.depth_offset is None else self.depth_offset
+        for i in range(self.depth, depth_offset + 1, -1):
             h = self.blocks[-i](h)
             if i > 1:
-                h = self.downsampler[-i + 1](h)
-            if (self.self_attention_layer is not None) and i == (self.self_attention_layer + 2):
-                h = self.self_attention(h)
-        i = self.depth_offset + 1
+                h = self.downsampler(h)
+            if (i-2) in self.self_attention:
+                h = self.self_attention[i-2](h)
+        i = depth_offset + 1
         if is_list:
             ans = res
         else:
@@ -293,22 +305,22 @@ class Discriminator(nn.Module):
             ans = [self.blocks[-i](h[:, :, j * step:j * step + self.final_receptive_field]) for j in range(t)]
         res = []
         for h in ans:
-            if self.depth_offset > 1 and self.depth_offset != self.depth:
-                h = self.downsampler[-self.depth_offset](h)
-            if (self.self_attention_layer is not None) and self.depth_offset == (self.self_attention_layer + 1):
-                h = self.self_attention(h)
-            for i in range(self.depth_offset, 0, -1):
+            if depth_offset > 1 and depth_offset != self.depth:
+                h = self.downsampler(h)
+            if (depth_offset-1) in self.self_attention:
+                h = self.self_attention[depth_offset-1](h)
+            for i in range(depth_offset, 0, -1):
                 h = self.blocks[-i](h)
                 if i > 1:
-                    h = self.downsampler[-i + 1](h)
-                if (self.self_attention_layer is not None) and i == (self.self_attention_layer + 2):
-                    h = self.self_attention(h)
+                    h = self.downsampler(h)
+                if (i - 2) in self.self_attention:
+                    h = self.self_attention[i - 2](h)
             res.append(h)
         assert res[0].shape[2] == 1
         h = torch.cat(res, dim=2)
         o = self.linear(h).mean(dim=2).squeeze()
         if self.calc_std is not None:
-            o = o + self.calc_std(h).std(dim=2).mean(dim=1)
+            o = o - self.calc_std(h).std(dim=2).mean(dim=1)
         if y:
             o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True).mean(dim=2)
         return o, h

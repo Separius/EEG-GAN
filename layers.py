@@ -1,11 +1,10 @@
-import numpy as np
-import torch
 import math
+import torch
+import numpy as np
 from torch import nn
 from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
-from spectral_norm import spectral_norm as spectral_norm_wrapper
-from torch.nn.utils import weight_norm as weight_norm_wrapper
+from torch.nn.utils import weight_norm, spectral_norm
 
 
 class PixelNorm(nn.Module):
@@ -176,9 +175,9 @@ class EqualizedConv1d(nn.Module):
         super(EqualizedConv1d, self).__init__()
         self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=False)
         if param_norm == 'spectral':
-            self.conv = spectral_norm_wrapper(self.conv)
+            self.conv = spectral_norm(self.conv)
         elif param_norm == 'weight':
-            self.conv = weight_norm_wrapper(self.conv)
+            self.conv = weight_norm(self.conv)
         torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         self.bias = torch.nn.Parameter(torch.FloatTensor(c_out).zero_())
         if equalized:
@@ -218,7 +217,6 @@ class GeneralConv(nn.Module):
         if self.norm:
             return self.net(self.norm(self.conv(x), y))
         return self.net(self.conv(x))
-
 
     def __repr__(self):
         param_str = '(conv = {}, norm = {})'.format(self.conv.conv, self.norm)

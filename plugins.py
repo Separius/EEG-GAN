@@ -1,16 +1,15 @@
 import os
 import time
-from datetime import timedelta
-from glob import glob
 import torch
-import numpy as np
-from torch.autograd import Variable
-from torch.utils.trainer.plugins import LossMonitor, Logger
-from torch.utils.trainer.plugins.plugin import Plugin
-from utils import generate_samples, cudize, get_features, get_accuracy, ll
-from scipy import misc
 import matplotlib
-import imageio
+import numpy as np
+from glob import glob
+from scipy import misc
+from datetime import timedelta
+from torch.autograd import Variable
+from utils import generate_samples, cudize
+from torch.utils.trainer.plugins.plugin import Plugin
+from torch.utils.trainer.plugins import LossMonitor, Logger
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -205,7 +204,6 @@ class SaverPlugin(Plugin):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
-        self._best_val_loss = float('+inf')
 
     def register(self, trainer):
         self.trainer = trainer

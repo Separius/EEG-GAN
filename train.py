@@ -1,25 +1,25 @@
-from torch.optim import Adam
-from torch.optim.lr_scheduler import LambdaLR
-from network import Generator, Discriminator
-from losses import G_loss, D_loss
-from functools import partial
-from trainer import Trainer
-from dataset import EEGDataset
-from torch.utils.data import DataLoader
-from torch.utils.data.sampler import SubsetRandomSampler
-from plugins import OutputGenerator, SaverPlugin, LRScheduler, AbsoluteTimeMonitor, EfficientLossMonitor, DepthManager, \
-    TeeLogger
-from utils import load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir, num_params, \
-    create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model
-import numpy as np
-import torch
 import os
 import time
-import signal
 import yaml
+import torch
+import signal
 import subprocess
+import numpy as np
+from trainer import Trainer
+from torch.optim import Adam
+from functools import partial
+from dataset import EEGDataset
+from losses import G_loss, D_loss
 from argparse import ArgumentParser
 from collections import OrderedDict
+from torch.utils.data import DataLoader
+from network import Generator, Discriminator
+from torch.optim.lr_scheduler import LambdaLR
+from torch.utils.data.sampler import SubsetRandomSampler
+from plugins import (OutputGenerator, SaverPlugin, AbsoluteTimeMonitor,
+                     EfficientLossMonitor, DepthManager, TeeLogger, LRScheduler)
+from utils import (load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir,
+                   num_params, create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
 
 default_params = OrderedDict(
     result_dir='results',
@@ -135,9 +135,9 @@ def main(params):
     G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'])
     max_depth = min(G.max_depth, D.max_depth)
     if params['verbose']:
+        from PIL import Image
         from torchsummary import summary
         from matplotlib import pyplot as plt
-        from PIL import Image
         G.is_extended = False
         G.set_gamma(1)
         G.depth = G.max_depth

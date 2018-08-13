@@ -1,7 +1,7 @@
-import heapq
-from utils import cudize, trainable_params
 import torch
+import heapq
 import numpy as np
+from utils import cudize, trainable_params
 
 
 class Trainer(object):

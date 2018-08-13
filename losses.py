@@ -1,7 +1,7 @@
 import torch
-from torch.autograd import Variable, grad
 from utils import cudize
 import torch.nn.functional as F
+from torch.autograd import Variable, grad
 
 mixing_factors = None
 grad_outputs = None
