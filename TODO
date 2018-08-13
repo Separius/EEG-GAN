@@ -1,0 +1,19 @@
+G
+  Context(+Window Size)
+  Concat(Location)
+  Condition
+  Residual
+  MultiSAs
+  StaticExtendForward
+StaticExtend
+  D.StaticExtendForward
+  DumbMode
+  SmartMode(Diff=>Reward)
+Train+Loss
+  Wgan-GP=>DC
+  Condition.UNK
+  Condition.AVG
+  G.TrainInput
+  G.GenerateInput
+  MultiSAs
+  ResidualFlag
