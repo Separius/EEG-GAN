@@ -67,29 +67,27 @@ class GDropLayer(nn.Module):
 class SelfAttention(nn.Module):
     def __init__(self, channels_in):
         super(SelfAttention, self).__init__()
-        self.gamma = 0
-        self.channels_in = channels_in
         d_key = max(channels_in // 8, 2)
-        self.to_key = nn.Conv1d(channels_in, d_key, kernel_size=1)
-        self.to_query = nn.Conv1d(channels_in, d_key, kernel_size=1)
-        self.softmax = nn.Softmax(dim=1)
+        self.gamma = 0
+        self.key_conv = nn.Conv1d(channels_in, d_key, kernel_size=1)
+        self.query_conv = nn.Conv1d(channels_in, d_key, kernel_size=1)
+        self.value_conv = nn.Conv1d(channels_in, channels_in, kernel_size=1)
+        self.softmax = nn.Softmax(dim=-1)
         self.scale = math.sqrt(d_key)
 
-    def forward(self, v):
+    def forward(self, x):
         if self.gamma == 0:
-            return v
-        T = v.size(2)
-        k = self.to_key(v)  # k, q = (N, C, T)
-        q = self.to_query(v)
-        e1 = q.unsqueeze(3).repeat(1, 1, 1, T).permute(0, 1, 3, 2)
-        e2 = k.unsqueeze(3).repeat(1, 1, 1, T)
-        a = self.softmax((e1 * e2).sum(dim=1) / self.scale)  # a is (N, T(normalized), T)
-        a = torch.bmm(v, a)
-        return v + self.gamma * a
-
-    def __repr__(self):
-        param_str = '(channels_in = {})'.format(self.channels_in)
-        return self.__class__.__name__ + param_str
+            return x
+        batch_size, _, T = x.size()
+        query = self.query_conv(x).permute(0, 2, 1)
+        key = self.key_conv(x)
+        energy = torch.bmm(query, key)
+        attention = self.softmax(energy / self.scale)
+        value = self.value_conv(x)
+        out = torch.bmm(value, attention.permute(0, 2, 1))
+        out = out.view(batch_size, -1, T)
+        out = self.gamma * out + x
+        return out  # , attention TODO for attention map visualization
 
 
 class MinibatchStddev(nn.Module):

@@ -12,11 +12,9 @@ class GBlock(nn.Module):
                  is_residual=False, **layer_settings):
         super(GBlock, self).__init__()
         is_first = initial_kernel_size is not None
-        c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, **layer_settings)
-        c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
-                         pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
-        self.c1 = c1
-        self.c2 = c2
+        self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
+                              pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
+        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, **layer_settings)
         self.toRGB = nn.Sequential(GeneralConv(ch_out, num_channels, ksize=1, act=False, equalized=equalized),
                                    ScaledTanh())
         if not is_first and is_residual:
@@ -40,18 +38,18 @@ class Generator(nn.Module):
     kernel_right = None
 
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
-                 equalized, self_attention_layer, num_classes, depth_offset, is_extended, latent_size=256,
-                 normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None, act_norm='pixel', is_morph=False):
+                 equalized, self_attention_layers, num_classes, depth_offset, is_extended, latent_size=256,
+                 residual=False, normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None, act_norm='pixel',
+                 is_morph=False, extend_context_size=3, use_extend_padding=False):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
         self.depth_offset = depth_offset
-        is_single = not isinstance(progression_scale, (list, tuple))
-        if is_single:
-            R = int(math.log(resolution, progression_scale))
-            assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
-        else:
-            R = len(progression_scale)
+        self.extend_context_size = extend_context_size
+        # TODO this is not properly handled(in prepare_g_data)
+        self.use_extend_padding = use_extend_padding
+        R = int(math.log(resolution, progression_scale))
+        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -61,44 +59,55 @@ class Generator(nn.Module):
         self.normalize_latents = normalize_latents
         layer_settings = dict(do=dropout, do_mode=do_mode, num_classes=num_classes, param_norm=param_norm,
                               act_norm=act_norm)
-        if is_single:
-            initial_kernel_size = progression_scale ** initial_size
-        else:
-            initial_kernel_size = np.prod(progression_scale[:initial_size])
+        initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
-                             initial_kernel_size=initial_kernel_size, **layer_settings)
-        self.self_attention_layer = self_attention_layer
-        if self_attention_layer is not None:
-            self.self_attention = SelfAttention(nf(self_attention_layer + 1))
-        else:
-            self.self_attention = None
+                             initial_kernel_size=initial_kernel_size, is_residual=residual, **layer_settings)
+        self.self_attention = dict()
+        for layer in self_attention_layers:
+            self.self_attention[layer] = SelfAttention(nf(layer + 1))
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
-                                            ksize=kernel_size, equalized=equalized, **layer_settings)
-                                     for i in range(initial_size, R)])
+                                            ksize=kernel_size, equalized=equalized, is_residual=residual,
+                                            **layer_settings) for i in range(initial_size, R)])
         self.depth = depth_offset
         self.alpha = 1.0
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         self.progression_scale = progression_scale
-        self.upsampler = nn.ModuleList([nn.Upsample(
-            scale_factor=progression_scale if is_single else progression_scale[i], mode='linear', align_corners=True)
-            for i in range(initial_size, R)])
-        if not is_morph:
+        self.upsampler = nn.Upsample(scale_factor=progression_scale, mode='linear', align_corners=True)
+        self.is_morph = is_morph
+        if extend_context_size != 0 and self.is_extended:
             temporal_latent_size = 3 * latent_size // 4
-            self.context_maker = nn.Conv1d(temporal_latent_size, temporal_latent_size, kernel_size=3, padding=1)
+            self.context_maker = nn.Conv1d(latent_size, temporal_latent_size, kernel_size=extend_context_size,
+                                           padding=extend_context_size // 2 if use_extend_padding else 0)
         else:
             self.context_maker = None
         self.is_extended = is_extended
 
     def set_gamma(self, new_gamma):
-        if self.self_attention is not None:
-            self.self_attention.gamma = new_gamma
+        for layer in self.self_attention.values():
+            layer.gamma = new_gamma
 
     def do_layer(self, l, h, y=None):
-        if l == self.self_attention_layer:
-            h = self.self_attention(h)
-        h = self.upsampler[l](h)
+        if l in self.self_attention_layer:
+            h = self.self_attention[l](h)
+        h = self.upsampler(h)
         return self.blocks[l](h, y)
+
+    def consistent_forward(self, z1, z2, stage=2, y=None):
+        # NOTE that it assumes that training is finished and alpha=1
+        h = torch.cat((z1, z2), dim=0)
+        h = h.unsqueeze(2)
+        if self.normalize_latents:
+            h = pixel_norm(h)
+        h = self.block0(h, y, self.depth == 0)
+        for i in range(self.depth - 1):
+            if i == stage:
+                h2 = h[1:, ...]
+                h1 = h[0:1, ...].expand_as(h2)
+                h = torch.cat((h1, h2), dim=2)
+            h = self.do_layer(i, h, y)
+        h = self.upsampler[self.depth - 1](h)
+        return self.blocks[self.depth - 1](h, y, True)
 
     @staticmethod
     def generate_kernels(N, C, half):
@@ -133,8 +142,31 @@ class Generator(nn.Module):
             res[:, :, half * i:half * (i + 2)] = k * x
         return res
 
+    def static_extend(self, z, y=None, concatenation_layer=0, morph=False):
+        N, z_dim, T = z.size()
+        if self.normalize_latents:
+            z = pixel_norm(z)
+        h = z.permute(0, 2, 1).contiguous().view(-1, z.size(1), 1)
+        h = self.block0(h, y, self.depth == 0)
+        for i in range(concatenation_layer):
+            h = self.do_layer(i, h, y)
+        h = h.permute(0, 2, 1).contiguous().view(z.size(0), -1, h.size(1)).permute(0, 2, 1)
+        if morph:
+            h = self.morph(h, h.size(2) // T, T)
+        if self.depth == concatenation_layer:
+            return h
+        for i in range(concatenation_layer, self.depth - 1):
+            h = self.do_layer(i, h, y)
+        h = self.upsampler(h)
+        ult = self.blocks[self.depth - 1](h, y, True)
+        if self.alpha < 1.0:
+            preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
+            return preult_rgb * (1.0 - self.alpha) + ult * self.alpha
+        else:
+            return ult
+
     def forward(self, z_global, z_temporal=None, y=None):  # glob=(N,z_dim) or glob=(N,z/4,[T]), temporal=(N,3z/4,T)
-        if self.depth < self.depth_offset:
+        if self.is_extended and (self.depth < self.depth_offset):
             raise ValueError()
         if self.normalize_latents:
             z_global = pixel_norm(z_global)
@@ -149,10 +181,11 @@ class Generator(nn.Module):
                 raise ValueError()
             if self.normalize_latents:
                 z_temporal = pixel_norm(z_temporal)
-            if self.context_maker is not None:
-                z_temporal = self.context_maker(z_temporal)
             if z_global.size(2) != z_temporal.size(2):
                 z_global = z_global.repeat(1, 1, z_temporal.size(2))
+            if self.context_maker is not None:
+                z = torch.cat((z_global, z_temporal), dim=1)
+                z_temporal = self.context_maker(z)
             z = torch.cat((z_global, z_temporal), dim=1)
             h = z.permute(0, 2, 1).contiguous().view(-1, z.size(1), 1)
         h = self.block0(h, y, self.depth == 0)
@@ -160,14 +193,16 @@ class Generator(nn.Module):
             h = self.do_layer(i, h, y)
         if z_temporal is not None:
             h = h.permute(0, 2, 1).contiguous().view(z.size(0), -1, h.size(1)).permute(0, 2, 1)
-            if self.context_maker is None:
+            if self.is_morph:
                 num_z = z_temporal.size(2)
+                if not self.use_extend_padding:
+                    num_z -= self.extend_context_size - 1
                 h = self.morph(h, h.size(2) // num_z, num_z)
         if self.depth == self.depth_offset:
             return h
         for i in range(self.depth_offset, self.depth - 1):
             h = self.do_layer(i, h, y)
-        h = self.upsampler[self.depth - 1](h)
+        h = self.upsampler(h)
         ult = self.blocks[self.depth - 1](h, y, True)
         if self.alpha < 1.0:
             preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
@@ -208,12 +243,11 @@ class DBlock(nn.Module):
         return h
 
 
-# AGREEMENT, if depth_offset == None => window as the first layer
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
                  kernel_size, self_attention_layers, num_classes, depth_offset, dropout=0.1, do_mode='mul',
                  residual=False, param_norm=None, temporal_stats=False, num_stat_channels=1, act_norm=None,
-                 calc_std=False):
+                 calc_std=False, window_from_first=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -222,6 +256,8 @@ class Discriminator(nn.Module):
         self.R = R
         self.progression_scale = progression_scale
         self.initial_depth = initial_size
+        self.window_from_first = window_from_first
+        depth_offset = None if window_from_first else depth_offset
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -260,6 +296,14 @@ class Discriminator(nn.Module):
         else:
             self.calc_std = None
 
+    def consistent_forward(self, x, y=None):
+        seq_len = x.size(2)
+        step = seq_len // 4
+        repeats = seq_len // step - 1
+        x = torch.cat([x[..., i * step:i * step + seq_len // 2] for i in range(repeats)], dim=0)
+        o, _ = self.forward(x, y)
+        return o.view(repeats, -1).mean(dim=0)
+
     def set_gamma(self, new_gamma):
         for self_attention_layer in self.self_attention.values():
             self_attention_layer.gamma = new_gamma
@@ -294,8 +338,8 @@ class Discriminator(nn.Module):
             h = self.blocks[-i](h)
             if i > 1:
                 h = self.downsampler(h)
-            if (i-2) in self.self_attention:
-                h = self.self_attention[i-2](h)
+            if (i - 2) in self.self_attention:
+                h = self.self_attention[i - 2](h)
         i = depth_offset + 1
         if is_list:
             ans = res
@@ -307,8 +351,8 @@ class Discriminator(nn.Module):
         for h in ans:
             if depth_offset > 1 and depth_offset != self.depth:
                 h = self.downsampler(h)
-            if (depth_offset-1) in self.self_attention:
-                h = self.self_attention[depth_offset-1](h)
+            if (depth_offset - 1) in self.self_attention:
+                h = self.self_attention[depth_offset - 1](h)
             for i in range(depth_offset, 0, -1):
                 h = self.blocks[-i](h)
                 if i > 1:

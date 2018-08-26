@@ -7,7 +7,8 @@ from utils import cudize, trainable_params
 class Trainer(object):
 
     def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, random_latents_generator, extra_factor,
-                 lambda_3, is_morph, grad_clip=None, D_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
+                 lambda_3, is_morph, grad_clip=None, D_training_repeats=1, tick_kimg_default=5, resume_nimg=0,
+                 memory_friendly=True):
         self.D = D
         self.G = G
         self.D_loss = D_loss
@@ -37,6 +38,7 @@ class Trainer(object):
         self.extra_factor = extra_factor
         self.lambda_3 = lambda_3
         self.is_morph = is_morph
+        self.mem_friendly = memory_friendly
 
     def register_plugin(self, plugin):
         plugin.register(self)
@@ -83,13 +85,16 @@ class Trainer(object):
             torch.nn.utils.clip_grad_norm_(trainable_params(model), self.grad_clip)
 
     @staticmethod
-    def prepare_d_data(real_images_expr, fake_latents_in, extra_factor, is_morph, lambda_3):
+    def prepare_d_data(real_images_expr, fake_latents_in, extra_factor, is_morph, lambda_3, mem_friendly):
         real_images_mixed = None
         if extra_factor != 1:
             picked_factor = np.random.choice(extra_factor) + 1
-            new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 1)
-            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size + 1)
-            z_picked_factor = picked_factor * 2 - 1 if is_morph else picked_factor
+            if mem_friendly:
+                new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 2)
+            else:
+                new_batch_size = fake_latents_in[0].size(0)
+            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size - 1)
+            z_picked_factor = (picked_factor * 2 - 1) if is_morph else picked_factor
             fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
                                fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
             picked_len = picked_factor * real_images_expr.shape[2] // extra_factor
@@ -107,17 +112,21 @@ class Trainer(object):
         return real_images_expr, real_images_mixed, fake_latents_in
 
     @staticmethod
-    def prepare_g_data(fake_latents_in, extra_factor, is_morph, lambda_3):
+    def prepare_g_data(fake_latents_in, extra_factor, is_morph, lambda_3, mem_friendly):
         mixed_latents = None
         if extra_factor != 1:
             picked_factor = np.random.choice(extra_factor) + 1
-            new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 1)
-            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size + 1)
+            if mem_friendly:
+                new_batch_size = max(fake_latents_in[0].size(0) // picked_factor, 2)
+            else:
+                new_batch_size = fake_latents_in[0].size(0)
+            new_batch_size = new_batch_size if new_batch_size % 2 == 0 else (new_batch_size - 1)
             z_picked_factor = picked_factor * 2 - 1 if is_morph else picked_factor
             fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
                                fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
             if lambda_3 != 0 and picked_factor > 1:
-                mixed_latents = (cudize(torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1)/3, fake_latents_in[1].size(2))), fake_latents_in[1])
+                mixed_latents = (cudize(torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1) // 4,
+                                                    fake_latents_in[1].size(2))), fake_latents_in[1])
         return fake_latents_in, mixed_latents
 
     def train(self):
@@ -126,7 +135,7 @@ class Trainer(object):
             real_images_expr, real_images_mixed, fake_latents_in = self.prepare_d_data(cudize(next(self.dataiter)),
                                                                                        fake_latents_in,
                                                                                        self.extra_factor, self.is_morph,
-                                                                                       self.lambda_3)
+                                                                                       self.lambda_3, self.mem_friendly)
             self.cur_nimg += real_images_expr.size(0)
             D_loss = self.D_loss(self.D, self.G, real_images_expr, fake_latents_in, real_images_mixed)
             D_loss.backward()
@@ -134,7 +143,7 @@ class Trainer(object):
             self.optimizer_d.step()
             fake_latents_in = cudize(self.random_latents_generator(t=self.extra_factor))
         fake_latents_in, mixed_latents = self.prepare_g_data(fake_latents_in, self.extra_factor, self.is_morph,
-                                                             self.lambda_3)
+                                                             self.lambda_3, self.mem_friendly)
         G_loss = self.G_loss(self.G, self.D, fake_latents_in, mixed_latents)
         G_loss.backward()
         self._clip(self.G)

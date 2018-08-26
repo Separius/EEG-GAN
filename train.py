@@ -40,19 +40,20 @@ default_params = OrderedDict(
     LAMBDA_2=2,
     optimizer='adam',  # adam, amsgrad, ttur
     config_file=None,
-    verbose=False,
+    test_run=False,
     fmap_base=2048,
     fmap_max=256,
     fmap_min=64,
     equalized=True,
     kernel_size=3,
-    self_attention_layer=None,  # starts from 0 or null (for G it means putting it after ith layer)
+    self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
     progression_scale=2,  # single number or a list where prod(list) == seq_len
     num_classes=0,
     monitor_threshold=10,
     monitor_warmup=50,
     monitor_patience=5,
-    LAMBDA_3=1
+    LAMBDA_3=1,
+    random_multiply=False
 )
 
 
@@ -93,48 +94,47 @@ def main(params):
             save_pkl(params['load_dataset'], dataset)
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
-    if not params['verbose']:
+    if not params['test_run']:
         result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
-    if not params['self_attention_layer'] is None:
+    if len(params['self_attention_layers']) != 0:
         stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
-    num_channels = dataset.shape[1]
 
-    if params['verbose'] and params['resume_network']:
-        print('resuming does not work in verbose mode')
-        params['verbose'] = False
-    if not params['verbose']:
+    if params['test_run'] and params['resume_network']:
+        print('resuming does not work in test_run mode')
+        params['resume_network'] = ''
+    if not params['test_run']:
         logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
-    if params['resume_network']:
+    if params['resume_network'] != '':
         G, D = load_models(params['resume_network'], params['result_dir'], logger)
     else:
-        G = Generator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
-                      dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
-                      fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
-                      kernel_size=params['kernel_size'], is_extended=dataset_params['extra_factor'] != 1,
-                      depth_offset=params['DepthManager']['depth_offset'], equalized=params['equalized'],
-                      self_attention_layer=params['self_attention_layer'], **params['Generator'])
+        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
+                      initial_size=dataset_params['model_dataset_depth_offset'], fmap_base=params['fmap_base'],
+                      fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
+                      equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
+                      num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
+                      is_extended=dataset_params['extra_factor'] != 1, **params['Generator'])
         if params['Discriminator']['param_norm'] == 'spectral':
             params['Discriminator']['act_norm'] = None
-        D = Discriminator(num_classes=params['num_classes'], progression_scale=params['progression_scale'],
-                          dataset_shape=dataset.shape, initial_size=dataset_params['model_dataset_depth_offset'],
-                          fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
-                          kernel_size=params['kernel_size'], equalized=params['equalized'],
-                          depth_offset=params['DepthManager']['depth_offset'],
-                          self_attention_layer=params['self_attention_layer'], **params['Discriminator'])
+        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
+                          initial_size=dataset_params['model_dataset_depth_offset'], fmap_base=params['fmap_base'],
+                          fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], equalized=params['equalized'],
+                          kernel_size=params['kernel_size'], self_attention_layers=params['self_attention_layers'],
+                          num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
+                          **params['Discriminator'])
     latent_size = G.latent_size
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
                          grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'], LAMBDA_3=params['LAMBDA_3'])
-    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'])
+    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'], random_multiply=params['random_multiply'])
     max_depth = min(G.max_depth, D.max_depth)
-    if params['verbose']:
+    if params['test_run']:
         from PIL import Image
         from torchsummary import summary
         from matplotlib import pyplot as plt
@@ -147,7 +147,8 @@ def main(params):
         summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
         D.train()
         G.train()
-        dm = DepthManager(None, None, max_depth, params['Trainer']['tick_kimg_default'], **params['DepthManager'])
+        dm = DepthManager(None, None, max_depth, params['Trainer']['tick_kimg_default'],
+                          len(params['self_attention_layers']) != 0, **params['DepthManager'])
         print('start_gamma:', dm.start_gamma, '\tend_gamma:', dm.end_gamma, '\tmax_depth:', dm.max_depth,
               '\tdepth_offset:', dm.depth_offset, '\tseq_len:', dataset_params['seq_len'], '\tdataset_offset:',
               dataset_params['model_dataset_depth_offset'])
@@ -179,13 +180,15 @@ def main(params):
         l = G_loss_fun(G, D, z, None)
         print('generator loss:', l.item())
         l.backward()
-        real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1)
+        real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1,
+                                                                          params['Trainer']['memory_friendly'])
         l = D_loss_fun(D, G, real_images_expr, z_d, real_images_mixed)
         l.backward()
-        z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1)
+        z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1, params['Trainer']['memory_friendly'])
         l = G_loss_fun(G, D, z_g, z_mixed)
         l.backward()
         exit()
+
     logger.log('exp name: {}'.format(params['exp_name']))
     try:
         logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
@@ -226,7 +229,7 @@ def main(params):
     trainer = Trainer(D, G, D_loss_fun, G_loss_fun, opt_d, opt_g, dataset, rl(mb_def), dataset_params['extra_factor'],
                       params['LAMBDA_3'], params['Generator']['is_morph'], **params['Trainer'])
     trainer.register_plugin(DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'],
-                                         params['self_attention_layer'] is not None, **params['DepthManager']))
+                                         len(params['self_attention_layers']) != 0, **params['DepthManager']))
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(
             EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup'],

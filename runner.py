@@ -1,7 +1,7 @@
-from joblib import Parallel, delayed
-import queue
 import os
 import glob
+import queue
+from joblib import Parallel, delayed
 
 N_GPU = 2
 

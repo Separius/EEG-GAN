@@ -1,6 +1,6 @@
 G
   Context(+Window Size)
-  Concat(Location)
+  Concat(Location + Morphing/Not)
   Condition
   Residual
   MultiSAs
