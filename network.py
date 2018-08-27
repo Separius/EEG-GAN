@@ -9,11 +9,14 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, spec
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_kernel_size=None,
-                 is_residual=False, **layer_settings):
+                 is_residual=False, only_one_conv=False, **layer_settings):
         super(GBlock, self).__init__()
         is_first = initial_kernel_size is not None
-        self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
-                              pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
+        if not only_one_conv:
+            self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
+                                  pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
+        else:
+            self.c1 = None
         self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, **layer_settings)
         self.toRGB = nn.Sequential(GeneralConv(ch_out, num_channels, ksize=1, act=False, equalized=equalized),
                                    ScaledTanh())
@@ -23,7 +26,10 @@ class GBlock(nn.Module):
             self.residual = None
 
     def forward(self, x, y=None, last=False):
-        h = self.c2(self.c1(x, y), y)
+        if self.c1 is not None:
+            h = self.c2(self.c1(x, y), y)
+        else:
+            h = self.c2(x, y)
         if last:
             return self.toRGB(h)
         else:
@@ -38,9 +44,9 @@ class Generator(nn.Module):
     kernel_right = None
 
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
-                 equalized, self_attention_layers, num_classes, depth_offset, is_extended, latent_size=256,
-                 residual=False, normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None, act_norm='pixel',
-                 is_morph=False, extend_context_size=3, use_extend_padding=False):
+                 equalized, self_attention_layers, num_classes, depth_offset, is_extended, only_one_conv,
+                 latent_size=256, residual=False, normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None,
+                 act_norm='pixel', is_morph=False, extend_context_size=3, use_extend_padding=False):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -67,7 +73,8 @@ class Generator(nn.Module):
             self.self_attention[layer] = SelfAttention(nf(layer + 1))
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
                                             ksize=kernel_size, equalized=equalized, is_residual=residual,
-                                            **layer_settings) for i in range(initial_size, R)])
+                                            only_one_conv=only_one_conv, **layer_settings) for i in
+                                     range(initial_size, R)])
         self.depth = depth_offset
         self.alpha = 1.0
         self.latent_size = latent_size
@@ -212,8 +219,8 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, temporal=False, is_residual=False,
-                 num_stat_channels=1, ksize=3, equalized=True, param_norm=None, **layer_settings):
+    def __init__(self, ch_in, ch_out, num_channels, only_one_conv=False, initial_kernel_size=None, temporal=False,
+                 is_residual=False, num_stat_channels=1, ksize=3, equalized=True, param_norm=None, **layer_settings):
         super(DBlock, self).__init__()
         is_last = initial_kernel_size is not None
         self.fromRGB = GeneralConv(num_channels, ch_in, ksize=1, equalized=equalized, param_norm=param_norm)
@@ -221,9 +228,10 @@ class DBlock(nn.Module):
             self.net = [MinibatchStddev(temporal, num_stat_channels)]
         else:
             self.net = []
-        self.net.append(
-            GeneralConv(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
-                        param_norm=param_norm, **layer_settings))
+        if not only_one_conv:
+            self.net.append(
+                GeneralConv(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
+                            param_norm=param_norm, **layer_settings))
         self.net.append(
             GeneralConv(ch_in, ch_out, ksize=initial_kernel_size if is_last else ksize, pad=0 if is_last else None,
                         equalized=equalized, param_norm=param_norm, **layer_settings))
@@ -245,9 +253,9 @@ class DBlock(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
-                 kernel_size, self_attention_layers, num_classes, depth_offset, dropout=0.1, do_mode='mul',
-                 residual=False, param_norm=None, temporal_stats=False, num_stat_channels=1, act_norm=None,
-                 calc_std=False, window_from_first=False):
+                 kernel_size, self_attention_layers, num_classes, depth_offset, only_one_conv, dropout=0.1,
+                 do_mode='mul', residual=False, param_norm=None, temporal_stats=False, num_stat_channels=1,
+                 act_norm=None, calc_std=False, window_from_first=False):
         super(Discriminator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -275,8 +283,9 @@ class Discriminator(nn.Module):
                                self_attention_layer in self_attention_layers}
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
                                             ksize=kernel_size, equalized=equalized, initial_kernel_size=None,
-                                            param_norm=param_norm, is_residual=residual, **layer_settings) for i in
-                                     range(R - 1, initial_size - 1, -1)] + [last_block])
+                                            param_norm=param_norm, is_residual=residual, only_one_conv=only_one_conv,
+                                            **layer_settings) for i in range(R - 1, initial_size - 1, -1)] + [
+                                        last_block])
         if num_classes != 0:
             self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
             if param_norm == 'spectral':

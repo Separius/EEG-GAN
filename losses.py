@@ -24,7 +24,7 @@ def calc_grad(x_hat, pred_hat):
                 only_inputs=True)[0]
 
 
-def G_loss(G, D, fake_latents_in, fake_latents_mixed, LAMBDA_3, random_multiply):
+def G_loss(G, D, fake_latents_in, fake_latents_mixed, LAMBDA_3, random_multiply, loss_type):
     G.zero_grad()
     if not isinstance(fake_latents_in, (tuple, list)):
         fake_latents_in = (fake_latents_in,)
@@ -32,13 +32,21 @@ def G_loss(G, D, fake_latents_in, fake_latents_mixed, LAMBDA_3, random_multiply)
     g_ = G(*z)
     d_fake, _ = D(g_)
     scale = random.random() if random_multiply else 1.0
-    if fake_latents_mixed is None:
-        return -d_fake.mean() * scale
     # instead of Z_g||Z_t[0:T] use Z_g[0:T]||Z_t[0:T] => makes the global part useful
-    z = (Variable(z) for z in fake_latents_mixed)
-    g_ = G(*z)
-    d_fake_mixed, _ = D(g_)
-    return (-d_fake.mean() + LAMBDA_3 * d_fake_mixed.mean()) * scale
+    if fake_latents_mixed is not None:
+        z = (Variable(z) for z in fake_latents_mixed)
+        g_ = G(*z)
+        d_fake_mixed, _ = D(g_)
+    if loss_type != 'dcgan':
+        if fake_latents_mixed is None:
+            return -d_fake.mean() * scale
+        return (-d_fake.mean() + LAMBDA_3 * d_fake_mixed.mean()) * scale
+    else:
+        loss = F.binary_cross_entropy_with_logits(d_fake, cudize(Variable(torch.ones(d_fake.size(0)))))
+        if fake_latents_mixed is None:
+            return loss * scale
+        return (loss + LAMBDA_3 * F.binary_cross_entropy_with_logits(d_fake, cudize(
+            Variable(torch.zeros(d_fake_mixed.size(0)))))) * scale
 
 
 def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, iwass_epsilon, grad_lambda, LAMBDA_2,
@@ -59,6 +67,14 @@ def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, 
     d_fake, _ = D(g_)
     if loss_type == 'hinge':
         d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean() + F.relu(1.0 + d_con).mean() * LAMBDA_3
+    elif loss_type == 'dcgan':
+        x = torch.cat((d_real, d_fake), dim=0)
+        y = torch.cat((cudize(Variable(torch.ones(d_real.size(0)))), cudize(Variable(torch.zeros(d_fake.size(0))))),
+                      dim=0)
+        d_loss = 2.0 * F.binary_cross_entropy_with_logits(x, y)
+        if concatenated_real is not None and LAMBDA_3 != 0:
+            d_loss = d_loss + F.binary_cross_entropy_with_logits(d_con, cudize(
+                Variable(torch.zeros(d_con.size(0))))) * LAMBDA_3
     else:
         d_fake_mean = d_fake.mean()
         d_real_mean = d_real.mean()

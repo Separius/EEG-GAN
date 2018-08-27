@@ -97,5 +97,4 @@ else:
         loss = F.margin_ranking_loss(high, low, target)
         loss.backward()
         optimizer.step()
-    torch.save(network, os.path.join(params['checkpoints_path'], 'compatibility_network.pth'))
-    #TODO use it
+    torch.save(network, os.path.join(params['checkpoints_path'], 'compatibility_network.pth'))  # TODO use it

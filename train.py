@@ -35,7 +35,7 @@ default_params = OrderedDict(
     grad_lambda=10.0,
     iwass_epsilon=0.001,
     load_dataset='',
-    loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct
+    loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct, dcgan
     cuda_device=0,
     LAMBDA_2=2,
     optimizer='adam',  # adam, amsgrad, ttur
@@ -53,7 +53,8 @@ default_params = OrderedDict(
     monitor_warmup=50,
     monitor_patience=5,
     LAMBDA_3=1,
-    random_multiply=False
+    random_multiply=False,
+    only_one_conv=False
 )
 
 
@@ -117,7 +118,8 @@ def main(params):
                       fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                       equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
                       num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
-                      is_extended=dataset_params['extra_factor'] != 1, **params['Generator'])
+                      is_extended=dataset_params['extra_factor'] != 1, only_one_conv=params['only_one_conv'],
+                      **params['Generator'])
         if params['Discriminator']['param_norm'] == 'spectral':
             params['Discriminator']['act_norm'] = None
         D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
@@ -125,14 +127,15 @@ def main(params):
                           fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], equalized=params['equalized'],
                           kernel_size=params['kernel_size'], self_attention_layers=params['self_attention_layers'],
                           num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
-                          **params['Discriminator'])
+                          only_one_conv=params['only_one_conv'], **params['Discriminator'])
     latent_size = G.latent_size
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
     D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
                          grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'], LAMBDA_3=params['LAMBDA_3'])
-    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'], random_multiply=params['random_multiply'])
+    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'], random_multiply=params['random_multiply'],
+                         loss_type=params['loss_type'])
     max_depth = min(G.max_depth, D.max_depth)
     if params['test_run']:
         from PIL import Image
@@ -213,6 +216,10 @@ def main(params):
     if params['optimizer'] == 'ttur':
         params['D_lr_max'] = params['G_lr_max'] * 4.0
         params['Adam']['betas'] = (0, 0.9)
+    if params['loss_type'] == 'dcgan':
+        params['G_lr_max'] = 2e-4
+        params['D_lr_max'] = 2e-4
+        params['Adam']['betas'] = (0.5, 0.999)
     opt_g = Adam(trainable_params(G), params['G_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
     opt_d = Adam(trainable_params(D), params['D_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
 
