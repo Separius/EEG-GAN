@@ -62,7 +62,7 @@ def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, 
     with torch.no_grad():
         if not isinstance(fake_latents_in, (tuple, list)):
             fake_latents_in = (fake_latents_in,)
-        z = (Variable(z) for z in fake_latents_in)
+        z = [Variable(z) for z in fake_latents_in]
     g_ = Variable(G(*z).data)
     d_fake, _ = D(g_)
     if loss_type == 'hinge':
@@ -88,7 +88,9 @@ def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, 
             gp_gain = 1
         if gp_gain != 0:
             alpha = get_mixing_factor(x_real.size(0))
-            x_hat = Variable(alpha * x_real.data + (1.0 - alpha) * g_.data, requires_grad=True)
+            min_size = min(g_.size(2), x_real.size(2))
+            x_hat = Variable(alpha * x_real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
+                             requires_grad=True)
             pred_hat, _ = D(x_hat)
             g = calc_grad(x_hat, pred_hat).view(x_hat.size(0), -1)
             gp = g.norm(p=2, dim=1) - 1

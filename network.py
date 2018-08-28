@@ -48,13 +48,13 @@ class Generator(nn.Module):
     def __init__(self, progression_scale, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
                  equalized, self_attention_layers, num_classes, depth_offset, is_extended, only_one_conv,
                  latent_size=256, residual=False, normalize_latents=True, dropout=0.1, do_mode='mul', param_norm=None,
-                 act_norm='pixel', is_morph=False, extend_context_size=3, use_extend_padding=False):
+                 act_norm='pixel', is_morph=False, extend_context_size=3, use_extend_padding=True):
         super(Generator, self).__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
         self.depth_offset = depth_offset
         self.extend_context_size = extend_context_size
-        # TODO this is not properly handled(in prepare_g_data)
+        # TODO  use_extend_padding == False does not work
         self.use_extend_padding = use_extend_padding
         R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
@@ -97,14 +97,14 @@ class Generator(nn.Module):
         for layer in self.self_attention.values():
             layer.gamma = new_gamma
 
-    def do_layer(self, l, h, y=None):
+    def do_layer(self, l, h, y=None, last=False):
         if l in self.self_attention:
             h = self.self_attention[l](h)
         h = self.upsampler(h)
-        return self.blocks[l](h, y)
+        return self.blocks[l](h, y, last)
 
     def consistent_forward(self, z1, z2, stage=2, y=None):
-        # NOTE that it assumes that training is finished and alpha=1
+        # NOTE that it assumes that training is finished and alpha==1
         h = torch.cat((z1, z2), dim=0)
         h = h.unsqueeze(2)
         if self.normalize_latents:
@@ -116,7 +116,7 @@ class Generator(nn.Module):
                 h1 = h[0:1, ...].expand_as(h2)
                 h = torch.cat((h1, h2), dim=2)
             h = self.do_layer(i, h, y)
-        h = self.upsampler[self.depth - 1](h)
+        h = self.upsampler(h)
         return self.blocks[self.depth - 1](h, y, True)
 
     @staticmethod
@@ -200,7 +200,7 @@ class Generator(nn.Module):
             h = z.permute(0, 2, 1).contiguous().view(-1, z.size(1), 1)
         h = self.block0(h, y, self.depth == 0)
         for i in range(self.depth_offset):
-            h = self.do_layer(i, h, y)
+            h = self.do_layer(i, h, y, i == self.depth_offset - 1 and self.depth == self.depth_offset)
         if z_temporal is not None:
             h = h.permute(0, 2, 1).contiguous().view(z.size(0), -1, h.size(1)).permute(0, 2, 1)
             if self.is_morph:

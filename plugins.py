@@ -22,6 +22,7 @@ class DepthManager(Plugin):
                  max_depth,
                  tick_kimg_default,
                  has_attention,
+                 disable_progression=False,
                  depth_offset=0,  # starts form 0
                  attention_transition_kimg=300,
                  minibatch_default=256,
@@ -42,6 +43,7 @@ class DepthManager(Plugin):
         self.trainer = None
         self.depth = -1
         self.alpha = -1
+        self.disable_progression = disable_progression
         self.depth_offset = depth_offset
         self.max_depth = max_depth
         self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(self.depth_offset, max_depth,
@@ -95,6 +97,8 @@ class DepthManager(Plugin):
             if cur_nimg < point:
                 break
         depth = min(self.max_depth, depth)
+        if self.disable_progression:
+            depth = self.max_depth
         return depth, alpha
 
     def iteration(self, *args):

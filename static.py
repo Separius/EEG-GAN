@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import cudize, enable_benchmark, load_model, save_pkl, simple_argparser
+from utils import cudize, enable_benchmark, load_model, save_pkl, simple_argparser, load_pkl
 
 
 def run_static(gen, disc, pop_size=128, stage=3, ratio=0.95, y=None):
@@ -52,7 +52,8 @@ params = dict(
     static_ratio=0.95,
     num_classes=0,
     static_output_location=None,
-    smart_db_size=1024 * 32
+    smart_db_size=1024 * 32,
+    smart_db_loc='smdb.pkl'
 )
 params = simple_argparser(params)
 
@@ -78,13 +79,18 @@ if params['dumb']:
         loc = params['static_output_location']
     save_pkl(loc, generated)
 else:
-    db_z1 = []
-    db_z2 = []
-    for i in range(params['smart_db_size']):
-        generated, scores, z1, z2 = run_static(G, D, pop_size=params['pop_size'], stage=params['g_stage'],
-                                               ratio=params['static_ratio'])
-        db_z1.append(z1)  # ((1, latent_size), (2, latent_size))
-        db_z2.append(z2[torch.topk(scores, 2)[1]])
+    dbl = os.path.join(params['checkpoints_path'], params['smart_db_loc'])
+    if os.path.exists(dbl):
+        db_z1, db_z2 = load_pkl(dbl)
+    else:
+        db_z1 = []
+        db_z2 = []
+        for i in range(params['smart_db_size']):
+            generated, scores, z1, z2 = run_static(G, D, pop_size=params['pop_size'], stage=params['g_stage'],
+                                                   ratio=params['static_ratio'])
+            db_z1.append(z1)  # ((1, latent_size), (2, latent_size))
+            db_z2.append(z2[torch.topk(scores, 2)[1]])
+        save_pkl(dbl, (db_z1, db_z2))
     bs = params['smart_batch_size']
     target = cudize(torch.ones(bs))
     network = cudize(CompatNet(G.latent_size, params['smart_num_layers']))
