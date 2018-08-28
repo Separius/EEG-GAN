@@ -10,7 +10,7 @@ loss_type: 'wgan_gp'  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct, dc
 LAMBDA_2: 2
 LAMBDA_3: 1
 optimizer: 'adam'  # adam, amsgrad, ttur
-fmap_base: 2048
+fmap_base: 1024
 fmap_max: 256
 fmap_min: 64
 equalized: true
@@ -20,13 +20,13 @@ num_classes: 0
 monitor_threshold: 10
 random_multiply: false
 only_one_conv: false
-Trainer.D_training_repeats: 1
+Trainer.D_training_repeats: 2
 Trainer.tick_kimg_default: 5
 Trainer.memory_friendly: false
 
 Generator.latent_size: 256
 Generator.normalize_latents: true
-Generator.dropout: 0.1
+Generator.dropout: 0.25
 Generator.do_mode: 'mul' # mul, drop, prop
 Generator.param_norm: null # weight, spectral, null
 Generator.act_norm: 'pixel' # pixel, layer, batch, null
@@ -36,7 +36,7 @@ Generator.extend_context_size: 3
 Generator.use_extend_padding: false
 
 Discriminator.do_mode: 'mul' # mul, drop, prop
-Discriminator.dropout: 0.1
+Discriminator.dropout: 0.25
 Discriminator.param_norm: null # weight, spectral, null
 Discriminator.temporal_stats: false
 Discriminator.num_stat_channels: 1

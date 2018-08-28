@@ -8,7 +8,7 @@ class Trainer(object):
 
     def __init__(self, D, G, D_loss, G_loss, optimizer_d, optimizer_g, dataset, random_latents_generator, extra_factor,
                  lambda_3, is_morph, grad_clip=None, D_training_repeats=1, tick_kimg_default=5, resume_nimg=0,
-                 memory_friendly=True):
+                 memory_friendly=False):
         self.D = D
         self.G = G
         self.D_loss = D_loss
@@ -125,7 +125,8 @@ class Trainer(object):
             fake_latents_in = (fake_latents_in[0][:new_batch_size, :],
                                fake_latents_in[1][:new_batch_size, :, :z_picked_factor])
             if lambda_3 != 0 and picked_factor > 1:
-                mixed_latents = (cudize(torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1) // 4,
+                # 3/4 / 3 == 1/4
+                mixed_latents = (cudize(torch.randn(fake_latents_in[1].size(0), fake_latents_in[1].size(1) // 3,
                                                     fake_latents_in[1].size(2))), fake_latents_in[1])
         return fake_latents_in, mixed_latents
 

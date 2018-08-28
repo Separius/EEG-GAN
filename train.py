@@ -37,7 +37,7 @@ default_params = OrderedDict(
     load_dataset='',
     loss_type='wgan_gp',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct, dcgan
     cuda_device=0,
-    LAMBDA_2=2,
+    LAMBDA_2=2.0,
     optimizer='adam',  # adam, amsgrad, ttur
     config_file=None,
     test_run=False,
@@ -47,12 +47,12 @@ default_params = OrderedDict(
     equalized=True,
     kernel_size=3,
     self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
-    progression_scale=2,  # single number or a list where prod(list) == seq_len
+    progression_scale=2,
     num_classes=0,
     monitor_threshold=10,
     monitor_warmup=50,
     monitor_patience=5,
-    LAMBDA_3=1,
+    LAMBDA_3=1.0,
     random_multiply=False,
     only_one_conv=False
 )
@@ -166,7 +166,7 @@ def main(params):
         image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
         image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
         image = Image.fromarray(image, 'RGB')
-        image.show()
+        # image.show()
         z = cudize(torch.randn(2, latent_size))
         l = D_loss_fun(D, G, G(z), z, None)
         l.backward()
@@ -183,13 +183,17 @@ def main(params):
         l = G_loss_fun(G, D, z, None)
         print('generator loss:', l.item())
         l.backward()
-        real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1,
-                                                                          params['Trainer']['memory_friendly'])
-        l = D_loss_fun(D, G, real_images_expr, z_d, real_images_mixed)
-        l.backward()
-        z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1, params['Trainer']['memory_friendly'])
-        l = G_loss_fun(G, D, z_g, z_mixed)
-        l.backward()
+        for _ in range(2):
+            real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1,
+                                                                              params['Trainer']['memory_friendly'])
+            l = D_loss_fun(D, G, real_images_expr, z_d, real_images_mixed)
+            l.backward()
+            z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
+        for _ in range(2):
+            z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1, params['Trainer']['memory_friendly'])
+            l = G_loss_fun(G, D, z_g, z_mixed)
+            l.backward()
+            z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
         exit()
 
     logger.log('exp name: {}'.format(params['exp_name']))

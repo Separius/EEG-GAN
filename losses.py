@@ -58,7 +58,7 @@ def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, 
     if concatenated_real is not None:
         d_con, _ = D(concatenated_real)
     else:
-        d_con = -1.0 if loss_type == 'hinge' else cudize(torch.zeros(1))
+        d_con = -cudize(torch.ones(1)) if loss_type == 'hinge' else cudize(torch.zeros(1))
     with torch.no_grad():
         if not isinstance(fake_latents_in, (tuple, list)):
             fake_latents_in = (fake_latents_in,)

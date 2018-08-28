@@ -3,6 +3,7 @@ import math
 import glob
 import torch
 import numpy as np
+from tqdm import trange
 from scipy.io import loadmat
 from torch.utils.data import Dataset
 
@@ -18,7 +19,9 @@ class EEGDataset(Dataset):
         self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
         if num_files is not None:
             self.all_files = self.all_files[:num_files]
-        self.id2fname = self.get_reports(dir_path)  # TODO use this
+        else:
+            num_files = len(self.all_files)
+        # self.id2fname = self.get_reports(dir_path)  # TODO use this
         self.seq_len = seq_len
         self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
@@ -40,7 +43,7 @@ class EEGDataset(Dataset):
         num_points = [((self.sizes[i] - 1) * self.stride + self.extra_len) if self.sizes[i] > 0 else 1 for i in
                       range(num_files)]
         self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
-        for i in range(num_files):
+        for i in trange(num_files):
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
                     tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[

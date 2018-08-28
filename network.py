@@ -2,6 +2,7 @@ import math
 import torch
 import numpy as np
 from torch import nn
+from functools import partial
 import torch.nn.functional as F
 from utils import pixel_norm, cudize
 from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, spectral_norm
@@ -12,12 +13,13 @@ class GBlock(nn.Module):
                  is_residual=False, only_one_conv=False, **layer_settings):
         super(GBlock, self).__init__()
         is_first = initial_kernel_size is not None
-        if not only_one_conv:
+        if not only_one_conv or is_first:
             self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, ksize=initial_kernel_size if is_first else ksize,
                                   pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
         else:
             self.c1 = None
-        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, ksize=ksize, **layer_settings)
+        self.c2 = GeneralConv(ch_out if self.c1 is not None else ch_in, ch_out, equalized=equalized, ksize=ksize,
+                              **layer_settings)
         self.toRGB = nn.Sequential(GeneralConv(ch_out, num_channels, ksize=1, act=False, equalized=equalized),
                                    ScaledTanh())
         if not is_first and is_residual:
@@ -80,22 +82,23 @@ class Generator(nn.Module):
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         self.progression_scale = progression_scale
-        self.upsampler = nn.Upsample(scale_factor=progression_scale, mode='linear', align_corners=True)
+        self.upsampler = partial(F.interpolate, size=None, scale_factor=progression_scale, mode='linear',
+                                 align_corners=True)
         self.is_morph = is_morph
+        self.is_extended = is_extended
         if extend_context_size != 0 and self.is_extended:
             temporal_latent_size = 3 * latent_size // 4
             self.context_maker = nn.Conv1d(latent_size, temporal_latent_size, kernel_size=extend_context_size,
                                            padding=extend_context_size // 2 if use_extend_padding else 0)
         else:
             self.context_maker = None
-        self.is_extended = is_extended
 
     def set_gamma(self, new_gamma):
         for layer in self.self_attention.values():
             layer.gamma = new_gamma
 
     def do_layer(self, l, h, y=None):
-        if l in self.self_attention_layer:
+        if l in self.self_attention:
             h = self.self_attention[l](h)
         h = self.upsampler(h)
         return self.blocks[l](h, y)
@@ -228,7 +231,7 @@ class DBlock(nn.Module):
             self.net = [MinibatchStddev(temporal, num_stat_channels)]
         else:
             self.net = []
-        if not only_one_conv:
+        if not only_one_conv or is_last:
             self.net.append(
                 GeneralConv(ch_in + (num_stat_channels if is_last else 0), ch_in, ksize=ksize, equalized=equalized,
                             param_norm=param_norm, **layer_settings))
