@@ -178,7 +178,7 @@ class Generator(nn.Module):
         else:
             return ult
 
-    def forward(self, z_global, z_temporal=None, y=None):  # glob=(N,z_dim) or glob=(N,z/4,[T]), temporal=(N,3z/4,T)
+    def forward(self, z_global, z_temporal=None, y=None):  # global=(N,z_dim) or global=(N,z/4,[T]), temporal=(N,3z/4,T)
         if self.is_extended and (self.depth < self.depth_offset):
             raise ValueError()
         if self.normalize_latents:
@@ -202,8 +202,8 @@ class Generator(nn.Module):
             z = torch.cat((z_global, z_temporal), dim=1)
             h = z.permute(0, 2, 1).contiguous().view(-1, z.size(1), 1)
         h = self.block0(h, y, self.depth == 0)
-        for i in range(self.depth_offset):
-            h = self.do_layer(i, h, y, i == self.depth_offset - 1 and self.depth == self.depth_offset)
+        for i in range(self.depth_offset-1):
+            h = self.do_layer(i, h, y)
         if z_temporal is not None:
             h = h.permute(0, 2, 1).contiguous().view(z.size(0), -1, h.size(1)).permute(0, 2, 1)
             if self.is_morph:
@@ -211,8 +211,6 @@ class Generator(nn.Module):
                 if not self.use_extend_padding:
                     num_z -= self.extend_context_size - 1
                 h = self.morph(h, h.size(2) // num_z, num_z)
-        if self.depth == self.depth_offset:
-            return h
         for i in range(self.depth_offset, self.depth - 1):
             h = self.do_layer(i, h, y)
         h = self.upsampler(h)

@@ -24,15 +24,15 @@ class DepthManager(Plugin):
                  has_attention,
                  disable_progression=False,
                  depth_offset=0,  # starts form 0
-                 attention_transition_kimg=300,
+                 attention_transition_kimg=400,
                  minibatch_default=256,
                  # all overrides start from depth_offset+1
                  minibatch_overrides={4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16},
                  tick_kimg_overrides={4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1},
-                 lod_training_kimg=250,
-                 lod_training_kimg_overrides={1: 150, 2: 200, 3: 200},
-                 lod_transition_kimg=250,
-                 lod_transition_kimg_overrides={1: 150, 2: 200, 3: 200}):
+                 lod_training_kimg=400,
+                 lod_training_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200},
+                 lod_transition_kimg=400,
+                 lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
         super(DepthManager, self).__init__([(1, 'iteration')])
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
