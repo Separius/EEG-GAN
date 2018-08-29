@@ -70,9 +70,12 @@ class Generator(nn.Module):
         initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, is_residual=residual, **layer_settings)
+        self.dummy = []
         self.self_attention = dict()
         for layer in self_attention_layers:
-            self.self_attention[layer] = SelfAttention(nf(layer + 1))
+            self.dummy.append(SelfAttention(nf(layer + 1)))
+            self.self_attention[layer] = self.dummy[-1]
+        self.dummy = nn.ModuleList(self.dummy)
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
                                             ksize=kernel_size, equalized=equalized, is_residual=residual,
                                             only_one_conv=only_one_conv, **layer_settings) for i in
@@ -282,8 +285,12 @@ class Discriminator(nn.Module):
         last_block = DBlock(nf(1), nf(0), num_channels, initial_kernel_size=initial_kernel_size,
                             temporal=temporal_stats, num_stat_channels=num_stat_channels, ksize=kernel_size,
                             equalized=equalized, param_norm=param_norm, is_residual=residual, **layer_settings)
-        self.self_attention = {self_attention_layer: SelfAttention(nf(self_attention_layer + 1)) for
-                               self_attention_layer in self_attention_layers}
+        self.dummy = []
+        self.self_attention = dict()
+        for layer in self_attention_layers:
+            self.dummy.append(SelfAttention(nf(layer + 1)))
+            self.self_attention[layer] = self.dummy[-1]
+        self.dummy = nn.ModuleList(self.dummy)
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
                                             ksize=kernel_size, equalized=equalized, initial_kernel_size=None,
                                             param_norm=param_norm, is_residual=residual, only_one_conv=only_one_conv,
