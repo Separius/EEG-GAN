@@ -25,7 +25,7 @@ def output_samples(generator_path, num_samples):
         params['max_batch_size'] = num_samples
     outputs = []
     for i in trange(int(math.ceil(num_samples / params['max_batch_size']))):
-        z = random_latents(params['max_batch_size'], G.latent_size, 8 if G.is_extended else 1)
+        z = random_latents(params['max_batch_size'], 1)
         if not isinstance(z, (tuple, list)):
             z = (z, )
         gen_input = (cudize(Variable(x)) for x in z)

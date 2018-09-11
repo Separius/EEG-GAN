@@ -5,28 +5,25 @@ import torch
 import signal
 import subprocess
 import numpy as np
+from box import Box
 from trainer import Trainer
 from torch.optim import Adam
 from functools import partial
 from dataset import EEGDataset
-from losses import G_loss, D_loss
+from losses import generator_loss, discriminator_loss
 from argparse import ArgumentParser
-from collections import OrderedDict
 from torch.utils.data import DataLoader
 from network import Generator, Discriminator
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data.sampler import SubsetRandomSampler
 from plugins import (OutputGenerator, SaverPlugin, AbsoluteTimeMonitor,
-                     EfficientLossMonitor, DepthManager, TeeLogger, LRScheduler)
+                     EfficientLossMonitor, DepthManager, TeeLogger)
 from utils import (load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir,
                    num_params, create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
 
-default_params = OrderedDict(
+default_params = Box(
     result_dir='results',
     exp_name='',
-    lr_rampup_kimg=50,
-    G_lr_max=0.005,
-    D_lr_max=0.005,
+    G_lr=0.001,
     total_kimg=6000,
     resume_network='',  # 001-test/network-snapshot-{}-000025.dat
     resume_time=0,
@@ -34,27 +31,23 @@ default_params = OrderedDict(
     random_seed=1373,
     grad_lambda=10.0,
     iwass_epsilon=0.001,
+    iwass_target=1.0,
     load_dataset='',
-    loss_type='wgan_theirs',  # wgan_gp, wgan_ct, hinge, wgan_theirs, wgan_theirs_ct, dcgan
+    loss_type='wgan_theirs',  # wgan_gp, hinge, wgan_theirs
     cuda_device=0,
-    LAMBDA_2=2.0,
-    optimizer='adam',  # adam, amsgrad, ttur
+    ttur=False,
     config_file=None,
-    test_run=False,
     fmap_base=2048,
     fmap_max=256,
     fmap_min=64,
     equalized=True,
     kernel_size=3,
     self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
-    progression_scale=2,
     num_classes=0,
     monitor_threshold=10,
     monitor_warmup=50,
     monitor_patience=5,
-    LAMBDA_3=1.0,
     random_multiply=False,
-    only_one_conv=False
 )
 
 
@@ -83,20 +76,19 @@ def worker_init(x):
 
 
 def main(params):
-    dataset_params = params['EEGDataset']
-    if params['load_dataset'] and os.path.exists(params['load_dataset']):
+    dataset_params = params.EEGDataset
+    if params.load_dataset and os.path.exists(params.load_dataset):
         print('loading dataset from file')
-        dataset = load_pkl(params['load_dataset'])
+        dataset = load_pkl(params.load_dataset)
     else:
         print('creating dataset from scratch')
-        dataset = EEGDataset(params['progression_scale'], **dataset_params)
-        if params['load_dataset']:
+        dataset = EEGDataset(**dataset_params)
+        if params.load_dataset:
             print('saving dataset to file')
-            save_pkl(params['load_dataset'], dataset)
-    if params['config_file'] and params['exp_name'] == '':
-        params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
-    if not params['test_run']:
-        result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
+            save_pkl(params.load_dataset, dataset)
+    if params.config_file and params.exp_name == '':
+        params.exp_name = params.config_file.split('/')[-1].split('.')[0]
+    result_dir = create_result_subdir(params.result_dir, params.exp_name)
 
     losses = ['G_loss', 'D_loss']
     stats_to_log = ['tick_stat', 'kimg_stat']
@@ -105,98 +97,26 @@ def main(params):
         stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
 
-    if params['test_run'] and params['resume_network']:
-        print('resuming does not work in test_run mode')
-        params['resume_network'] = ''
-    if not params['test_run']:
-        logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
-    if params['resume_network'] != '':
-        G, D = load_models(params['resume_network'], params['result_dir'], logger)
+    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params.exp_name, stats_to_log, [(1, 'epoch')])
+    if params.resume_network != '':
+        G, D = load_models(params.resume_network, params.result_dir, logger)
     else:
-        G = Generator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
-                      initial_size=dataset_params['model_dataset_depth_offset'], fmap_base=params['fmap_base'],
-                      fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
-                      equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
-                      num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
-                      is_extended=dataset_params['extra_factor'] != 1, only_one_conv=params['only_one_conv'],
-                      **params['Generator'])
-        if params['Discriminator']['param_norm'] == 'spectral':
-            params['Discriminator']['act_norm'] = None
-        D = Discriminator(progression_scale=params['progression_scale'], dataset_shape=dataset.shape,
-                          initial_size=dataset_params['model_dataset_depth_offset'], fmap_base=params['fmap_base'],
-                          fmap_max=params['fmap_max'], fmap_min=params['fmap_min'], equalized=params['equalized'],
-                          kernel_size=params['kernel_size'], self_attention_layers=params['self_attention_layers'],
-                          num_classes=params['num_classes'], depth_offset=params['DepthManager']['depth_offset'],
-                          only_one_conv=params['only_one_conv'], **params['Discriminator'])
+        shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset_params.model_dataset_depth_offset,
+                                   fmap_base=params.fmap_base, fmap_max=params.fmap_max, fmap_min=params.fmap_min,
+                                   kernel_size=params.kernel_size, equalized=params.equalized,
+                                   self_attention_layers=params.self_attention_layers, num_classes=params.num_classes)
+        G = Generator(**shared_model_params, **params.Generator)
+        D = Discriminator(**shared_model_params, **params.Discriminator)
     latent_size = G.latent_size
     assert G.max_depth == D.max_depth
     G = cudize(G)
     D = cudize(D)
-    D_loss_fun = partial(D_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], LAMBDA_2=params['LAMBDA_2'], LAMBDA_3=params['LAMBDA_3'])
-    G_loss_fun = partial(G_loss, LAMBDA_3=params['LAMBDA_3'], random_multiply=params['random_multiply'],
-                         loss_type=params['loss_type'])
+    d_loss_fun = partial(discriminator_loss, loss_type=params.loss_type, iwass_epsilon=params.iwass_epsilon,
+                         grad_lambda=params.grad_lambda, iwass_target=params.iwass_target)
+    g_loss_fun = partial(generator_loss, random_multiply=params.random_multiply)
     max_depth = min(G.max_depth, D.max_depth)
-    if params['test_run']:
-        from PIL import Image
-        from torchsummary import summary
-        from matplotlib import pyplot as plt
-        G.is_extended = False
-        G.set_gamma(1)
-        G.depth = G.max_depth
-        summary(G, (latent_size,))
-        D.set_gamma(1)
-        D.depth = D.max_depth
-        summary(D, (dataset_params['num_channels'], dataset_params['seq_len']))
-        D.train()
-        G.train()
-        dm = DepthManager(None, None, max_depth, params['Trainer']['tick_kimg_default'],
-                          len(params['self_attention_layers']) != 0, **params['DepthManager'])
-        print('start_gamma:', dm.start_gamma, '\tend_gamma:', dm.end_gamma, '\tmax_depth:', dm.max_depth,
-              '\tdepth_offset:', dm.depth_offset, '\tseq_len:', dataset_params['seq_len'], '\tdataset_offset:',
-              dataset_params['model_dataset_depth_offset'])
-        print('alpha_map:', dm.alpha_map)
-        print(D)
-        print(G)
-        points = [dm.calc_progress(i)[0] + dm.calc_progress(i)[1] - 1 for i in
-                  range(0, params['total_kimg'] * 1000, 1000)]
-        plt.plot(points)
-        fig = plt.gcf()
-        fig.canvas.draw()
-        image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-        image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-        image = Image.fromarray(image, 'RGB')
-        # image.show()
-        z = cudize(torch.randn(2, latent_size))
-        l = D_loss_fun(D, G, G(z), z, None)
-        l.backward()
-        print('non long loss:', l.item())
-        G.is_extended = True
-        z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
-        l = D_loss_fun(D, G, G(*z), z, None)
-        l.backward()
-        print('long loss:', l.item())
-        G.is_extended = False
-        print('d_final_basic: ', D(G(cudize(torch.randn(2, latent_size))))[1].shape)
-        G.is_extended = True
-        print('d_final_long: ', D(G(*z))[1].shape)
-        l = G_loss_fun(G, D, z, None)
-        print('generator loss:', l.item())
-        l.backward()
-        for _ in range(2):
-            real_images_expr, real_images_mixed, z_d = Trainer.prepare_d_data(G(*z), z, 4, False, 1,
-                                                                              params['Trainer']['memory_friendly'])
-            l = D_loss_fun(D, G, real_images_expr, z_d, real_images_mixed)
-            l.backward()
-            z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
-        for _ in range(2):
-            z_g, z_mixed = Trainer.prepare_g_data(z, 4, False, 1, params['Trainer']['memory_friendly'])
-            l = G_loss_fun(G, D, z_g, z_mixed)
-            l.backward()
-            z = (cudize(torch.randn(8, latent_size // 4)), cudize(torch.randn(8, 3 * latent_size // 4, 4)))
-        exit()
 
-    logger.log('exp name: {}'.format(params['exp_name']))
+    logger.log('exp name: {}'.format(params.exp_name))
     try:
         logger.log('commit hash: {}'.format(subprocess.check_output(["git", "describe", "--always"]).strip()))
     except:
@@ -205,57 +125,48 @@ def main(params):
     logger.log('Total number of parameters in Generator: {}'.format(num_params(G)))
     logger.log('Total number of parameters in Discriminator: {}'.format(num_params(D)))
 
-    mb_def = params['DepthManager']['minibatch_default']
+    mb_def = params.DepthManager.minibatch_default
     dataset_len = len(dataset)
     train_idx = list(range(dataset_len))
     np.random.shuffle(train_idx)
 
     def get_dataloader(minibatch_size):
         return DataLoader(dataset, minibatch_size, sampler=InfiniteRandomSampler(train_idx), worker_init_fn=worker_init,
-                          num_workers=params['num_data_workers'], pin_memory=False, drop_last=True)
+                          num_workers=params.num_data_workers, pin_memory=False, drop_last=True)
 
     def rl(bs):
         return partial(random_latents, num_latents=bs, latent_size=latent_size)
 
-    if params['optimizer'] == 'ttur':
-        params['D_lr_max'] = params['G_lr_max'] * 4.0
-        params['Adam']['betas'] = (0, 0.9)
-    if params['loss_type'] == 'dcgan':
-        params['G_lr_max'] = 2e-4
-        params['D_lr_max'] = 2e-4
-        params['Adam']['betas'] = (0.5, 0.999)
-    opt_g = Adam(trainable_params(G), params['G_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
-    opt_d = Adam(trainable_params(D), params['D_lr_max'], amsgrad=params['optimizer'] == 'amsgrad', **params['Adam'])
-
-    def rampup(cur_nimg):
-        if cur_nimg < params['lr_rampup_kimg'] * 1000:
-            p = max(0.0, 1 - cur_nimg / (params['lr_rampup_kimg'] * 1000))
-            return np.exp(-p * p * 5.0)
+    def get_optimizers(g_lr):
+        if params.ttur:
+            d_lr = g_lr * 4.0
+            params.Adam.betas = (0, 0.9)
         else:
-            return 1.0
+            d_lr = g_lr
+        opt_g = Adam(trainable_params(G), g_lr, **params.Adam)
+        opt_d = Adam(trainable_params(D), d_lr, **params.Adam)
+        return opt_g, opt_d
 
-    lr_scheduler_d = LambdaLR(opt_d, rampup)
-    lr_scheduler_g = LambdaLR(opt_g, rampup)
+    opt_g, opt_d = get_optimizers(params.G_lr)
 
-    trainer = Trainer(D, G, D_loss_fun, G_loss_fun, opt_d, opt_g, dataset, rl(mb_def), dataset_params['extra_factor'],
-                      params['LAMBDA_3'], params['Generator']['is_morph'], **params['Trainer'])
-    trainer.register_plugin(DepthManager(get_dataloader, rl, max_depth, params['Trainer']['tick_kimg_default'],
-                                         len(params['self_attention_layers']) != 0, **params['DepthManager']))
+    trainer = Trainer(D, G, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset, rl(mb_def), **params.Trainer)
+    trainer.register_plugin(DepthManager(get_dataloader, rl, max_depth, params.Trainer.tick_kimg_default,
+                                         len(params.self_attention_layers) != 0, get_optimizers, params.G_lr,
+                                         **params.DepthManager))
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(
-            EfficientLossMonitor(i, loss_name, params['monitor_threshold'], params['monitor_warmup'],
-                                 params['monitor_patience']))
+            EfficientLossMonitor(i, loss_name, params.monitor_threshold, params.monitor_warmup,
+                                 params.monitor_patience))
 
-    trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
+    trainer.register_plugin(SaverPlugin(result_dir, **params.SaverPlugin))
     trainer.register_plugin(
-        OutputGenerator(lambda x: random_latents(x, latent_size, dataset_params['extra_factor']), result_dir,
-                        dataset_params['seq_len'], dataset_params['max_freq'], dataset_params['seq_len'],
-                        **params['OutputGenerator']))
-    trainer.register_plugin(AbsoluteTimeMonitor(params['resume_time']))
-    trainer.register_plugin(LRScheduler(lr_scheduler_d, lr_scheduler_g))
+        OutputGenerator(lambda x: random_latents(x, latent_size), result_dir,
+                        dataset_params.seq_len, dataset_params.max_freq, dataset_params.seq_len,
+                        **params.OutputGenerator))
+    trainer.register_plugin(AbsoluteTimeMonitor(params.resume_time))
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
-    trainer.run(params['total_kimg'])
+    trainer.run(params.total_kimg)
     del trainer
 
 
@@ -274,16 +185,16 @@ if __name__ == "__main__":
             group.add_argument('--{}'.format(name), type=generic_arg_parse)
             default_params[name] = auto_args[cls][k]
     parser.set_defaults(**default_params)
-    params = vars(parser.parse_args())
-    if params['config_file']:
+    params = Box(vars(parser.parse_args()))
+    if params.config_file:
         print('loading config_file')
-        params.update(yaml.load(open(params['config_file'], 'r')))
+        params.update(yaml.load(open(params.config_file, 'r')))
     params = get_structured_params(params)
-    np.random.seed(params['random_seed'])
-    torch.manual_seed(params['random_seed'])
+    np.random.seed(params.random_seed)
+    torch.manual_seed(params.random_seed)
     if torch.cuda.is_available():
-        torch.cuda.set_device(params['cuda_device'])
-        torch.cuda.manual_seed_all(params['random_seed'])
-    enable_benchmark()
+        torch.cuda.set_device(params.cuda_device)
+        torch.cuda.manual_seed_all(params.random_seed)
+        enable_benchmark()
     main(params)
     print('training finished!')

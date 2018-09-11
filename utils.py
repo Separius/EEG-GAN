@@ -6,6 +6,8 @@ from pickle import load, dump
 from functools import partial
 from argparse import ArgumentParser
 
+EPSILON = 1e-8
+
 
 def generate_samples(generator, gen_input):
     out = generator.forward(*gen_input)
@@ -98,7 +100,7 @@ def trainable_params(model):
 
 def pixel_norm(h):
     mean = torch.mean(h * h, dim=1, keepdim=True)
-    dom = torch.rsqrt(mean + 1e-8)
+    dom = torch.rsqrt(mean + EPSILON)
     return h * dom
 
 
@@ -111,8 +113,7 @@ def simple_argparser(default_params):
 
 
 def enable_benchmark():
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True  # for fast training(if network input size is almost constant)
+    torch.backends.cudnn.benchmark = True  # for fast training(if network input size is almost constant)
 
 
 def map_location(storage, location):

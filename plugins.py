@@ -5,6 +5,7 @@ import matplotlib
 import numpy as np
 from glob import glob
 from scipy import misc
+from copy import deepcopy
 from datetime import timedelta
 from torch.autograd import Variable
 from utils import generate_samples, cudize
@@ -22,6 +23,8 @@ class DepthManager(Plugin):
                  max_depth,
                  tick_kimg_default,
                  has_attention,
+                 get_optimizer,
+                 default_lr,
                  disable_progression=False,
                  depth_offset=0,  # starts form 0
                  attention_transition_kimg=400,
@@ -43,9 +46,11 @@ class DepthManager(Plugin):
         self.trainer = None
         self.depth = -1
         self.alpha = -1
+        self.get_optimizer = get_optimizer
         self.disable_progression = disable_progression
         self.depth_offset = depth_offset
         self.max_depth = max_depth
+        self.default_lr = default_lr
         self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(self.depth_offset, max_depth,
                                                                                         lod_training_kimg,
                                                                                         lod_training_kimg_overrides,
@@ -108,6 +113,8 @@ class DepthManager(Plugin):
             self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
+            self.trainer.optimizer_g, self.trainer.optimizer_d = self.get_optimizer(
+                self.minibatch_default * self.default_lr / minibatch_size)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
@@ -157,8 +164,7 @@ class EfficientLossMonitor(LossMonitor):
     def _get_value(self, iteration, *args):
         val = args[self.loss_no].item()
         if val != val:
-            print('loss value is NaN :((')
-            exit(0)
+            raise ValueError('loss value is NaN :((')
         return val
 
     def epoch(self, idx):
@@ -168,8 +174,7 @@ class EfficientLossMonitor(LossMonitor):
             if abs(loss_value) > self.threshold:
                 self.counter += 1
                 if self.counter > self.patience:
-                    print('loss value exceeded the threshold')
-                    exit(0)
+                    raise ValueError('loss value exceeded the threshold')
             else:
                 self.counter = 0
 
@@ -237,16 +242,28 @@ class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
                  output_snapshot_ticks=25):
-        super(OutputGenerator, self).__init__([(output_snapshot_ticks, 'epoch'), (1, 'end')])
+        super(OutputGenerator, self).__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
         self.max_freq = max_freq
+        self.my_g_clone = None
+        self.output_snapshot_ticks = output_snapshot_ticks
+
+    @staticmethod
+    def flatten_params(model):
+        return deepcopy(list(p.data for p in model.parameters()))
+
+    @staticmethod
+    def load_params(flattened, model):
+        for p, avg_p in zip(model.parameters(), flattened):
+            p.data.copy_(avg_p)
 
     def register(self, trainer):
         self.trainer = trainer
+        self.my_g_clone = self.flatten_params(self.trainer.G)
 
     @staticmethod
     def get_images(seq_len, frequency, epoch, generated):
@@ -276,16 +293,22 @@ class OutputGenerator(Plugin):
         return images
 
     def epoch(self, epoch_index):
-        z = self.sample_fn(self.samples_count)
-        if not isinstance(z, (list, tuple)):
-            z = (z, )
-        gen_input = (cudize(Variable(x)) for x in z)
-        out = generate_samples(self.trainer.G, gen_input)
-        frequency = self.max_freq * out.shape[2] / self.seq_len
-        res_len = min(self.res_len, out.shape[2])
-        images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
-        for i, image in enumerate(images):
-            misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
+        for p, avg_p in zip(self.trainer.G.parameters(), self.my_g_clone):
+            avg_p.mul_(0.9).add_(0.1, p.data)
+        if epoch_index % self.output_snapshot_ticks == 0:
+            z = self.sample_fn(self.samples_count)
+            if not isinstance(z, (list, tuple)):
+                z = (z,)
+            gen_input = (cudize(Variable(x)) for x in z)
+            original_param = self.flatten_params(self.trainer.G)
+            self.load_params(self.my_g_clone, self.trainer.G)
+            out = generate_samples(self.trainer.G, gen_input)
+            self.load_params(original_param, self.trainer.G)
+            frequency = self.max_freq * out.shape[2] / self.seq_len
+            res_len = min(self.res_len, out.shape[2])
+            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+            for i, image in enumerate(images):
+                misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
     def end(self, *args):
         self.epoch(*args)

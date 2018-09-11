@@ -24,82 +24,48 @@ def calc_grad(x_hat, pred_hat):
                 only_inputs=True)[0]
 
 
-def G_loss(G, D, fake_latents_in, fake_latents_mixed, LAMBDA_3, random_multiply, loss_type):
-    G.zero_grad()
+def generator_loss(gen, dis, fake_latents_in, random_multiply):
+    gen.zero_grad()
     if not isinstance(fake_latents_in, (tuple, list)):
         fake_latents_in = (fake_latents_in,)
     z = (Variable(z) for z in fake_latents_in)
-    g_ = G(*z)
-    d_fake, _ = D(g_)
+    g_ = gen(*z)
+    d_fake, _ = dis(g_)
     scale = random.random() if random_multiply else 1.0
-    # instead of Z_g||Z_t[0:T] use Z_g[0:T]||Z_t[0:T] => makes the global part useful
-    if fake_latents_mixed is not None:
-        z = (Variable(z) for z in fake_latents_mixed)
-        g_ = G(*z)
-        d_fake_mixed, _ = D(g_)
-    if loss_type != 'dcgan':
-        if fake_latents_mixed is None:
-            return -d_fake.mean() * scale
-        return (-d_fake.mean() + LAMBDA_3 * d_fake_mixed.mean()) * scale
-    else:
-        loss = F.binary_cross_entropy_with_logits(d_fake, cudize(Variable(torch.ones(d_fake.size(0)))))
-        if fake_latents_mixed is None:
-            return loss * scale
-        return (loss + LAMBDA_3 * F.binary_cross_entropy_with_logits(d_fake, cudize(
-            Variable(torch.zeros(d_fake_mixed.size(0)))))) * scale
+    return -d_fake.mean() * scale
 
 
-def D_loss(D, G, real_images_in, fake_latents_in, concatenated_real, loss_type, iwass_epsilon, grad_lambda, LAMBDA_2,
-           LAMBDA_3):
-    D.zero_grad()
-    G.zero_grad()
+def discriminator_loss(dis, gen, real_images_in, fake_latents_in, loss_type, iwass_epsilon, grad_lambda, iwass_target):
+    dis.zero_grad()
+    gen.zero_grad()
     x_real = Variable(real_images_in)
-    d_real, d_last_real = D(x_real)
-    if concatenated_real is not None:
-        d_con, _ = D(concatenated_real)
-    else:
-        d_con = -cudize(torch.ones(1)) if loss_type == 'hinge' else cudize(torch.zeros(1))
+    d_real, d_last_real = dis(x_real)
     with torch.no_grad():
         if not isinstance(fake_latents_in, (tuple, list)):
             fake_latents_in = (fake_latents_in,)
         z = [Variable(z) for z in fake_latents_in]
-    g_ = Variable(G(*z).data)
-    d_fake, _ = D(g_)
+    g_ = Variable(gen(*z).data)
+    d_fake, _ = dis(g_)
     if loss_type == 'hinge':
-        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean() + F.relu(1.0 + d_con).mean() * LAMBDA_3
-    elif loss_type == 'dcgan':
-        x = torch.cat((d_real, d_fake), dim=0)
-        y = torch.cat((cudize(Variable(torch.ones(d_real.size(0)))), cudize(Variable(torch.zeros(d_fake.size(0))))),
-                      dim=0)
-        d_loss = 2.0 * F.binary_cross_entropy_with_logits(x, y)
-        if concatenated_real is not None and LAMBDA_3 != 0:
-            d_loss = d_loss + F.binary_cross_entropy_with_logits(d_con, cudize(
-                Variable(torch.zeros(d_con.size(0))))) * LAMBDA_3
+        d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
     else:
         d_fake_mean = d_fake.mean()
         d_real_mean = d_real.mean()
-        d_con_mean = d_con.mean() * LAMBDA_3
-        if loss_type == 'wgan_theirs' or loss_type == 'wgan_theirs_ct':
-            d_loss = d_fake_mean - d_real_mean + d_con_mean + (
-                    d_fake_mean + d_real_mean + d_con_mean) ** 2 * iwass_epsilon
+        if loss_type == 'wgan_theirs':
+            d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_epsilon
             gp_gain = F.relu(d_real_mean - d_fake_mean)
         else:
-            d_loss = d_fake_mean - d_real_mean + d_con_mean * LAMBDA_3 + (d_real ** 2).mean() * iwass_epsilon
+            d_loss = d_fake_mean - d_real_mean + (d_real ** 2).mean() * iwass_epsilon
             gp_gain = 1
         if gp_gain != 0:
             alpha = get_mixing_factor(x_real.size(0))
             min_size = min(g_.size(2), x_real.size(2))
             x_hat = Variable(alpha * x_real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
                              requires_grad=True)
-            pred_hat, _ = D(x_hat)
+            pred_hat, _ = dis(x_hat)
             g = calc_grad(x_hat, pred_hat).view(x_hat.size(0), -1)
-            gp = g.norm(p=2, dim=1) - 1
-            if loss_type == 'wgan_theirs' or loss_type == 'wgan_theirs_ct':
+            gp = g.norm(p=2, dim=1) - iwass_target
+            if loss_type == 'wgan_theirs':
                 gp = F.relu(gp)
-            d_loss = d_loss + gp_gain * (gp ** 2).mean() * grad_lambda
-        if (loss_type == 'wgan_ct' or loss_type == 'wgan_theirs_ct') and D.training:
-            d_real2, d_last_real2 = D(x_real)
-            CT = LAMBDA_2 * (d_real - d_real2) ** 2
-            CT = CT + LAMBDA_2 * 0.1 * torch.mean((d_last_real - d_last_real2) ** 2, dim=1).mean(dim=1)
-            d_loss = d_loss + torch.mean(torch.clamp(CT, min=0))
+            d_loss = d_loss + gp_gain * (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
     return d_loss
