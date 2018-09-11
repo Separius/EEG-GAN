@@ -83,7 +83,7 @@ class Trainer(object):
             d_loss.backward()
             self.optimizer_d.step()
             fake_latents_in = cudize(self.random_latents_generator())
-        g_loss = self.g_loss(self.G, self.D, fake_latents_in)
+        g_loss = self.g_loss(self.D, self.G, real_images_expr, fake_latents_in)
         g_loss.backward()
         self.optimizer_g.step()
         self.iterations += 1

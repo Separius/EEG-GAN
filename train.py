@@ -29,11 +29,11 @@ default_params = Box(
     resume_time=0,
     num_data_workers=2,
     random_seed=1373,
-    grad_lambda=10.0,
+    grad_lambda=10.0,  # must set it to zero to disable gp loss (even for non wgan based losses)
     iwass_epsilon=0.001,
     iwass_target=1.0,
     load_dataset='',
-    loss_type='wgan_theirs',  # wgan_gp, hinge, wgan_theirs
+    loss_type='wgan_theirs',  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
     cuda_device=0,
     ttur=False,
     config_file=None,
@@ -113,7 +113,7 @@ def main(params):
     D = cudize(D)
     d_loss_fun = partial(discriminator_loss, loss_type=params.loss_type, iwass_epsilon=params.iwass_epsilon,
                          grad_lambda=params.grad_lambda, iwass_target=params.iwass_target)
-    g_loss_fun = partial(generator_loss, random_multiply=params.random_multiply)
+    g_loss_fun = partial(generator_loss, random_multiply=params.random_multiply, loss_type=params.loss_type)
     max_depth = min(G.max_depth, D.max_depth)
 
     logger.log('exp name: {}'.format(params.exp_name))
