@@ -11,5 +11,4 @@ reset optimizer state(moment and stuff) when there is a new layer
 adam. alpha=0.001 (batchsize*lr=constant), b1=0, b2=0.99, ep=1e-8
 wgan-gp : ||grad-lambda||/lambda^2, lambda = 1 and 750!
 e_drift of loss = 0.001
-
 SAGAN=(SNGAN + SA + SN) + layer norm
