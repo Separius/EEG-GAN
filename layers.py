@@ -97,15 +97,15 @@ class MinibatchStddev(nn.Module):
         super(MinibatchStddev, self).__init__()
         self.group_size = group_size if group_size != 0 else 1e6
 
-    def forward(self, x):
+    def forward(self, x):  # B, C, T
         s = x.size()
         group_size = min(s[0], self.group_size)
-        y = x.view(group_size, -1, s[1], s[2])  # G,M,C,T
-        y = y - y.mean(dim=0, keepdim=True)
-        y = (y ** 2).mean(dim=0)
-        y = torch.sqrt(y + EPSILON)  # M,C,T
-        y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)
-        y = y.repeat((group_size, 1, s[2]))
+        y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
+        y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
+        y = (y ** 2).mean(dim=0)  # B//G,C,T
+        y = torch.sqrt(y + EPSILON)  # B//G,C,T
+        y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
+        y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)
 
 
@@ -137,21 +137,16 @@ class ConditionalBatchNorm(nn.Module):
 
 
 class ConditionalLayerNorm(nn.Module):
-    def __init__(self, num_channels, num_classes, no_multiplier=True):
+    def __init__(self, num_channels, num_classes):
         super(ConditionalLayerNorm, self).__init__()
         if num_classes == 0:
-            if not no_multiplier:
-                self.gn = nn.GroupNorm(1, num_channels)
-                return
-            else:
-                num_classes = 1
-        if not no_multiplier:
-            self.gamma_embedding = nn.EmbeddingBag(num_classes, num_channels)
-            self.gamma_embedding.weight.data.fill_(1.0)
+            self.gn = nn.GroupNorm(1, num_channels)
+            return
+        self.gamma_embedding = nn.EmbeddingBag(num_classes, num_channels)
+        self.gamma_embedding.weight.data.fill_(1.0)
         self.beta_embedding = nn.EmbeddingBag(num_classes, num_channels)
         self.beta_embedding.weight.data.zero_()
         self.gn = None
-        self.no_multiplier = no_multiplier
 
     def forward(self, x, y=None):
         if self.gn is not None:
@@ -161,16 +156,15 @@ class ConditionalLayerNorm(nn.Module):
         input_batch_major = x.view(x.size(0), -1)
         mean = input_batch_major.mean(dim=1).view(-1, 1, 1).expand(x_size)
         var = input_batch_major.var(dim=1).view(-1, 1, 1).expand(x_size)
-        if not self.no_multiplier:
-            gammas = self.gamma_embedding(y).unsqueeze(2).expand(x_size)
-            return gammas * (x - mean) * torch.rsqrt(var + EPSILON) + betas
-        return (x - mean) * torch.rsqrt(var + EPSILON) + betas
+        gammas = self.gamma_embedding(y).unsqueeze(2).expand(x_size)
+        return gammas * (x - mean) * torch.rsqrt(var + EPSILON) + betas
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, c_in, c_out, k_size, padding=0, spectral=False, equalized=True):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True):
         super(EqualizedConv1d, self).__init__()
-        self.conv = nn.Conv1d(c_in, c_out, k_size, padding=padding, bias=True)
+        self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
+                              kernel_size=kernel_size, padding=padding, bias=True)
         self.conv.bias.data.zero_()
         if spectral:
             self.conv = spectral_norm(self.conv)
@@ -182,7 +176,7 @@ class EqualizedConv1d(nn.Module):
             fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
             gain = calculate_gain('leaky_relu', 0)
             std = gain / math.sqrt(fan)
-            self.scale = 1 / std
+            self.scale = 1.0 / std
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
 
     def forward(self, x):
@@ -190,16 +184,17 @@ class EqualizedConv1d(nn.Module):
 
 
 class GeneralConv(nn.Module):
-    def __init__(self, ch_in, ch_out, ksize=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, no_multiplier=True):
+    def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
+                 do_mode='mul', num_classes=0, act_norm=None, spectral=False):
         super(GeneralConv, self).__init__()
-        pad = (ksize - 1) // 2 if pad is None else pad
-        conv = EqualizedConv1d(ch_in, ch_out, ksize, padding=pad, spectral=spectral, equalized=equalized)
+        pad = (kernel_size - 1) // 2 if pad is None else pad
+        conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
+                               equalized=equalized)
         norm = None
         if act_norm == 'layer':
-            norm = ConditionalLayerNorm(ch_out, num_classes, no_multiplier)
+            norm = ConditionalLayerNorm(out_channels, num_classes)
         elif act_norm == 'batch':
-            norm = ConditionalBatchNorm(ch_out, num_classes)
+            norm = ConditionalBatchNorm(out_channels, num_classes)
         self.conv = conv
         self.norm = norm
         self.net = []

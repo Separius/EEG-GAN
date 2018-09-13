@@ -1,14 +1,6 @@
 leaky in both, alpha=0.2
-stages = same for all depths + trans == train
-correct weight initialization (bias = 0, w form N(0, 1) and w/scale of He)
 last layer of G is linear
-no rampup and stuff for learning rate
 n_critic=1
-for std_stats use grouping (of size=4)
 + they did not use dropout at all
 for generation, use a exp moving average of G for more stable results!
-reset optimizer state(moment and stuff) when there is a new layer
-adam. alpha=0.001 (batchsize*lr=constant), b1=0, b2=0.99, ep=1e-8
 wgan-gp : ||grad-lambda||/lambda^2, lambda = 1 and 750!
-e_drift of loss = 0.001
-SAGAN=(SNGAN + SA + SN) + layer norm

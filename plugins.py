@@ -51,6 +51,7 @@ class DepthManager(Plugin):
         self.depth_offset = depth_offset
         self.max_depth = max_depth
         self.default_lr = default_lr
+        self.attention_transition_kimg = attention_transition_kimg
         self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(self.depth_offset, max_depth,
                                                                                         lod_training_kimg,
                                                                                         lod_training_kimg_overrides,
@@ -82,8 +83,7 @@ class DepthManager(Plugin):
             points.append(pointer)
             if (i == max_depth - 1) and has_attention:
                 start_gamma = pointer
-                pointer += int(attention_transition_kimg * 1000)
-                end_gamma = pointer
+                end_gamma = pointer + int(attention_transition_kimg * 1000)
         return points, (start_gamma, end_gamma)
 
     def calc_progress(self, cur_nimg=None):
@@ -104,6 +104,7 @@ class DepthManager(Plugin):
         depth = min(self.max_depth, depth)
         if self.disable_progression:
             depth = self.max_depth
+            alpha = 1.0
         return depth, alpha
 
     def iteration(self, *args):
@@ -128,7 +129,11 @@ class DepthManager(Plugin):
         self.trainer.stats['alpha']['val'] = alpha
         if self.start_gamma is not None:
             cur_kimg = self.trainer.cur_nimg
-            gamma = min(1, max(0, (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)))
+            if self.disable_progression:
+                gamma = cur_kimg / self.attention_transition_kimg
+            else:
+                gamma = (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)
+            gamma = min(1, max(0, gamma))
             self.trainer.D.set_gamma(gamma)
             self.trainer.G.set_gamma(gamma)
             self.trainer.stats['gamma']['val'] = gamma
@@ -295,7 +300,7 @@ class OutputGenerator(Plugin):
     def epoch(self, epoch_index):
         for p, avg_p in zip(self.trainer.G.parameters(), self.my_g_clone):
             avg_p.mul_(0.9).add_(0.1, p.data)
-        if epoch_index % self.output_snapshot_ticks == 0:
+        if epoch_index % self.output_snapshot_ticks == 0 or epoch_index == 'end':
             z = self.sample_fn(self.samples_count)
             if not isinstance(z, (list, tuple)):
                 z = (z,)
@@ -311,7 +316,7 @@ class OutputGenerator(Plugin):
                 misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
     def end(self, *args):
-        self.epoch(*args)
+        self.epoch('end')
 
 
 class TeeLogger(Logger):

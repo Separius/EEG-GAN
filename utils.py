@@ -15,20 +15,18 @@ def generate_samples(generator, gen_input):
     return out
 
 
-def save_pkl(fname, obj):
-    with open(fname, 'wb') as f:
+def save_pkl(file_name, obj):
+    with open(file_name, 'wb') as f:
         dump(obj, f)
 
 
-def load_pkl(fname):
-    with open(fname, 'rb') as f:
+def load_pkl(file_name):
+    with open(file_name, 'rb') as f:
         return load(f)
 
 
 def random_latents(num_latents, latent_size, t=1):
-    if t == 1:
-        return torch.randn(num_latents, latent_size)
-    return torch.randn(num_latents, latent_size // 4), torch.randn(num_latents, 3 * latent_size // 4, t)
+    return torch.randn(num_latents, latent_size)
 
 
 def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}-{exp_name}'):
@@ -89,9 +87,10 @@ def get_structured_params(params):
 
 
 def cudize(thing):
+    has_cuda = torch.cuda.is_available()
     if isinstance(thing, (list, tuple)):
-        return [cudize(item) for item in thing]
-    return thing.cuda() if torch.cuda.is_available() else thing
+        return [item.cuda() if has_cuda else item for item in thing]
+    return thing.cuda() if has_cuda else thing
 
 
 def trainable_params(model):

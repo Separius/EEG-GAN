@@ -4,13 +4,12 @@ import glob
 import torch
 import numpy as np
 from tqdm import trange
-from scipy.io import loadmat
 from torch.utils.data import Dataset
 
 
 class EEGDataset(Dataset):
     def __init__(self, dir_path='./data/tuh2', seq_len=512, stride=0.25, num_channels=5,
-                 per_user=True, dataset_freq=80,
+                 per_file_normalization=True, dataset_freq=80,
                  model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
         self.model_depth = 0
         self.alpha = 1.0
@@ -23,7 +22,7 @@ class EEGDataset(Dataset):
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.max_freq = dataset_freq
-        self.per_user = per_user
+        self.per_file_normalization = per_file_normalization
         self.dataset_freq = dataset_freq
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
@@ -42,9 +41,9 @@ class EEGDataset(Dataset):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
                     tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
                     self.datas[i][j, :] = tmp
-            if per_user and self.sizes[i] > 0:
+            if per_file_normalization and self.sizes[i] > 0:
                 self.datas[i] = self.normalize(self.datas[i])
-        if not per_user:
+        if not per_file_normalization:
             self.normalize_all(num_files)
         self.description = {
             'len': len(self),
@@ -58,7 +57,8 @@ class EEGDataset(Dataset):
         for i in range(num_files):
             self.datas[i] = self.normalize(self.datas[i], all_max, all_min)
 
-    def normalize(self, arr, arr_max=None, arr_min=None):
+    @staticmethod
+    def normalize(arr, arr_max=None, arr_min=None):
         if arr_max is None:
             arr_max = arr.max()
         if arr_min is None:
@@ -83,8 +83,8 @@ class EEGDataset(Dataset):
 
     def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
         datapoint = datapoint.astype(np.float32)
-        depthdiff = (datapoint_depth - target_depth)
-        return datapoint[:, ::(self.progression_scale ** depthdiff)]
+        depth_diff = (datapoint_depth - target_depth)
+        return datapoint[:, ::(self.progression_scale ** depth_diff)]
 
     def load_file(self, item):
         i, k = self.data_pointers[item]

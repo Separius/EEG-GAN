@@ -173,7 +173,7 @@ def main(params):
 if __name__ == "__main__":
     parser = ArgumentParser()
     needarg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, OutputGenerator, Adam, EEGDataset]
-    excludes = {'Adam': {'lr', 'amsgrad', 'weight_decay'}}
+    excludes = {'Adam': {'lr', 'amsgrad'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(needarg_classes, excludes, default_overrides)
     for k in default_params:
