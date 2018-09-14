@@ -11,18 +11,25 @@ class GBlock(nn.Module):
                  is_residual=False, no_tanh=False, spectral=False, sngan_rgb=False, **layer_settings):
         super(GBlock, self).__init__()
         is_first = initial_kernel_size is not None
-        self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, kernel_size=initial_kernel_size if is_first else ksize, pad=initial_kernel_size - 1 if is_first else None, spectral=spectral, **layer_settings)
-        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize, spectral=spectral, **layer_settings)
+        self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized,
+                              kernel_size=initial_kernel_size if is_first else ksize,
+                              pad=initial_kernel_size - 1 if is_first else None, spectral=spectral, **layer_settings)
+        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize, spectral=spectral,
+                              **layer_settings)
         if sngan_rgb:
-            to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.LeakyReLU(0.2, True), GeneralConv(ch_out, num_channels, kernel_size=3, act_alpha=-1, equalized=equalized, spectral=spectral))
+            to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.LeakyReLU(0.2, True),
+                                   GeneralConv(ch_out, num_channels, kernel_size=3, act_alpha=-1, equalized=equalized,
+                                               spectral=spectral))
         else:
-            to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1, equalized=equalized, spectral=spectral)
+            to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1, equalized=equalized,
+                                 spectral=spectral)
         if no_tanh:
             self.toRGB = to_rgb
         else:
             self.toRGB = nn.Sequential(to_rgb, ScaledTanh())
         if not is_first and is_residual:
-            self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, 1, equalized, act_alpha=-1, spectral=spectral)
+            self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, 1, equalized,
+                                                                                act_alpha=-1, spectral=spectral)
         else:
             self.residual = None
 
@@ -62,7 +69,7 @@ class Generator(nn.Module):
         dummy = []
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1)))
+            dummy.append(SelfAttention(nf(layer + 1), spectral))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
@@ -120,7 +127,8 @@ class DBlock(nn.Module):
             GeneralConv(ch_in + (1 if is_last else 0), ch_in, kernel_size=ksize, equalized=equalized,
                         act_alpha=act_alpha, spectral=spectral, **layer_settings))
         self.net.append(
-            GeneralConv(ch_in, ch_out, kernel_size=initial_kernel_size if is_last else ksize, pad=0 if is_last else None,
+            GeneralConv(ch_in, ch_out, kernel_size=initial_kernel_size if is_last else ksize,
+                        pad=0 if is_last else None,
                         equalized=equalized, act_alpha=act_alpha, spectral=spectral, **layer_settings))
         self.net = nn.Sequential(*self.net)
         self.is_last = initial_kernel_size
@@ -165,7 +173,7 @@ class Discriminator(nn.Module):
         dummy = []
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1)))
+            dummy.append(SelfAttention(nf(layer + 1), spectral))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
@@ -179,7 +187,8 @@ class Discriminator(nn.Module):
                 self.class_emb = spectral_norm(self.class_emb)
         else:
             self.class_emb = None
-        self.linear = GeneralConv(nf(0), 1, kernel_size=1, equalized=equalized, pad=None, act_alpha=-1, spectral=spectral)
+        self.linear = GeneralConv(nf(0), 1, kernel_size=1, equalized=equalized, pad=None, act_alpha=-1,
+                                  spectral=spectral)
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1

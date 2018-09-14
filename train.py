@@ -114,7 +114,7 @@ def main(params):
     d_loss_fun = partial(discriminator_loss, loss_type=params.loss_type, iwass_epsilon=params.iwass_epsilon,
                          grad_lambda=params.grad_lambda, iwass_target=params.iwass_target)
     g_loss_fun = partial(generator_loss, random_multiply=params.random_multiply, loss_type=params.loss_type)
-    max_depth = min(G.max_depth, D.max_depth)
+    max_depth = G.max_depth
 
     logger.log('exp name: {}'.format(params.exp_name))
     try:

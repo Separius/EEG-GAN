@@ -69,8 +69,8 @@ class SelfAttention(nn.Module):
         super(SelfAttention, self).__init__()
         d_key = max(channels_in // 8, 2)
         self.gamma = 0
-        self.key_conv = nn.Conv1d(channels_in, d_key, kernel_size=1)
-        self.query_conv = nn.Conv1d(channels_in, d_key, kernel_size=1)
+        self.key_conv = nn.Conv1d(channels_in, d_key, kernel_size=1, bias=False)
+        self.query_conv = nn.Conv1d(channels_in, d_key, kernel_size=1, bias=False)
         self.value_conv = nn.Conv1d(channels_in, channels_in, kernel_size=1)
         self.softmax = nn.Softmax(dim=-1)
         self.scale = math.sqrt(d_key)
