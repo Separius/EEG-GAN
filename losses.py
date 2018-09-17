@@ -85,7 +85,8 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
     elif loss_type == 'rsgan':
         d_loss = F.binary_cross_entropy_with_logits(d_real - d_fake, get_one(batch_size))
     elif loss_type == 'rasgan':
-        d_loss = (F.binary_cross_entropy(d_real - d_fake.mean(), get_one(batch_size)) + F.binary_cross_entropy(
+        d_loss = (F.binary_cross_entropy_with_logits(d_real - d_fake.mean(),
+                                                     get_one(batch_size)) + F.binary_cross_entropy_with_logits(
             d_fake - d_real.mean(), get_zero(batch_size))) / 2.0
     elif loss_type == 'rahinge':
         d_loss = (torch.mean(F.relu(1.0 - (d_real - torch.mean(d_fake)))) + torch.mean(
@@ -113,5 +114,6 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
         gp = g.norm(p=2, dim=1) - iwass_target
         if loss_type == 'wgan_theirs':
             gp = F.relu(gp)
-        d_loss = d_loss + gp_gain * (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
+        gp_loss = gp_gain * (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
+        d_loss = d_loss + gp_loss
     return d_loss

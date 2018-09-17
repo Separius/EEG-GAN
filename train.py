@@ -86,8 +86,9 @@ def test():
     latent_size = 32
     batch_size = 8
     losses = ['wgan_gp', 'hinge', 'wgan_theirs', 'rsgan', 'rasgan', 'rahinge']
+    num_classes = [0]
     for initial_size, kernel_size, equalized, self_attention_layers, num_classes, sngan_rgb, act_alpha, residual, normalize_latents, spectral, no_tanh, act_norm, group_size, loss_type, grad_lambda, iwass_target, random_multiply in tqdm(
-            product([2, 3], [3], [True], [[], [1, 2]], [0, 10], [True, False], [0],
+            product([2, 3], [3], [True], [[], [1, 2]], num_classes, [True, False], [0],
                     [True], [True], [True], [True, False], [None, 'layer', 'batch', 'pixel'],
                     [4, 8], losses, [0, 1], [1, 750], [True])):
         shared_model_params = dict(dataset_shape=dataset_shape, initial_size=initial_size, fmap_base=fmap_base,
@@ -118,12 +119,16 @@ def test():
                     D.depth = depth
                     fake_latents_in = cudize(torch.randn(batch_size, latent_size))
                     real_images_expr = cudize(torch.randn(batch_size, 5, 2 ** (initial_size + depth)))
-                    d_loss = d_loss_fun(D, G, real_images_expr, fake_latents_in)
-                    d_loss.backward()
-                    opt_d.step()
-                    g_loss = g_loss_fun(D, G, real_images_expr, fake_latents_in)
-                    g_loss.backward()
-                    opt_g.step()
+                    try:
+                        d_loss = d_loss_fun(D, G, real_images_expr, fake_latents_in)
+                        d_loss.backward()
+                        opt_d.step()
+                        g_loss = g_loss_fun(D, G, real_images_expr, fake_latents_in)
+                        g_loss.backward()
+                        opt_g.step()
+                    except:
+                        print(spectral, no_tanh, act_norm, loss_type, grad_lambda)
+                        exit(1)
 
 
 def main(params):
@@ -212,7 +217,7 @@ def main(params):
     trainer.register_plugin(SaverPlugin(result_dir, **params.SaverPlugin))
     trainer.register_plugin(
         OutputGenerator(lambda x: random_latents(x, latent_size), result_dir,
-                        dataset_params.seq_len, dataset_params.max_freq, dataset_params.seq_len,
+                        dataset_params.seq_len, dataset_params.dataset_freq, dataset_params.seq_len,
                         **params.OutputGenerator))
     trainer.register_plugin(AbsoluteTimeMonitor(params.resume_time))
     trainer.register_plugin(logger)
@@ -239,7 +244,7 @@ if __name__ == "__main__":
     params = vars(parser.parse_args())
     if params['config_file']:
         print('loading config_file')
-        params.update(yaml.load(open(params.config_file, 'r')))
+        params.update(yaml.load(open(params['config_file'], 'r')))
     params = Box(get_structured_params(params))
     np.random.seed(params.random_seed)
     torch.manual_seed(params.random_seed)

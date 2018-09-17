@@ -200,9 +200,9 @@ class GeneralConv(nn.Module):
         self.net = []
         if act_alpha >= 0:
             if act_alpha == 0:
-                self.net.append(nn.ReLU(inplace=True))
+                self.net.append(nn.ReLU())  # DO NOT use inplace, gradient penalty will break
             else:
-                self.net.append(nn.LeakyReLU(act_alpha, inplace=True))
+                self.net.append(nn.LeakyReLU(act_alpha))  # DO NOT use inplace, gradient penalty will break
         if act_norm == 'pixel':
             self.net.append(PixelNorm())
         if do != 0:
