@@ -48,6 +48,7 @@ default_params = Box(
     monitor_warmup=50,
     monitor_patience=5,
     random_multiply=False,
+    is_test=False
 )
 
 
@@ -73,6 +74,56 @@ def thread_exit(_signal, frame):
 
 def worker_init(x):
     signal.signal(signal.SIGINT, thread_exit)
+
+
+def test():
+    from tqdm import tqdm
+    from itertools import product
+    fmap_base = 128
+    fmap_max = 32
+    fmap_min = 8
+    dataset_shape = (64, 5, 128)
+    latent_size = 32
+    batch_size = 8
+    losses = ['wgan_gp', 'hinge', 'wgan_theirs', 'rsgan', 'rasgan', 'rahinge']
+    for initial_size, kernel_size, equalized, self_attention_layers, num_classes, sngan_rgb, act_alpha, residual, normalize_latents, spectral, no_tanh, act_norm, group_size, loss_type, grad_lambda, iwass_target, random_multiply in tqdm(
+            product([2, 3], [3], [True], [[], [1, 2]], [0, 10], [True, False], [0],
+                    [True], [True], [True], [True, False], [None, 'layer', 'batch', 'pixel'],
+                    [4, 8], losses, [0, 1], [1, 750], [True])):
+        shared_model_params = dict(dataset_shape=dataset_shape, initial_size=initial_size, fmap_base=fmap_base,
+                                   fmap_max=fmap_max, fmap_min=fmap_min, kernel_size=kernel_size, equalized=equalized,
+                                   self_attention_layers=self_attention_layers, num_classes=num_classes)
+        generator_params = dict(sngan_rgb=sngan_rgb, act_alpha=act_alpha, latent_size=latent_size, residual=residual,
+                                normalize_latents=normalize_latents, dropout=0.1, do_mode='mul', spectral=spectral,
+                                act_norm=act_norm, no_tanh=no_tanh)
+        G = cudize(Generator(**shared_model_params, **generator_params))
+        discriminator_params = dict(sngan_rgb=sngan_rgb, dropout=0.1, do_mode='mul', residual=residual,
+                                    spectral=spectral, act_norm=act_norm, group_size=group_size, act_alpha=act_alpha)
+        D = cudize(Discriminator(**shared_model_params, **discriminator_params))
+        opt_g = Adam(trainable_params(G), 0.001)
+        opt_d = Adam(trainable_params(D), 0.001)
+        d_loss_fun = partial(discriminator_loss, loss_type=loss_type, iwass_epsilon=0.01, grad_lambda=grad_lambda,
+                             iwass_target=iwass_target)
+        g_loss_fun = partial(generator_loss, random_multiply=random_multiply, loss_type=loss_type)
+        for gamma in [0, 0.5]:
+            if gamma != 0 and len(self_attention_layers) == 0:
+                continue
+            G.set_gamma(gamma)
+            D.set_gamma(gamma)
+            for alpha in [0, 0.5, 1]:
+                G.alpha = alpha
+                D.alpha = alpha
+                for depth in range(D.max_depth):
+                    G.depth = depth
+                    D.depth = depth
+                    fake_latents_in = cudize(torch.randn(batch_size, latent_size))
+                    real_images_expr = cudize(torch.randn(batch_size, 5, 2 ** (initial_size + depth)))
+                    d_loss = d_loss_fun(D, G, real_images_expr, fake_latents_in)
+                    d_loss.backward()
+                    opt_d.step()
+                    g_loss = g_loss_fun(D, G, real_images_expr, fake_latents_in)
+                    g_loss.backward()
+                    opt_g.step()
 
 
 def main(params):
@@ -185,16 +236,19 @@ if __name__ == "__main__":
             group.add_argument('--{}'.format(name), type=generic_arg_parse)
             default_params[name] = auto_args[cls][k]
     parser.set_defaults(**default_params)
-    params = Box(vars(parser.parse_args()))
-    if params.config_file:
+    params = vars(parser.parse_args())
+    if params['config_file']:
         print('loading config_file')
         params.update(yaml.load(open(params.config_file, 'r')))
-    params = get_structured_params(params)
+    params = Box(get_structured_params(params))
     np.random.seed(params.random_seed)
     torch.manual_seed(params.random_seed)
     if torch.cuda.is_available():
         torch.cuda.set_device(params.cuda_device)
         torch.cuda.manual_seed_all(params.random_seed)
         enable_benchmark()
-    main(params)
+    if params['is_test']:
+        test()
+    else:
+        main(params)
     print('training finished!')

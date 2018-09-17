@@ -72,10 +72,10 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
                        loss_type: str, iwass_epsilon: float, grad_lambda: float, iwass_target: float):
     dis.zero_grad()
     gen.zero_grad()
-    x_real = Variable(real)
-    d_real, d_last_real = dis(x_real)
     with torch.no_grad():
         z = Variable(fake)
+        x_real = Variable(real)
+    d_real, d_last_real = dis(x_real)
     g_ = Variable(gen(z).data)
     d_fake, _ = dis(g_)
     batch_size = d_real.size(0)
@@ -103,7 +103,7 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
             raise ValueError('Invalid loss type')
     else:
         raise ValueError('Invalid loss type')
-    if gp_gain != 0:
+    if gp_gain != 0 and grad_lambda != 0:
         alpha = get_mixing_factor(x_real.size(0))
         min_size = min(g_.size(2), x_real.size(2))
         x_hat = Variable(alpha * x_real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,

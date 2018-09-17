@@ -213,7 +213,6 @@ class Discriminator(nn.Module):
                 h = self.downsampler(h)
             if (i - 2) in self.self_attention:
                 h = self.self_attention[i - 2](h)
-        h = h.squeeze(-1)
         o = self.linear(h).mean(dim=2).squeeze()
         if y:
             o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True).mean(dim=2)

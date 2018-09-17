@@ -79,11 +79,11 @@ class DepthManager(Plugin):
         for i in range(start_depth, max_depth):
             pointer += int(lod_training_kimg_overrides.get(i + 1, lod_training_kimg) * 1000)
             points.append(pointer)
-            pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
-            points.append(pointer)
             if (i == max_depth - 1) and has_attention:
                 start_gamma = pointer
                 end_gamma = pointer + int(attention_transition_kimg * 1000)
+            pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
+            points.append(pointer)
         return points, (start_gamma, end_gamma)
 
     def calc_progress(self, cur_nimg=None):
