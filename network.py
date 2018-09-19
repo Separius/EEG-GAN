@@ -17,7 +17,7 @@ class GBlock(nn.Module):
         self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize, spectral=spectral,
                               **layer_settings)
         if sngan_rgb:
-            to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.LeakyReLU(0.2, True),
+            to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.LeakyReLU(0.2),
                                    GeneralConv(ch_out, num_channels, kernel_size=3, act_alpha=-1, equalized=equalized,
                                                spectral=spectral))
         else:

@@ -114,8 +114,8 @@ class DepthManager(Plugin):
             self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
-            self.trainer.optimizer_g, self.trainer.optimizer_d = self.get_optimizer(
-                self.minibatch_default * self.default_lr / minibatch_size)
+            self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
+                self.minibatch_default * self.default_lr / minibatch_size, self.trainer.lr_scheduler_g.last_epoch)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
@@ -137,22 +137,6 @@ class DepthManager(Plugin):
             self.trainer.D.set_gamma(gamma)
             self.trainer.G.set_gamma(gamma)
             self.trainer.stats['gamma']['val'] = gamma
-
-
-class LRScheduler(Plugin):
-
-    def __init__(self, lr_scheduler_d, lr_scheduler_g):
-        super(LRScheduler, self).__init__([(1, 'iteration')])
-        self.lrs_d = lr_scheduler_d
-        self.lrs_g = lr_scheduler_g
-
-    def register(self, trainer):
-        self.trainer = trainer
-        self.iteration()
-
-    def iteration(self, *args):
-        self.lrs_d.step(self.trainer.cur_nimg)
-        self.lrs_g.step(self.trainer.cur_nimg)
 
 
 class EfficientLossMonitor(LossMonitor):

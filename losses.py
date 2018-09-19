@@ -74,7 +74,7 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
     gen.zero_grad()
     with torch.no_grad():
         z = Variable(fake)
-        x_real = Variable(real)
+    x_real = Variable(real)
     d_real, d_last_real = dis(x_real)
     g_ = Variable(gen(z).data)
     d_fake, _ = dis(g_)

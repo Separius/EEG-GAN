@@ -10,10 +10,11 @@ from trainer import Trainer
 from torch.optim import Adam
 from functools import partial
 from dataset import EEGDataset
-from losses import generator_loss, discriminator_loss
 from argparse import ArgumentParser
 from torch.utils.data import DataLoader
 from network import Generator, Discriminator
+from torch.optim.lr_scheduler import LambdaLR
+from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
 from plugins import (OutputGenerator, SaverPlugin, AbsoluteTimeMonitor,
                      EfficientLossMonitor, DepthManager, TeeLogger)
@@ -48,7 +49,8 @@ default_params = Box(
     monitor_warmup=50,
     monitor_patience=5,
     random_multiply=False,
-    is_test=False
+    is_test=False,
+    lr_rampup_kimg=40,
 )
 
 
@@ -193,7 +195,14 @@ def main(params):
     def rl(bs):
         return partial(random_latents, num_latents=bs, latent_size=latent_size)
 
-    def get_optimizers(g_lr):
+    def rampup(cur_nimg):
+        if cur_nimg < params.lr_rampup_kimg * 1000:
+            p = max(0.0, 1 - cur_nimg / (params.lr_rampup_kimg * 1000))
+            return np.exp(-p * p * 5.0)
+        else:
+            return 1.0
+
+    def get_optimizers(g_lr, last_epoch=-1):
         if params.ttur:
             d_lr = g_lr * 4.0
             params.Adam.betas = (0, 0.9)
@@ -201,11 +210,14 @@ def main(params):
             d_lr = g_lr
         opt_g = Adam(trainable_params(G), g_lr, **params.Adam)
         opt_d = Adam(trainable_params(D), d_lr, **params.Adam)
-        return opt_g, opt_d
+        lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
+        lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
+        return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
 
-    opt_g, opt_d = get_optimizers(params.G_lr)
+    opt_g, opt_d, lr_scheduler_g, lr_scheduler_d = get_optimizers(params.G_lr)
 
-    trainer = Trainer(D, G, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset, rl(mb_def), **params.Trainer)
+    trainer = Trainer(D, G, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset, rl(mb_def), lr_scheduler_g, lr_scheduler_d,
+                      **params.Trainer)
     trainer.register_plugin(DepthManager(get_dataloader, rl, max_depth, params.Trainer.tick_kimg_default,
                                          len(params.self_attention_layers) != 0, get_optimizers, params.G_lr,
                                          **params.DepthManager))

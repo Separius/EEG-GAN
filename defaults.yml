@@ -4,16 +4,15 @@ G_lr: 0.001
 total_kimg: 6000
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 resume_time: 0
-num_data_workers: 2
+num_data_workers: 1
 random_seed: 1373
-grad_lambda: 10.0  # must set it to zero to disable gp loss (even for non wgan based losses)
+grad_lambda: 0  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
 iwass_epsilon: 0.001
 iwass_target: 1.0
-load_dataset: ''
-loss_type: 'wgan_theirs'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
+load_dataset: 'data/1024.pkl'
+loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
 ttur: false
-config_file: null
 fmap_base: 2048
 fmap_max: 256
 fmap_min: 64
@@ -27,7 +26,7 @@ monitor_patience: 5
 random_multiply: false
 EEGDataset:
   dir_path: './data/tuh2'
-  seq_len: 512
+  seq_len: 1024
   stride: 0.25
   num_channels: 5
   per_file_normalization: true
@@ -35,7 +34,7 @@ EEGDataset:
   model_dataset_depth_offset: 2
 Generator:
   sngan_rgb: false
-  act_alpha: 0
+  act_alpha: 0.2
   latent_size: 256
   residual: false
   normalize_latents: true
@@ -52,7 +51,7 @@ Discriminator:
   spectral: false
   act_norm: null
   group_size: 4
-  act_alpha: 0
+  act_alpha: 0.2
 DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0
@@ -76,6 +75,6 @@ Trainer:
   tick_kimg_default: 5
   resume_nimg: 0
 Adam:
-  betas: (0.0, 0.99)
-  eps: 1e-8
+  betas: !!python/tuple [0.0, 0.99]
+  eps: 0.00000001
   weight_decay: 0

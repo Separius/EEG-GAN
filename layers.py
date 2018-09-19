@@ -109,6 +109,36 @@ class MinibatchStddev(nn.Module):
         return torch.cat([x, y], dim=1)
 
 
+class MinibatchStddevOld(nn.Module):
+    def __init__(self, group_size=4):
+        super(MinibatchStddevOld, self).__init__()
+        self.temporal = False
+        self.out_channels = 1
+
+    def calc_mean(self, x, expand=True):
+        mean = torch.mean(x, dim=0, keepdim=True)
+        if not self.temporal:
+            mean = torch.mean(mean, dim=2, keepdim=True)
+        c = mean.size(1)
+        if self.out_channels == c:
+            return mean
+        if self.out_channels == 1:
+            return torch.mean(mean, dim=1, keepdim=True)
+        else:
+            step = c // self.out_channels
+            if expand:
+                return torch.cat(
+                    [torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True).expand(-1, step, -1) for i in
+                     range(self.out_channels)], dim=1)
+            return torch.cat([torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True) for i in
+                              range(self.out_channels)], dim=1)
+
+    def forward(self, x):
+        mean = self.calc_mean(x).expand(x.size())
+        y = torch.sqrt(self.calc_mean((x - mean) ** 2, False)).expand(x.size(0), -1, x.size(2))
+        return torch.cat((x, y), dim=1)
+
+
 class ConditionalBatchNorm(nn.Module):
     def __init__(self, num_channels, num_classes):
         super(ConditionalBatchNorm, self).__init__()
@@ -172,11 +202,13 @@ class EqualizedConv1d(nn.Module):
             torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
             self.scale = 1.0
         else:
-            torch.nn.init.normal_(self.conv.weight)
-            fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
-            gain = calculate_gain('leaky_relu', 0)
-            std = gain / math.sqrt(fan)
-            self.scale = 1.0 / std
+            # torch.nn.init.normal_(self.conv.weight)
+            # fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
+            # gain = calculate_gain('leaky_relu', 0)
+            # std = gain / math.sqrt(fan)
+            # self.scale = 1.0 / std
+            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+            self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
 
     def forward(self, x):

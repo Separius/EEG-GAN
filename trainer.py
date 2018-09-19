@@ -1,17 +1,17 @@
-import torch
 import heapq
-import numpy as np
-from utils import cudize, trainable_params
+from utils import cudize
 
 
 class Trainer(object):
 
     def __init__(self, D, G, d_loss, g_loss, optimizer_d, optimizer_g, dataset, random_latents_generator,
-                 d_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
+                 lr_scheduler_g, lr_scheduler_d, d_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
         self.D = D
         self.G = G
         self.d_loss = d_loss
         self.g_loss = g_loss
+        self.lr_scheduler_g = lr_scheduler_g
+        self.lr_scheduler_d = lr_scheduler_d
         self.d_training_repeats = d_training_repeats
         self.optimizer_d = optimizer_d
         self.optimizer_g = optimizer_g
@@ -75,6 +75,8 @@ class Trainer(object):
         self.call_plugins('end', 1)
 
     def train(self):
+        self.lr_scheduler_d.step()
+        self.lr_scheduler_g.step()
         fake_latents_in = cudize(self.random_latents_generator())
         for i in range(self.d_training_repeats):
             real_images_expr = cudize(next(self.dataiter))
