@@ -115,7 +115,8 @@ class DepthManager(Plugin):
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
             self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
-                self.minibatch_default * self.default_lr / minibatch_size, self.trainer.lr_scheduler_g.last_epoch)
+                self.minibatch_default * self.default_lr / minibatch_size,
+                self.trainer.lr_scheduler_g.last_epoch if self.trainer.lr_scheduler_g is not None else None)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)

@@ -6,14 +6,14 @@ resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 resume_time: 0
 num_data_workers: 1
 random_seed: 1373
-grad_lambda: 0  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
+grad_lambda: 10  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
 iwass_epsilon: 0.001
 iwass_target: 1.0
-load_dataset: 'data/1024.pkl'
+load_dataset: 'data/512.pkl'
 loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
-ttur: false
-fmap_base: 2048
+ttur: true
+fmap_base: 1024
 fmap_max: 256
 fmap_min: 64
 equalized: true
@@ -26,7 +26,7 @@ monitor_patience: 5
 random_multiply: false
 EEGDataset:
   dir_path: './data/tuh2'
-  seq_len: 1024
+  seq_len: 512
   stride: 0.25
   num_channels: 5
   per_file_normalization: true
@@ -34,24 +34,24 @@ EEGDataset:
   model_dataset_depth_offset: 2
 Generator:
   sngan_rgb: false
-  act_alpha: 0.2
+  act_alpha: 0.1
   latent_size: 256
   residual: false
   normalize_latents: true
-  dropout: 0.1
+  dropout: 0.2
   do_mode: 'mul'
   spectral: false
   act_norm: 'pixel'
   no_tanh: false
 Discriminator:
   sngan_rgb: false
-  dropout: 0.1
+  dropout: 0.2
   do_mode: 'mul'
   residual: false
   spectral: false
   act_norm: null
   group_size: 4
-  act_alpha: 0.2
+  act_alpha: 0.1
 DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0

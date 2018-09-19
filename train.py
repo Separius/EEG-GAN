@@ -134,7 +134,7 @@ def test():
 
 
 def main(params):
-    dataset_params = params.EEGDataset
+    dataset_params = params['EEGDataset']
     if params.load_dataset and os.path.exists(params.load_dataset):
         print('loading dataset from file')
         dataset = load_pkl(params.load_dataset)
@@ -210,9 +210,10 @@ def main(params):
             d_lr = g_lr
         opt_g = Adam(trainable_params(G), g_lr, **params.Adam)
         opt_d = Adam(trainable_params(D), d_lr, **params.Adam)
-        lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
-        lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
-        return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
+        # lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
+        # lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
+        # return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
+        return opt_g, opt_d, None, None
 
     opt_g, opt_d, lr_scheduler_g, lr_scheduler_d = get_optimizers(params.G_lr)
 
@@ -257,15 +258,15 @@ if __name__ == "__main__":
     if params['config_file']:
         print('loading config_file')
         params.update(yaml.load(open(params['config_file'], 'r')))
-    params = Box(get_structured_params(params))
-    np.random.seed(params.random_seed)
-    torch.manual_seed(params.random_seed)
+    params = get_structured_params(params)
+    np.random.seed(params['random_seed'])
+    torch.manual_seed(params['random_seed'])
     if torch.cuda.is_available():
-        torch.cuda.set_device(params.cuda_device)
-        torch.cuda.manual_seed_all(params.random_seed)
+        torch.cuda.set_device(params['cuda_device'])
+        torch.cuda.manual_seed_all(params['random_seed'])
         enable_benchmark()
     if params['is_test']:
         test()
     else:
-        main(params)
+        main(Box(params))
     print('training finished!')

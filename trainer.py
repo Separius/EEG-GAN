@@ -75,8 +75,9 @@ class Trainer(object):
         self.call_plugins('end', 1)
 
     def train(self):
-        self.lr_scheduler_d.step()
-        self.lr_scheduler_g.step()
+        if self.lr_scheduler_g is not None:
+            self.lr_scheduler_d.step()
+            self.lr_scheduler_g.step()
         fake_latents_in = cudize(self.random_latents_generator())
         for i in range(self.d_training_repeats):
             real_images_expr = cudize(next(self.dataiter))

@@ -94,7 +94,7 @@ class SelfAttention(nn.Module):
 
 class MinibatchStddev(nn.Module):
     def __init__(self, group_size=4):
-        super(MinibatchStddev, self).__init__()
+        super().__init__()
         self.group_size = group_size if group_size != 0 else 1e6
 
     def forward(self, x):  # B, C, T
@@ -111,7 +111,7 @@ class MinibatchStddev(nn.Module):
 
 class MinibatchStddevOld(nn.Module):
     def __init__(self, group_size=4):
-        super(MinibatchStddevOld, self).__init__()
+        super().__init__()
         self.temporal = False
         self.out_channels = 1
 
