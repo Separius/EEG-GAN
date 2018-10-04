@@ -3,6 +3,6 @@ __pycache__/
 results/
 .ropeproject/
 data/
-configs/
+confs/
 *.pkl
 .vscode/

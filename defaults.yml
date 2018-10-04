@@ -11,8 +11,7 @@ iwass_epsilon: 0.001
 iwass_target: 1.0
 load_dataset: 'data/512.pkl'
 loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
-cuda_device: 0
-ttur: true
+ttur: false
 fmap_base: 1024
 fmap_max: 256
 fmap_min: 64
@@ -25,7 +24,7 @@ monitor_warmup: 50
 monitor_patience: 5
 random_multiply: false
 EEGDataset:
-  dir_path: './data/tuh2'
+  dir_path: './data/tuh1'
   seq_len: 512
   stride: 0.25
   num_channels: 5
@@ -34,7 +33,7 @@ EEGDataset:
   model_dataset_depth_offset: 2
 Generator:
   sngan_rgb: false
-  act_alpha: 0.1
+  act_alpha: 0.2
   latent_size: 256
   residual: false
   normalize_latents: true
@@ -51,7 +50,7 @@ Discriminator:
   spectral: false
   act_norm: null
   group_size: 4
-  act_alpha: 0.1
+  act_alpha: 0.2
 DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0
