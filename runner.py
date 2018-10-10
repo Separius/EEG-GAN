@@ -11,7 +11,7 @@ for i in range(N_GPU):
 
 def runner(x):
     gpu = q.get()
-    cmd = "python3 train.py --config_file ./confs/{} --cuda_device {}".format(x, gpu)
+    cmd = "python3 train.py --config_file ./confs/tuh1_512_wgan_5_otur_base.yml {} --cuda_device {}".format(x, gpu)
     os.system(cmd)
     q.put(gpu)
 

@@ -25,10 +25,10 @@ def output_samples(generator_path, num_samples):
         params['max_batch_size'] = num_samples
     outputs = []
     for i in trange(int(math.ceil(num_samples / params['max_batch_size']))):
-        z = random_latents(params['max_batch_size'], 1)
+        z = random_latents(params['max_batch_size'], G.latent_size)
         if not isinstance(z, (tuple, list)):
             z = (z, )
-        gen_input = (cudize(Variable(x)) for x in z)
+        gen_input = [cudize(Variable(x)) for x in z]
         outputs.append(generate_samples(G, gen_input))
     return np.concatenate(outputs, axis=0)
 
@@ -43,7 +43,7 @@ def save_pics(xx, generator):
 if __name__ == '__main__':
     params = simple_argparser(default_params)
     if os.path.isdir(params['generator_path']):
-        params['generator_path'] = os.path.join(params['generator_path'], '*-network-snapshot-generator-*.dat')
+        params['generator_path'] = os.path.join(params['generator_path'], 'network-snapshot-generator-*.dat')
         all_generators = glob.glob(params['generator_path'])
         for generator in tqdm(all_generators):
             xx = output_samples(generator, params['num_samples'])
