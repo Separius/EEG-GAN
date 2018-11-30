@@ -36,7 +36,7 @@ class DepthManager(Plugin):
                  lod_training_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200},
                  lod_transition_kimg=400,
                  lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
-        super(DepthManager, self).__init__([(1, 'iteration')])
+        super().__init__([(1, 'iteration')])
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
         self.tick_kimg_default = tick_kimg_default
@@ -143,7 +143,7 @@ class DepthManager(Plugin):
 class EfficientLossMonitor(LossMonitor):
 
     def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup, monitor_patience):
-        super(EfficientLossMonitor, self).__init__()
+        super().__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
         self.threshold = monitor_threshold
@@ -158,7 +158,7 @@ class EfficientLossMonitor(LossMonitor):
         return val
 
     def epoch(self, idx):
-        super(EfficientLossMonitor, self).epoch(idx)
+        super().epoch(idx)
         if idx > self.warmup:
             loss_value = self.trainer.stats[self.stat_name]['epoch_mean']
             if abs(loss_value) > self.threshold:
@@ -170,10 +170,8 @@ class EfficientLossMonitor(LossMonitor):
 
 
 class AbsoluteTimeMonitor(Plugin):
-    stat_name = 'time'
-
     def __init__(self, base_time=0):
-        super(AbsoluteTimeMonitor, self).__init__([(1, 'epoch')])
+        super().__init__([(1, 'epoch')])
         self.base_time = base_time
         self.start_time = time.time()
         self.epoch_start = self.start_time
@@ -232,7 +230,7 @@ class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
                  output_snapshot_ticks=25):
-        super(OutputGenerator, self).__init__([(1, 'epoch'), (1, 'end')])
+        super().__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len
@@ -308,7 +306,7 @@ class OutputGenerator(Plugin):
 class TeeLogger(Logger):
 
     def __init__(self, log_file, exp_name, *args, **kwargs):
-        super(TeeLogger, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.log_file = open(log_file, 'a', 1)
         self.exp_name = exp_name
 

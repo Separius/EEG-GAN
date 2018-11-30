@@ -8,9 +8,14 @@ from torch.utils.data import Dataset
 
 
 class EEGDataset(Dataset):
-    def __init__(self, dir_path='./data/tuh2', seq_len=512, stride=0.25, num_channels=5,
-                 per_file_normalization=True, dataset_freq=80,
-                 model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
+    # TODO add .mat reading capability(as well as text file)
+    # TODO add multi-label reading capabilities
+    # TODO support progression_scale in other parts of the code
+    # TODO use __str__
+    def __init__(self, dir_path: str = './data/tuh2', seq_len: int = 512, stride: float = 0.25, num_channels: int = 5,
+                 per_file_normalization: bool = True, dataset_freq: int = 80, progression_scale: int = 2,
+                 model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
+        super().__init__()
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
@@ -18,7 +23,7 @@ class EEGDataset(Dataset):
         self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
         num_files = len(self.all_files)
         self.seq_len = seq_len
-        self.progression_scale = 2
+        self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.max_freq = dataset_freq
@@ -50,6 +55,10 @@ class EEGDataset(Dataset):
             'shape': self.shape,
             'depth_range': (self.min_dataset_depth, self.max_dataset_depth)
         }
+
+    def __str__(self):
+        return '{}l_{}c_{}p_{}o'.format(self.seq_len, self.num_channels, self.progression_scale,
+                                        self.model_dataset_depth_offset)
 
     def normalize_all(self, num_files):
         all_max = max([self.datas[i].max() for i in range(num_files)])
@@ -96,7 +105,7 @@ class EEGDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
-        return torch.from_numpy(datapoint.astype('float32'))
+        return torch.from_numpy(datapoint.astype(np.float32))
 
     def alpha_fade(self, datapoint):
         if self.alpha == 1:

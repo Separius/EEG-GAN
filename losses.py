@@ -13,7 +13,8 @@ zero = None
 def get_mixing_factor(batch_size):
     global mixing_factors
     if mixing_factors is None or batch_size != mixing_factors.size(0):
-        mixing_factors = cudize(torch.FloatTensor(batch_size, 1, 1))
+        with torch.no_grad():
+            mixing_factors = cudize(torch.FloatTensor(batch_size, 1, 1))
     mixing_factors.uniform_()
     return mixing_factors
 
@@ -21,23 +22,26 @@ def get_mixing_factor(batch_size):
 def get_one(batch_size):
     global one
     if one is None or batch_size != one.size(0):
-        one = Variable(cudize(torch.ones(batch_size)))
+        with torch.no_grad():
+            one = Variable(cudize(torch.ones(batch_size)))
     return one
 
 
 def get_zero(batch_size):
     global zero
     if zero is None or batch_size != zero.size(0):
-        zero = Variable(cudize(torch.zeros(batch_size)))
+        with torch.no_grad():
+            zero = Variable(cudize(torch.zeros(batch_size)))
     return zero
 
 
 def calc_grad(x_hat, pred_hat):
     global grad_outputs
     if grad_outputs is None or pred_hat.size(0) != grad_outputs.size(0):
-        grad_outputs = cudize(torch.ones(pred_hat.size()))
-    return grad(outputs=pred_hat, inputs=x_hat, grad_outputs=grad_outputs, create_graph=True, retain_graph=True,
-                only_inputs=True)[0]
+        with torch.no_grad():
+            grad_outputs = cudize(torch.ones(pred_hat.size()))
+    return grad(outputs=pred_hat, inputs=x_hat, grad_outputs=grad_outputs,
+                create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
 def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor,
@@ -70,6 +74,7 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
 
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, fake: torch.tensor,
                        loss_type: str, iwass_epsilon: float, grad_lambda: float, iwass_target: float):
+    # TODO add feature matching loss term
     dis.zero_grad()
     gen.zero_grad()
     with torch.no_grad():

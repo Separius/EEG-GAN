@@ -9,7 +9,7 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, spec
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_kernel_size=None,
                  is_residual=False, no_tanh=False, spectral=False, sngan_rgb=False, **layer_settings):
-        super(GBlock, self).__init__()
+        super().__init__()
         is_first = initial_kernel_size is not None
         self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized,
                               kernel_size=initial_kernel_size if is_first else ksize,
@@ -47,10 +47,10 @@ class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, num_classes, sngan_rgb=False, act_alpha=0, latent_size=256, residual=False,
                  normalize_latents=True, dropout=0.1, do_mode='mul', spectral=False, act_norm='pixel', no_tanh=False):
-        super(Generator, self).__init__()
+        super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        progression_scale = 2
+        progression_scale = 2  # TODO get from args
         R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
@@ -115,14 +115,13 @@ class Generator(nn.Module):
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, is_residual=False,
                  ksize=3, equalized=True, group_size=4, act_alpha=0, spectral=False, sngan_rgb=False, **layer_settings):
-        super(DBlock, self).__init__()
+        super().__init__()
         is_last = initial_kernel_size is not None
         self.fromRGB = GeneralConv(num_channels, ch_in, kernel_size=1, equalized=equalized,
                                    act_alpha=-1 if sngan_rgb else act_alpha, spectral=spectral)
+        self.net = []
         if is_last:
-            self.net = [MinibatchStddev(group_size)]
-        else:
-            self.net = []
+            self.net.append(MinibatchStddev(group_size))
         self.net.append(
             GeneralConv(ch_in + (1 if is_last else 0), ch_in, kernel_size=ksize, equalized=equalized,
                         act_alpha=act_alpha, spectral=spectral, **layer_settings))
@@ -152,10 +151,10 @@ class Discriminator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
                  kernel_size, self_attention_layers, num_classes, sngan_rgb=False, dropout=0.1,
                  do_mode='mul', residual=False, spectral=False, act_norm=None, group_size=4, act_alpha=0):
-        super(Discriminator, self).__init__()
+        super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        progression_scale = 2
+        progression_scale = 2  # TODO from args
         R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
         self.R = R

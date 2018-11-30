@@ -9,6 +9,7 @@ for i in range(N_GPU):
     q.put(i)
 
 
+# TODO change the config file template to be a product(var1.options, var2.options, ...)?
 def runner(x):
     gpu = q.get()
     cmd = "python3 train.py --config_file ./confs/tuh1_512_wgan_5_otur_base.yml {} --cuda_device {}".format(x, gpu)

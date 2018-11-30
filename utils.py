@@ -10,9 +10,7 @@ EPSILON = 1e-8
 
 
 def generate_samples(generator, gen_input):
-    out = generator.forward(*gen_input)
-    out = out.cpu().data.numpy()
-    return out
+    return generator.forward(gen_input).data.cpu().numpy()
 
 
 def save_pkl(file_name, obj):
