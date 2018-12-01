@@ -1,46 +1,56 @@
-MISC:
-handle class conditioning data, generator, discriminator, inference
-output the attention map for visiualization
-
+condition:
+    handle class conditioning data, generator, discriminator, inference
+    instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
+attention:
+    output the attention map for visiualization
+    spectral norm in all the attention: BTC -> q=(BTC/8), k=(BT/2C/8)[maxpooling after conv] [no act in convs] v=(BT/2C/2) -> conv(att(q,k)*v) BTC * gamma + x
 plugin:
-SWD :: graph per size per time => https://github.com/tensorflow/tensorflow/blob/master/tensorflow/contrib/gan/python/eval/python/sliced_wasserstein_impl.py
-MS-SSIM :: grpah per time => https://github.com/tkarras/progressive_growing_of_gans/tree/master/metrics
-for generation, use a exp moving average of G for more stable results! (0.999)
-picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
-add validation dataset to evaluate accuracy of D over time (combat memorization)
-imaginary fid, imaginary inception score
-gif(z1 -> z2)
-gif(const_z over epochs)
-
-checking:
-check weight initialization of CNNs
-reset_opt_for_new_lod   = True,         # Reset optimizer internal state (e.g. Adam moments) when new layers are introduced?
-
-#sngan
-uses relu, residual, GlorotUniform(math.sqrt(2)) and GlorotUniform() for skip connection
-uses global average pooling in D (before final linear); use that for embedd dot; no BN in D
-conv(act(bn(conv(act(bn(x))))))
-
-#Rel
-spectral norm -> no more (batch)normalization
-
-#sagan
-spectral norm in all the attention: BTC -> q=(BTC/8), k=(BT/2C/8)[maxpooling after conv]
-      [no act in convs]                    v=(BT/2C/2) -> conv(att(q,k)*v) BTC * gamma + x
-gen: linear, sn_block*n, no_cond_bn, relu, conv, tanh
-dic: sn_block*n, act, global_sum, [linear, *embedding]
-
-https://github.com/shinseung428/DRS_Tensorflow
-
-#biggan:
-increase batch size
-increase number of channels by 50%
-instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
-uses different z chunks for different layers [for each block, uses the same z_chunk]
-truncation_tirck (of norm(z) > threshold, resample)
-orthogonal_reqularization on G weights
-init: orthogonal for G and D
-2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
-Bernoulli {0, 1} and Censored Normal max (N (0, I), 0), both of which improve speed of training and lightly improve final performance, but are less amenable to truncation.
-monitor max singular value of weights
-batch norm (cond or not) + D == bad
+    SWD :: graph per size per time + plugins.py:365
+    for generation, use a exp moving average of G for more stable results! (0.999)
+    picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
+    gif(z1 -> z2)
+    gif(const_z over epochs)
+    * imaginary fid, imaginary inception score
+    * add validation dataset to evaluate accuracy of D over time (combat memorization)
+init:
+    * deepsound, pggan
+    * sngan: uses relu, residual, GlorotUniform(math.sqrt(2)) and GlorotUniform() for skip connection
+    * biggan: orthogonal for G and D
+options:
+    * reset_opt_for_new_lod   = True # Reset optimizer internal state (e.g. Adam moments) when new layers are introduced?
+    * sngan: uses global sum pooling in D (before final linear); use that for embedd dot; no BN in D
+    * relgan: spectral norm -> no more (batch)normalization
+arch:
+    * sngan: conv(act(bn(conv(act(bn(x))))))
+    * sagan_gen: linear, sn_block*n, no_cond_bn, relu, conv, tanh
+    * sagan_dic: sn_block*n, act, global_sum, [linear, *embedding]
+Z:
+    * Bernoulli {0, 1} and Censored Normal max (N (0, I), 0), both of which improve speed of training and lightly improve final performance, but are less amenable to truncation.
+    uses different z chunks for different layers [for each block, uses the same z_chunk]
+sampling:
+    https://github.com/shinseung428/DRS_Tensorflow
+    truncation_tirck (of norm(z) > threshold, resample)
+biggan:
+    increase batch size
+    increase number of channels by 50%
+    orthogonal_reqularization on G weights
+    2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
+    monitor max singular value of weights
+    batch norm (cond or not) + D == bad
+failed section: qrnn, tcn, dilated rnn, sru, sample rnn, wavenet, ae, vae
+exp:
+    train arl-eeg on a subset
+    plot the loss values
+    aggregation graphs (like the eeg paper)
+    condition interpolation * Z(*chunks) interpolation
+    D(x) as supervised weight
+    connection net F(D_intermediate(x)) = z
+    dumb length extension(+ intermediate concatenation)
+    dumb selected sampling(based on D value)
+    "one in the batch" conditioning
+    240Hz
+    more channels
+    multi-conditioning
+    unk one hot or multi hot of options / n
+    FID-IS AuC for truncation trick
+    G_1(Z) = o1, o2, o3, o4 -> F(o1,o2,o3) = o4
