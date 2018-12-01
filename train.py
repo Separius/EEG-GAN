@@ -29,8 +29,9 @@ default_params = dict(
     num_data_workers=2,
     random_seed=1373,
     grad_lambda=10.0,  # must set it to zero to disable gp loss (even for non wgan based losses)
-    iwass_epsilon=0.001,
+    iwass_drift_epsilon=0.001,
     iwass_target=1.0,
+    feature_matching_lambda=0.0,
     loss_type='wgan_theirs',  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
     cuda_device=0,
     ttur=False,
@@ -99,9 +100,11 @@ def main(params):
     assert generator.max_depth == discriminator.max_depth
     generator = cudize(generator)
     discriminator = cudize(discriminator)
-    d_loss_fun = partial(discriminator_loss, loss_type=params['loss_type'], iwass_epsilon=params['iwass_epsilon'],
-                         grad_lambda=params['grad_lambda'], iwass_target=params['iwass_target'])
-    g_loss_fun = partial(generator_loss, random_multiply=params['random_multiply'], loss_type=params['loss_type'])
+    d_loss_fun = partial(discriminator_loss, loss_type=params['loss_type'],
+                         iwass_drift_epsilon=params['iwass_drift_epsilon'], grad_lambda=params['grad_lambda'],
+                         iwass_target=params['iwass_target'])
+    g_loss_fun = partial(generator_loss, random_multiply=params['random_multiply'], loss_type=params['loss_type'],
+                         feature_matching_lambda=params['feature_matching_lambda'])
     max_depth = generator.max_depth
 
     logger.log('exp name: {}'.format(params['exp_name']))

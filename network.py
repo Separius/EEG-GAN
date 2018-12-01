@@ -46,10 +46,12 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
-                 self_attention_layers, progression_scale, num_classes, sngan_rgb: bool = False, act_alpha: float = 0.0,
+                 self_attention_layers, progression_scale, num_classes, sngan_rgb: bool = False, act_alpha: float = 0.2,
                  latent_size: int = 256, residual: bool = False, normalize_latents: bool = True, dropout: float = 0.1,
                  do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
                  no_tanh: bool = False):
+        # NOTE in pggan, no_tanh is True
+        # NOTE in the pggan, dropout is 0.0
         super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
@@ -154,7 +156,8 @@ class Discriminator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
                  self_attention_layers, num_classes, progression_scale, sngan_rgb: bool = False, dropout: float = 0.1,
                  do_mode: str = 'mul', residual: bool = False, spectral: bool = False, act_norm: Optional[str] = None,
-                 group_size: int = 4, act_alpha: float = 0.0):
+                 group_size: int = 4, act_alpha: float = 0.2):
+        # NOTE in the pggan, dropout is 0.0
         super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]

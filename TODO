@@ -1,12 +1,14 @@
-#PGGAN
-SWD :: graph per size per time
-MS-SSIM :: grpah per time
-wgan-gp: ||grad-lambda||/lambda^2, lambda = 1 and 750!
-baseline: batch normalization in the generator, layer normalization in the discriminator
-last layer of G is linear
-leaky in both, alpha=0.2
+MISC:
+handle class conditioning data, generator, discriminator, inference
+output the attention map for visiualization
+
+plugin:
+SWD :: graph per size per time => check their code
+MS-SSIM :: grpah per time => check their code
 for generation, use a exp moving average of G for more stable results! (0.999)
-disc_loss: e_drift * E(D(x)^2 for x is real) , e_drift = 0.001
-n_critic=1
-+ they did not use dropout at all
 picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
+add validation dataset to evaluate accuracy of D over time (combat memorization)
+
+checking:
+check weight initialization of CNNs
+check their code for other hidden gems

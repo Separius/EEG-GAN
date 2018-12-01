@@ -2,8 +2,8 @@ import math
 import torch
 import numpy as np
 from torch import nn
+from utils import cudize, pixel_norm
 from torch.nn.utils import spectral_norm
-from utils import cudize, pixel_norm, EPSILON
 from torch.nn.init import calculate_gain, _calculate_correct_fan
 
 
