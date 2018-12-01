@@ -160,16 +160,18 @@ class EqualizedConv1d(nn.Module):
         if spectral:
             self.conv = spectral_norm(self.conv)
         if not equalized:
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+            # based on deep sound:
+            # torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d')) #pggan
             self.scale = 1.0
         else:
-            # TODO check the pggan and DeepSound implementations
+            # TODO #pggan
             # torch.nn.init.normal_(self.conv.weight)
             # fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
             # gain = calculate_gain('leaky_relu', 0)
             # std = gain / math.sqrt(fan)
             # self.scale = 1.0 / std
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+            # based on deep sound:
+            torch.nn.init.kaiming_normal_(self.conv.weight)  # , a=calculate_gain('conv1d'))
             self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
 
