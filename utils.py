@@ -23,7 +23,7 @@ def load_pkl(file_name):
         return load(f)
 
 
-def random_latents(num_latents, latent_size, t=1):
+def random_latents(num_latents, latent_size):
     return torch.randn(num_latents, latent_size)
 
 

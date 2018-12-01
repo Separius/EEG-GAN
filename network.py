@@ -1,5 +1,6 @@
 import math
 from torch import nn
+from typing import Optional
 from utils import pixel_norm
 from functools import partial
 import torch.nn.functional as F
@@ -45,12 +46,13 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
-                 self_attention_layers, num_classes, sngan_rgb=False, act_alpha=0, latent_size=256, residual=False,
-                 normalize_latents=True, dropout=0.1, do_mode='mul', spectral=False, act_norm='pixel', no_tanh=False):
+                 self_attention_layers, progression_scale, num_classes, sngan_rgb: bool = False, act_alpha: float = 0.0,
+                 latent_size: int = 256, residual: bool = False, normalize_latents: bool = True, dropout: float = 0.1,
+                 do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
+                 no_tanh: bool = False):
         super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        progression_scale = 2  # TODO get from args
         R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
 
@@ -114,7 +116,8 @@ class Generator(nn.Module):
 
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, is_residual=False,
-                 ksize=3, equalized=True, group_size=4, act_alpha=0, spectral=False, sngan_rgb=False, **layer_settings):
+                 ksize=3, equalized=True, group_size=4, act_alpha: float = 0.0, spectral=False, sngan_rgb=False,
+                 **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.fromRGB = GeneralConv(num_channels, ch_in, kernel_size=1, equalized=equalized,
@@ -148,13 +151,13 @@ class DBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized,
-                 kernel_size, self_attention_layers, num_classes, sngan_rgb=False, dropout=0.1,
-                 do_mode='mul', residual=False, spectral=False, act_norm=None, group_size=4, act_alpha=0):
+    def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
+                 self_attention_layers, num_classes, progression_scale, sngan_rgb: bool = False, dropout: float = 0.1,
+                 do_mode: str = 'mul', residual: bool = False, spectral: bool = False, act_norm: Optional[str] = None,
+                 group_size: int = 4, act_alpha: float = 0.0):
         super().__init__()
         resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        progression_scale = 2  # TODO from args
         R = int(math.log(resolution, progression_scale))
         assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
         self.R = R

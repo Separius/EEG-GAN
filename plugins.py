@@ -141,8 +141,8 @@ class DepthManager(Plugin):
 
 
 class EfficientLossMonitor(LossMonitor):
-
-    def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup, monitor_patience):
+    def __init__(self, loss_no, stat_name, monitor_threshold: float = 10.0, monitor_warmup: int = 50,
+                 monitor_patience: int = 5):
         super().__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
@@ -170,9 +170,8 @@ class EfficientLossMonitor(LossMonitor):
 
 
 class AbsoluteTimeMonitor(Plugin):
-    def __init__(self, base_time=0):
+    def __init__(self):
         super().__init__([(1, 'epoch')])
-        self.base_time = base_time
         self.start_time = time.time()
         self.epoch_start = self.start_time
         self.start_nimg = None
@@ -189,7 +188,7 @@ class AbsoluteTimeMonitor(Plugin):
         self.epoch_start = cur_time
         kimg_time = tick_time / (self.trainer.cur_nimg - self.start_nimg) * 1000
         self.start_nimg = self.trainer.cur_nimg
-        self.trainer.stats['time'] = timedelta(seconds=time.time() - self.start_time + self.base_time)
+        self.trainer.stats['time'] = timedelta(seconds=time.time() - self.start_time)
         self.trainer.stats['sec']['tick'] = tick_time
         self.trainer.stats['sec']['kimg'] = kimg_time
 
@@ -197,7 +196,7 @@ class AbsoluteTimeMonitor(Plugin):
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
-    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50):
+    def __init__(self, checkpoints_path, keep_old_checkpoints: bool = True, network_snapshot_ticks: int = 50):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
@@ -228,8 +227,8 @@ class SaverPlugin(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
-                 output_snapshot_ticks=25):
+    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int, samples_count: int = 8,
+                 output_snapshot_ticks: int = 25):
         super().__init__([(1, 'epoch'), (1, 'end')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
