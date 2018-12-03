@@ -81,7 +81,7 @@ class EEGDataset(Dataset):
             arr_max = arr.max()
         if arr_min is None:
             arr_min = arr.min()
-        return ((arr - arr_min) / (arr_max - arr_min)) * 2.0 - 1.0
+        return ((arr - arr_min) / ((arr_max - arr_min) if arr_max != arr_min else 1.0)) * 2.0 - 1.0
 
     @property
     def data(self):

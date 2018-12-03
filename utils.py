@@ -15,7 +15,7 @@ def generate_samples(generator, gen_input):
 
 def save_pkl(file_name, obj):
     with open(file_name, 'wb') as f:
-        dump(obj, f)
+        dump(obj, f, protocol=4)
 
 
 def load_pkl(file_name):
