@@ -142,7 +142,7 @@ def main(params):
         else:
             return 1.0
 
-    def get_optimizers(g_lr, last_epoch=-1):
+    def get_optimizers(g_lr, last_epoch=-1, is_first_call=True):
         if params['ttur']:
             d_lr = g_lr * 4.0
             params['Adam']['betas'] = (0, 0.9)
@@ -150,9 +150,12 @@ def main(params):
             d_lr = g_lr
         opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
         opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
-        lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
-        lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
-        return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
+        if is_first_call:
+            lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
+            lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
+            return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
+        else:
+            return opt_g, opt_d, None, None
 
     opt_g, opt_d, lr_scheduler_g, lr_scheduler_d = get_optimizers(params['lr'])
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset,
@@ -163,7 +166,7 @@ def main(params):
                      **params['DepthManager']))
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
-    trainer.register_plugin(SaverPlugin(result_dir, **params.SaverPlugin))
+    trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
         OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset.seq_len, dataset.dataset_freq,
                         dataset.seq_len, **params['OutputGenerator']))

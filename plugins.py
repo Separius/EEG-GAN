@@ -112,12 +112,13 @@ class DepthManager(Plugin):
         depth, alpha = self.calc_progress()
         dataset = self.trainer.dataset
         if depth != self.depth:
-            self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
+            self.trainer.discriminator.depth = self.trainer.generator.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
-            self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
+            self.trainer.optimizer_g, self.trainer.optimizer_d, _, _ = self.get_optimizer(
                 self.minibatch_default * self.default_lr / minibatch_size,
-                self.trainer.lr_scheduler_g.last_epoch if self.trainer.lr_scheduler_g is not None else None)
+                self.trainer.lr_scheduler_g.last_epoch if self.trainer.lr_scheduler_g is not None else None,
+                is_first_call=False)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
@@ -125,7 +126,7 @@ class DepthManager(Plugin):
             self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
-            self.trainer.D.alpha = self.trainer.G.alpha = dataset.alpha = alpha
+            self.trainer.discriminator.alpha = self.trainer.generator.alpha = dataset.alpha = alpha
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
@@ -136,8 +137,8 @@ class DepthManager(Plugin):
             else:
                 gamma = (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)
             gamma = min(1, max(0, gamma))
-            self.trainer.D.set_gamma(gamma)
-            self.trainer.G.set_gamma(gamma)
+            self.trainer.discriminator.set_gamma(gamma)
+            self.trainer.generator.set_gamma(gamma)
             self.trainer.stats['gamma']['val'] = gamma
 
 
@@ -208,7 +209,7 @@ class SaverPlugin(Plugin):
     def epoch(self, epoch_index):
         if not self.keep_old_checkpoints:
             self._clear(self.last_pattern.format('*', '*'))
-        for model, name in [(self.trainer.G, 'generator'), (self.trainer.D, 'discriminator')]:
+        for model, name in [(self.trainer.generator, 'generator'), (self.trainer.discriminator, 'discriminator')]:
             torch.save(
                 model,
                 os.path.join(
@@ -274,7 +275,7 @@ class OutputGenerator(Plugin):
 
     def register(self, trainer):
         self.trainer = trainer
-        self.my_g_clone = self.flatten_params(self.trainer.G)
+        self.my_g_clone = self.flatten_params(self.trainer.generator)
 
     @staticmethod
     def get_images(seq_len, frequency, epoch, generated):
@@ -305,7 +306,7 @@ class OutputGenerator(Plugin):
         return images
 
     def epoch(self, epoch_index):
-        for p, avg_p in zip(self.trainer.G.parameters(), self.my_g_clone):
+        for p, avg_p in zip(self.trainer.generator.parameters(), self.my_g_clone):
             avg_p.mul_(0.001).add_(0.999 * p.data)
         if epoch_index % self.output_snapshot_ticks == 0:
             z = self.sample_fn(self.samples_count)
