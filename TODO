@@ -6,12 +6,12 @@ attention:
     spectral norm in all the attention: BTC -> q=(BTC/8), k=(BT/2C/8)[maxpooling after conv] [no act in convs] v=(BT/2C/2) -> conv(att(q,k)*v) BTC * gamma + x
 plugin:
     SWD :: graph per size per time + plugins.py:365
-    for generation, use a exp moving average of G for more stable results! (0.999)
+    for generation, use a exp moving average of G for more stable results! (0.999) [which one? :D]
     picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
     gif(z1 -> z2)
     gif(const_z over epochs)
-    * imaginary fid, imaginary inception score
-    * add validation dataset to evaluate accuracy of D over time (combat memorization)
+    imaginary fid, imaginary inception score
+    add validation dataset to evaluate accuracy of D over time (combat memorization)
 init:
     * deepsound, pggan
     * sngan: uses relu, residual, GlorotUniform(math.sqrt(2)) and GlorotUniform() for skip connection
@@ -54,3 +54,9 @@ exp:
     unk one hot or multi hot of options / n
     FID-IS AuC for truncation trick
     G_1(Z) = o1, o2, o3, o4 -> F(o1,o2,o3) = o4
+inception:
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_slowing/v1.0.1/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_seizure/v1.4.0/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.1/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/v1.0.0/
+    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/

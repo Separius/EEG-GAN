@@ -11,8 +11,9 @@ from torch.utils.data import Dataset
 class EEGDataset(Dataset):
     # TODO add .mat reading capability(as well as text file)
     # TODO add multi-label reading capabilities
-    def __init__(self, dir_path: str = './data/tuh2', seq_len: int = 512, stride: float = 0.25, num_channels: int = 5,
-                 per_file_normalization: bool = True, dataset_freq: int = 80, progression_scale: int = 2,
+    def __init__(self, dir_path: str = './data/prepared_eegs', seq_len: int = 512, stride: float = 0.25,
+                 num_channels: int = 5, per_file_normalization: bool = True, dataset_freq: int = 80,
+                 progression_scale: int = 2, num_files: int = 12518,
                  model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
         super().__init__()
         self.model_depth = 0
@@ -29,7 +30,7 @@ class EEGDataset(Dataset):
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
-        num_files = len(self.all_files)
+        num_files = min(len(self.all_files), num_files)
         sizes = []
         for i in range(num_files):
             with open(self.all_files[i]) as f:

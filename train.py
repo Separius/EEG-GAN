@@ -45,6 +45,7 @@ default_params = dict(
     num_classes=0,
     random_multiply=False,
     lr_rampup_kimg=40,  # set to 0 to disable
+    validation_ratio=0.1,  # set to 0.0 to disable
 )
 
 
@@ -121,9 +122,15 @@ def main(params):
     train_idx = list(range(dataset_len))
     np.random.shuffle(train_idx)
 
-    def get_dataloader(minibatch_size):
-        return DataLoader(dataset, minibatch_size, sampler=InfiniteRandomSampler(train_idx), worker_init_fn=worker_init,
-                          num_workers=params['num_data_workers'], pin_memory=False, drop_last=True)
+    # TODO this is not a correct validation set (normalization uses them)
+    train_idx, val_idx = train_idx[int(dataset_len * params['validation_ratio']):], train_idx[:int(
+        dataset_len * params['validation_ratio'])]
+
+    def get_dataloader(minibatch_size, is_training=True):
+        return DataLoader(dataset, minibatch_size,
+                          sampler=InfiniteRandomSampler(train_idx) if is_training else SubsetRandomSampler(val_idx),
+                          worker_init_fn=worker_init, num_workers=params['num_data_workers'], pin_memory=False,
+                          drop_last=True)
 
     def get_random_latents(bs):
         return partial(random_latents, num_latents=bs, latent_size=latent_size)
