@@ -24,6 +24,7 @@ def output_samples(generator_path, num_samples):
         params['max_batch_size'] = num_samples
     outputs = []
     for i in trange(int(math.ceil(num_samples / params['max_batch_size']))):
+        # TODO it should be based on z_distribution
         outputs.append(generate_samples(G, cudize(Variable(random_latents(params['max_batch_size'], G.latent_size)))))
     return np.concatenate(outputs, axis=0)
 

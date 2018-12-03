@@ -152,28 +152,25 @@ class ConditionalLayerNorm(ConditionalGeneralNorm):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True,
+                 init='kaiming_normal'):
         super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, padding=padding, bias=True)
         self.conv.bias.data.zero_()
-        if spectral:
-            self.conv = spectral_norm(self.conv)
+        if init == 'kaiming_normal':
+            torch.nn.init.kaiming_normal_(self.conv.weight)
+        elif init == 'xavier_uniform':
+            torch.nn.init.xavier_uniform_(self.conv.weight, math.sqrt(2))
+        elif init == 'orthogonal':
+            torch.nn.init.orthogonal_(self.conv.weight)
         if not equalized:
-            # based on deep sound:
-            # torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d')) #pggan
             self.scale = 1.0
         else:
-            # TODO #pggan
-            # torch.nn.init.normal_(self.conv.weight)
-            # fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
-            # gain = calculate_gain('leaky_relu', 0)
-            # std = gain / math.sqrt(fan)
-            # self.scale = 1.0 / std
-            # based on deep sound:
-            torch.nn.init.kaiming_normal_(self.conv.weight)  # , a=calculate_gain('conv1d'))
             self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
+        if spectral:
+            self.conv = spectral_norm(self.conv)
 
     def forward(self, x):
         return self.conv(x * self.scale)
@@ -181,11 +178,11 @@ class EqualizedConv1d(nn.Module):
 
 class GeneralConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False):
+                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal'):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized)
+                               equalized=equalized, init=init)
         norm = None
         if act_norm == 'layer':
             norm = ConditionalLayerNorm(out_channels, num_classes)

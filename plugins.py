@@ -26,6 +26,7 @@ class DepthManager(Plugin):
                  has_attention,
                  get_optimizer,
                  default_lr,
+                 reset_optimizer: bool = True,
                  disable_progression=False,
                  depth_offset=0,  # starts form 0
                  attention_transition_kimg=400,
@@ -38,6 +39,7 @@ class DepthManager(Plugin):
                  lod_transition_kimg=400,
                  lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
         super().__init__([(1, 'iteration')])
+        self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
         self.tick_kimg_default = tick_kimg_default
@@ -115,10 +117,9 @@ class DepthManager(Plugin):
             self.trainer.discriminator.depth = self.trainer.generator.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
-            self.trainer.optimizer_g, self.trainer.optimizer_d, _, _ = self.get_optimizer(
-                self.minibatch_default * self.default_lr / minibatch_size,
-                self.trainer.lr_scheduler_g.last_epoch if self.trainer.lr_scheduler_g is not None else None,
-                is_first_call=False)
+            if self.reset_optimizer:
+                self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
+                    self.minibatch_default * self.default_lr / minibatch_size)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
@@ -246,7 +247,7 @@ class EvalDiscriminator(Plugin):
             values.append(d_real.mean().item())
         values = np.array(values).mean()
         # TODO do something better than printing
-        print('D score on validation real data', values)
+        print('D score on validation real data:', values)
         self.trainer.discriminator.train()
 
 
@@ -307,16 +308,14 @@ class OutputGenerator(Plugin):
 
     def epoch(self, epoch_index):
         for p, avg_p in zip(self.trainer.generator.parameters(), self.my_g_clone):
-            avg_p.mul_(0.001).add_(0.999 * p.data)
+            avg_p.mul_(0.999).add_(0.001 * p.data)
         if epoch_index % self.output_snapshot_ticks == 0:
             z = self.sample_fn(self.samples_count)
-            if not isinstance(z, (list, tuple)):
-                z = (z,)
-            gen_input = (cudize(Variable(x)) for x in z)
-            original_param = self.flatten_params(self.trainer.G)
-            self.load_params(self.my_g_clone, self.trainer.G)
-            out = generate_samples(self.trainer.G, gen_input)
-            self.load_params(original_param, self.trainer.G)
+            gen_input = cudize(Variable(z))
+            original_param = self.flatten_params(self.trainer.generator)
+            self.load_params(self.my_g_clone, self.trainer.generator)
+            out = generate_samples(self.trainer.generator, gen_input)
+            self.load_params(original_param, self.trainer.generator)
             frequency = self.max_freq * out.shape[2] / self.seq_len
             res_len = min(self.res_len, out.shape[2])
             images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])

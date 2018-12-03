@@ -9,27 +9,33 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, spec
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True, initial_kernel_size=None,
-                 is_residual=False, no_tanh=False, spectral=False, sngan_rgb=False, **layer_settings):
+                 is_residual=False, no_tanh=False, spectral=False, to_rgb_mode='pggan', init='kaiming_normal',
+                 **layer_settings):
         super().__init__()
         is_first = initial_kernel_size is not None
         self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized,
-                              kernel_size=initial_kernel_size if is_first else ksize,
+                              kernel_size=initial_kernel_size if is_first else ksize, init=init,
                               pad=initial_kernel_size - 1 if is_first else None, spectral=spectral, **layer_settings)
-        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize, spectral=spectral,
+        self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize, spectral=spectral, init=init,
                               **layer_settings)
-        if sngan_rgb:
-            to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.LeakyReLU(0.2),
-                                   GeneralConv(ch_out, num_channels, kernel_size=3, act_alpha=-1, equalized=equalized,
-                                               spectral=spectral))
-        else:
+        if to_rgb_mode == 'pggan':
             to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1, equalized=equalized,
-                                 spectral=spectral)
+                                 spectral=spectral, init=init)
+        elif to_rgb_mode in {'sngan', 'sagan'}:
+            to_rgb = GeneralConv(ch_out, num_channels if to_rgb_mode == 'sngan' else ch_out, kernel_size=3,
+                                 act_alpha=0.2, equalized=equalized, spectral=spectral, num_classes=0, init=init)
+            if to_rgb_mode == 'sagan':
+                to_rgb = nn.Sequential(
+                    GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1, equalized=equalized,
+                                spectral=spectral, init=init), to_rgb)
+        else:
+            raise ValueError()
         if no_tanh:
             self.toRGB = to_rgb
         else:
             self.toRGB = nn.Sequential(to_rgb, ScaledTanh())
         if not is_first and is_residual:
-            self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, 1, equalized,
+            self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, 1, equalized, init=init,
                                                                                 act_alpha=-1, spectral=spectral)
         else:
             self.residual = None
@@ -46,9 +52,9 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
-                 self_attention_layers, progression_scale, num_classes, sngan_rgb: bool = False, act_alpha: float = 0.2,
-                 latent_size: int = 256, residual: bool = False, normalize_latents: bool = True, dropout: float = 0.1,
-                 do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
+                 self_attention_layers, progression_scale, num_classes, init, to_rgb_mode: str = 'pggan',
+                 act_alpha: float = 0.2, latent_size: int = 256, residual: bool = False, normalize_latents: bool = True,
+                 dropout: float = 0.1, do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
                  no_tanh: bool = False):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
@@ -69,7 +75,7 @@ class Generator(nn.Module):
         initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, is_residual=residual, spectral=spectral,
-                             no_tanh=no_tanh, sngan_rgb=sngan_rgb, **layer_settings)
+                             no_tanh=no_tanh, to_rgb_mode=to_rgb_mode, init=init, **layer_settings)
         dummy = []
         self.self_attention = dict()
         for layer in self_attention_layers:
@@ -78,7 +84,8 @@ class Generator(nn.Module):
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
                                             ksize=kernel_size, equalized=equalized, is_residual=residual,
-                                            spectral=spectral, no_tanh=no_tanh, sngan_rgb=sngan_rgb, **layer_settings)
+                                            spectral=spectral, no_tanh=no_tanh, to_rgb_mode=to_rgb_mode,
+                                            init=init, **layer_settings)
                                      for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
@@ -119,27 +126,27 @@ class Generator(nn.Module):
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, is_residual=False,
                  ksize=3, equalized=True, group_size=4, act_alpha: float = 0.0, spectral=False, sngan_rgb=False,
-                 **layer_settings):
+                 init='kaiming_normal', **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.fromRGB = GeneralConv(num_channels, ch_in, kernel_size=1, equalized=equalized,
-                                   act_alpha=-1 if sngan_rgb else act_alpha, spectral=spectral)
+                                   act_alpha=-1 if sngan_rgb else act_alpha, spectral=spectral, init=init)
         self.net = []
         if is_last:
             self.net.append(MinibatchStddev(group_size))
         self.net.append(
             GeneralConv(ch_in + (1 if is_last else 0), ch_in, kernel_size=ksize, equalized=equalized,
-                        act_alpha=act_alpha, spectral=spectral, **layer_settings))
+                        act_alpha=act_alpha, spectral=spectral, init=init, **layer_settings))
         self.net.append(
             GeneralConv(ch_in, ch_out, kernel_size=initial_kernel_size if is_last else ksize,
-                        pad=0 if is_last else None,
+                        pad=0 if is_last else None, init=init,
                         equalized=equalized, act_alpha=act_alpha, spectral=spectral, **layer_settings))
         self.net = nn.Sequential(*self.net)
         self.is_last = initial_kernel_size
         if is_residual and not is_last:
             self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
                                                                                 equalized=equalized, act_alpha=-1,
-                                                                                spectral=spectral)
+                                                                                spectral=spectral, init=init)
         else:
             self.residual = None
 
@@ -154,9 +161,9 @@ class DBlock(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
-                 self_attention_layers, num_classes, progression_scale, sngan_rgb: bool = False, dropout: float = 0.1,
-                 do_mode: str = 'mul', residual: bool = False, spectral: bool = False, act_norm: Optional[str] = None,
-                 group_size: int = 4, act_alpha: float = 0.2):
+                 self_attention_layers, num_classes, progression_scale, init, sngan_rgb: bool = False,
+                 dropout: float = 0.1, do_mode: str = 'mul', residual: bool = False, spectral: bool = False,
+                 act_norm: Optional[str] = None, group_size: int = 4, act_alpha: float = 0.2):
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
         resolution = dataset_shape[-1]
@@ -174,7 +181,7 @@ class Discriminator(nn.Module):
         initial_kernel_size = progression_scale ** initial_size
         last_block = DBlock(nf(1), nf(0), num_channels, initial_kernel_size=initial_kernel_size, ksize=kernel_size,
                             equalized=equalized, is_residual=residual, group_size=group_size, act_alpha=act_alpha,
-                            spectral=spectral, sngan_rgb=sngan_rgb, **layer_settings)
+                            spectral=spectral, sngan_rgb=sngan_rgb, init=init, **layer_settings)
         dummy = []
         self.self_attention = dict()
         for layer in self_attention_layers:
@@ -184,8 +191,8 @@ class Discriminator(nn.Module):
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,
                                             ksize=kernel_size, equalized=equalized, initial_kernel_size=None,
                                             is_residual=residual, group_size=group_size, act_alpha=act_alpha,
-                                            spectral=spectral, sngan_rgb=sngan_rgb, **layer_settings) for i in
-                                     range(R - 1, initial_size - 1, -1)] + [last_block])
+                                            spectral=spectral, init=init, sngan_rgb=sngan_rgb, **layer_settings) for i
+                                     in range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
             self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
             if spectral:
@@ -193,7 +200,7 @@ class Discriminator(nn.Module):
         else:
             self.class_emb = None
         self.linear = GeneralConv(nf(0), 1, kernel_size=1, equalized=equalized, pad=None, act_alpha=-1,
-                                  spectral=spectral)
+                                  spectral=spectral, init=init)
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
@@ -220,5 +227,5 @@ class Discriminator(nn.Module):
                 h = self.self_attention[i - 2](h)
         o = self.linear(h).mean(dim=2).squeeze()
         if y:
-            o = o + F.sum(self.class_emb(y) * h, axis=1, keepdims=True).mean(dim=2)
+            o = o + F.sum(self.class_emb(y) * h, axis=1).mean(dim=2)
         return o, h

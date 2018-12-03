@@ -5,6 +5,7 @@ from utils import cudize, enable_benchmark, load_model, save_pkl, simple_argpars
 
 def run_static(gen, disc, pop_size=128, stage=3, ratio=0.95, y=None):
     latent_size = gen.latent_size
+    # TODO it should be based on z_distribution
     z1 = cudize(torch.randn(1, latent_size))
     z2 = z1 * ratio + cudize(torch.randn(pop_size, latent_size)) * (1.0 - ratio)
     fake = gen.consistent_forward(z1, z2, stage=stage, y=y)  # TODO add this function to generator

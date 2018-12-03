@@ -35,7 +35,7 @@ class EEGDataset(Dataset):
         if given_data is not None:
             self.sizes = given_data[0]
             self.data_pointers = given_data[1]
-            self.datas = [given_data[2]['arr_{}'.format(i)] for i in range(given_data[2])]
+            self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2]))]
             return
         sizes = []
         for i in trange(num_files):
@@ -68,8 +68,8 @@ class EEGDataset(Dataset):
             given_data = np.load(target_location)
             given_data = [load_pkl(target_location + '_1.pkl'), load_pkl(target_location + '_2.pkl'), given_data]
         else:
+            print('creating dataset from scratch')
             given_data = None
-        print('creating dataset from scratch')
         dataset = cls(dir_path, seq_len, stride, num_channels, per_file_normalization, dataset_freq, progression_scale,
                       num_files, given_data, model_dataset_depth_offset)
         if given_data is None:

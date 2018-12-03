@@ -5,27 +5,14 @@ attention:
     output the attention map for visiualization
     spectral norm in all the attention: BTC -> q=(BTC/8), k=(BT/2C/8)[maxpooling after conv] [no act in convs] v=(BT/2C/2) -> conv(att(q,k)*v) BTC * gamma + x
 plugin:
-    SWD :: graph per size per time + plugins.py:365
-    for generation, use a exp moving average of G for more stable results! (0.999) [which one? :D]
     picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
     gif(z1 -> z2)
     gif(const_z over epochs)
     imaginary fid, imaginary inception score
-    add validation dataset to evaluate accuracy of D over time (combat memorization)
-init:
-    * deepsound, pggan
-    * sngan: uses relu, residual, GlorotUniform(math.sqrt(2)) and GlorotUniform() for skip connection
-    * biggan: orthogonal for G and D
-options:
-    * reset_opt_for_new_lod   = True # Reset optimizer internal state (e.g. Adam moments) when new layers are introduced?
-    * sngan: uses global sum pooling in D (before final linear); use that for embedd dot; no BN in D
-    * relgan: spectral norm -> no more (batch)normalization
-arch:
-    * sngan: conv(act(bn(conv(act(bn(x))))))
-    * sagan_gen: linear, sn_block*n, no_cond_bn, relu, conv, tanh
-    * sagan_dic: sn_block*n, act, global_sum, [linear, *embedding]
+    * SWD :: graph per size per time + plugins.py:365
+    * add validation dataset to evaluate accuracy of D over time (combat memorization)
+        * do something better than printing with these results
 Z:
-    * Bernoulli {0, 1} and Censored Normal max (N (0, I), 0), both of which improve speed of training and lightly improve final performance, but are less amenable to truncation.
     uses different z chunks for different layers [for each block, uses the same z_chunk]
 sampling:
     https://github.com/shinseung428/DRS_Tensorflow

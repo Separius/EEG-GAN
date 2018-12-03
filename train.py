@@ -46,6 +46,8 @@ default_params = dict(
     random_multiply=False,
     lr_rampup_kimg=40,  # set to 0 to disable
     validation_ratio=0.1,  # set to 0.0 to disable
+    z_distribution='normal',  # or 'bernoulli' or 'censored'
+    init='kaiming_normal', # or xavier_uniform or orthogonal
 )
 
 
@@ -91,7 +93,7 @@ def main(params):
         generator, discriminator = load_models(params['resume_network'], params['result_dir'], logger)
     else:
         shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
-                                   fmap_base=params['fmap_base'], fmap_max=params['fmap_max'],
+                                   fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
                                    fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                                    equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
                                    num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
@@ -133,7 +135,7 @@ def main(params):
                           drop_last=True)
 
     def get_random_latents(bs):
-        return partial(random_latents, num_latents=bs, latent_size=latent_size)
+        return partial(random_latents, num_latents=bs, latent_size=latent_size, z_distribution=params['z_distribution'])
 
     def rampup(cur_nimg):
         if cur_nimg < params['lr_rampup_kimg'] * 1000:
@@ -142,7 +144,7 @@ def main(params):
         else:
             return 1.0
 
-    def get_optimizers(g_lr, last_epoch=-1, is_first_call=True):
+    def get_optimizers(g_lr):
         if params['ttur']:
             d_lr = g_lr * 4.0
             params['Adam']['betas'] = (0, 0.9)
@@ -150,12 +152,9 @@ def main(params):
             d_lr = g_lr
         opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
         opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
-        if is_first_call:
-            lr_scheduler_d = LambdaLR(opt_d, rampup, last_epoch)
-            lr_scheduler_g = LambdaLR(opt_g, rampup, last_epoch)
-            return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
-        else:
-            return opt_g, opt_d, None, None
+        lr_scheduler_d = LambdaLR(opt_d, rampup, -1)
+        lr_scheduler_g = LambdaLR(opt_g, rampup, -1)
+        return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
 
     opt_g, opt_d, lr_scheduler_g, lr_scheduler_d = get_optimizers(params['lr'])
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset,
@@ -168,8 +167,8 @@ def main(params):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: random_latents(x, latent_size), result_dir, dataset.seq_len, dataset.dataset_freq,
-                        dataset.seq_len, **params['OutputGenerator']))
+        OutputGenerator(lambda x: random_latents(x, latent_size, params['z_distribution']), result_dir, dataset.seq_len,
+                        dataset.dataset_freq, dataset.seq_len, **params['OutputGenerator']))
     trainer.register_plugin(AbsoluteTimeMonitor())
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
