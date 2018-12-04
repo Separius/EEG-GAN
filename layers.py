@@ -4,7 +4,6 @@ import numpy as np
 from torch import nn
 from utils import cudize, pixel_norm
 from torch.nn.utils import spectral_norm
-from torch.nn.init import calculate_gain, _calculate_correct_fan
 
 
 class PixelNorm(nn.Module):
@@ -87,7 +86,6 @@ class SelfAttention(nn.Module):
         value = self.value_conv(x)
         out = torch.bmm(value, attention.permute(0, 2, 1))
         out = out.view(batch_size, -1, t)
-        # TODO also output the attention map for visualization
         return self.gamma * out + x
 
 
@@ -105,16 +103,6 @@ class MinibatchStddev(nn.Module):
         y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
         y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)
-
-
-class MinibatchStddevOld(nn.Module):
-    def __init__(self, group_size=4):
-        super().__init__()
-
-    def forward(self, x):
-        mean = x.mean().expand(x.size())
-        y = torch.sqrt(((x - mean) ** 2).mean()).expand(x.size(0), 1, x.size(2))
-        return torch.cat((x, y), dim=1)
 
 
 class ConditionalGeneralNorm(nn.Module):

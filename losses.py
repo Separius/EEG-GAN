@@ -82,7 +82,6 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
 
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, fake: torch.tensor,
                        loss_type: str, iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
-    # TODO add feature matching loss term
     dis.zero_grad()
     gen.zero_grad()
     with torch.no_grad():

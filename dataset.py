@@ -7,11 +7,10 @@ from tqdm import trange
 from utils import load_pkl, save_pkl
 from torch.utils.data import Dataset
 
+DATASET_VERSION = 1
+
 
 class EEGDataset(Dataset):
-    # TODO add .mat reading capability(as well as text file)
-    # TODO add multi-label reading capabilities
-    # TODO add https://docs.scipy.org/doc/numpy/reference/generated/numpy.savez.html#numpy.savez
     def __init__(self, dir_path: str = './data/prepared_eegs', seq_len: int = 512, stride: float = 0.25,
                  num_channels: int = 5, per_file_normalization: bool = True, dataset_freq: int = 80,
                  progression_scale: int = 2, num_files: int = 12518, given_data=None,
@@ -38,31 +37,40 @@ class EEGDataset(Dataset):
             self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2]))]
             return
         sizes = []
+        num_points = []
         for i in trange(num_files):
-            with open(self.all_files[i]) as f:
-                all_data_len = len(list(map(float, f.read().split())))
-                sizes.append(max(int(np.ceil((all_data_len - seq_len + 1) / self.stride)), 0))
-        self.sizes = sizes
-        self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
-        num_points = [((self.sizes[i] - 1) * self.stride + seq_len) if self.sizes[i] > 0 else 1 for i in
-                      range(num_files)]
-        self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
-        for i in trange(num_files):
+            is_ok = True
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
-                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
+                    tmp = list(map(float, f.read().split()))
+                    if j == 0:
+                        size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
+                        if size <= 0:
+                            is_ok = False
+                            break
+                        sizes.append(size)
+                        num_points.append(((sizes[-1] - 1) * self.stride + seq_len) if sizes[-1] > 0 else 1)
+                        self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
+                    tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
                     self.datas[i][j, :] = tmp
-            if per_file_normalization and self.sizes[i] > 0:
-                self.datas[i] = self.normalize(self.datas[i])
+            if is_ok and per_file_normalization:
+                self.datas[-1], is_ok = self.normalize(self.datas[-1])
+                if not is_ok:
+                    del sizes[-1]
+                    del num_points[-1]
+                    del self.datas[-1]
+        self.sizes = sizes
+        self.data_pointers = [(i, j) for i, s in enumerate(self.sizes) for j in range(s)]
         if not per_file_normalization:
-            self.normalize_all(num_files)
+            self.normalize_all()
 
     @classmethod
     def from_config(cls, dir_path: str, seq_len: int, stride: float, num_channels: int, per_file_normalization: bool,
                     dataset_freq: int, progression_scale: int, model_dataset_depth_offset: int, num_files: int,
                     given_data):
-        target_location = os.path.join(dir_path, '{}l_{}c_{}p_{}o.npz'.format(seq_len, num_channels, progression_scale,
-                                                                              model_dataset_depth_offset))
+        target_location = os.path.join(dir_path,
+                                       '{}l_{}c_{}p_{}o_{}v.npz'.format(seq_len, num_channels, progression_scale,
+                                                                        model_dataset_depth_offset, DATASET_VERSION))
         if os.path.exists(target_location):
             print('loading dataset from file')
             given_data = np.load(target_location)
@@ -78,11 +86,15 @@ class EEGDataset(Dataset):
             save_pkl(target_location + '_2.pkl', dataset.data_pointers)
         return dataset
 
-    def normalize_all(self, num_files):
+    def normalize_all(self):
+        num_files = len(self.datas)
         all_max = max([self.datas[i].max() for i in range(num_files)])
         all_min = min([self.datas[i].min() for i in range(num_files)])
+        is_ok = True
         for i in range(num_files):
-            self.datas[i] = self.normalize(self.datas[i], all_max, all_min)
+            self.datas[i], is_ok = self.normalize(self.datas[i], all_max, all_min)
+        if not is_ok:
+            raise ValueError('data is constant!')
 
     @staticmethod
     def normalize(arr, arr_max=None, arr_min=None):
@@ -90,7 +102,8 @@ class EEGDataset(Dataset):
             arr_max = arr.max()
         if arr_min is None:
             arr_min = arr.min()
-        return ((arr - arr_min) / ((arr_max - arr_min) if arr_max != arr_min else 1.0)) * 2.0 - 1.0
+        is_ok = arr_max != arr_min
+        return ((arr - arr_min) / ((arr_max - arr_min) if is_ok else 1.0)) * 2.0 - 1.0, is_ok
 
     @property
     def data(self):

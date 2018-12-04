@@ -15,8 +15,8 @@ from network import Generator, Discriminator
 from torch.optim.lr_scheduler import LambdaLR
 from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
-from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor,
-                     EfficientLossMonitor, DepthManager, SaverPlugin)
+from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance,
+                     EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator)
 from utils import (cudize, random_latents, trainable_params, create_result_subdir, num_params,
                    create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
 
@@ -47,7 +47,7 @@ default_params = dict(
     lr_rampup_kimg=40,  # set to 0 to disable
     validation_ratio=0.1,  # set to 0.0 to disable
     z_distribution='normal',  # or 'bernoulli' or 'censored'
-    init='kaiming_normal', # or xavier_uniform or orthogonal
+    init='kaiming_normal',  # or xavier_uniform or orthogonal
 )
 
 
@@ -87,6 +87,8 @@ def main(params):
     if len(params['self_attention_layers']) != 0:
         stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
+    if params['validation_ratio'] > 0:
+        stats_to_log.extend(['memorization.val', 'memorization.epoch'])
 
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     if params['resume_network'] != '':
@@ -97,7 +99,7 @@ def main(params):
                                    fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                                    equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
                                    num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
-        generator = Generator(**shared_model_params, **params['Generator'])
+        generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
         discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
     latent_size = generator.latent_size
     assert generator.max_depth == discriminator.max_depth
@@ -169,6 +171,9 @@ def main(params):
     trainer.register_plugin(
         OutputGenerator(lambda x: random_latents(x, latent_size, params['z_distribution']), result_dir, dataset.seq_len,
                         dataset.dataset_freq, dataset.seq_len, **params['OutputGenerator']))
+    if params['validation_ratio'] > 0:
+        trainer.register_plugin(EvalDiscriminator(get_dataloader, **params['EvalDiscriminator']))
+    trainer.register_plugin(SlicedWDistance(dataset.progression_scale))
     trainer.register_plugin(AbsoluteTimeMonitor())
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
@@ -178,8 +183,8 @@ def main(params):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    need_arg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin,
-                        OutputGenerator, Adam, EEGDataset, EfficientLossMonitor]
+    need_arg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, SlicedWDistance,
+                        OutputGenerator, Adam, EEGDataset, EfficientLossMonitor, EvalDiscriminator]
     excludes = {'Adam': {'lr', 'amsgrad'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(need_arg_classes, excludes, default_overrides)

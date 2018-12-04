@@ -81,8 +81,7 @@ def create_params(classes, excludes=None, overrides=None):
         params[nm] = {
             k: (v.default if nm not in overrides or k not in overrides[nm] else overrides[nm][k])
             for k, v in dict(inspect.signature(cls.__init__).parameters).items()
-            if v.default != inspect._empty and
-               (nm not in excludes or k not in excludes[nm])
+            if v.default != inspect._empty and (nm not in excludes or k not in excludes[nm])
         }
     return params
 

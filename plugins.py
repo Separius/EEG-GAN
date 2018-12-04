@@ -211,13 +211,8 @@ class SaverPlugin(Plugin):
         if not self.keep_old_checkpoints:
             self._clear(self.last_pattern.format('*', '*'))
         for model, name in [(self.trainer.generator, 'generator'), (self.trainer.discriminator, 'discriminator')]:
-            torch.save(
-                model,
-                os.path.join(
-                    self.checkpoints_path,
-                    self.last_pattern.format(name, '{:06}'.format(self.trainer.cur_nimg // 1000))
-                )
-            )
+            torch.save(model, os.path.join(self.checkpoints_path, self.last_pattern.format(name, '{:06}'.format(
+                self.trainer.cur_nimg // 1000))))
 
     def end(self, *args):
         self.epoch(*args)
@@ -236,6 +231,11 @@ class EvalDiscriminator(Plugin):
 
     def register(self, trainer):
         self.trainer = trainer
+        self.trainer.stats['memorization'] = {
+            'log_name': 'memorization',
+            'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
+            'val': float('nan'), 'epoch': 0,
+        }
 
     def epoch(self, epoch_index):
         if epoch_index % self.output_snapshot_ticks != 0:
@@ -246,8 +246,8 @@ class EvalDiscriminator(Plugin):
             d_real, _ = self.trainer.discriminator(data)
             values.append(d_real.mean().item())
         values = np.array(values).mean()
-        # TODO do something better than printing
-        print('D score on validation real data:', values)
+        self.trainer.stats['memorization']['val'] = values
+        self.trainer.stats['memorization']['epoch'] = epoch_index
         self.trainer.discriminator.train()
 
 
@@ -383,7 +383,7 @@ class SlicedWDistance(Plugin):
         real_descriptors = self.get_descriptors(all_reals)
         swd = [self.sliced_wasserstein(fake, real) for fake, real in zip(fake_descriptors, real_descriptors)]
         swd.append(np.mean(np.array(swd)))
-        print(swd)  # TODO do something better that printing + call end on Ctrl+C maybe? + make sure it's right
+        print(swd)  # TODO do something better than printing + call end on Ctrl+C maybe? + make sure it's right
 
     def get_descriptors(self, batch: np.array):
         b, c, t_max = batch.shape
