@@ -2,9 +2,9 @@ import math
 import torch
 import numpy as np
 from torch import nn
-from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
+from utils import cudize, pixel_norm, EPSILON
 
 
 class PixelNorm(nn.Module):
@@ -100,7 +100,8 @@ class MinibatchStddev(nn.Module):
         group_size = min(s[0], self.group_size)
         y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
         y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
-        y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
+        # TODO epsilon is not needed
+        y = torch.sqrt((y ** 2).mean(dim=0) + EPSILON)  # B//G,C,T
         y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
         y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)

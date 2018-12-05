@@ -38,6 +38,7 @@ class DepthManager(Plugin):
                  lod_training_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200},
                  lod_transition_kimg=400,
                  lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
+        # TODO change overrides so you will only define diffs
         super().__init__([(1, 'iteration')])
         self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
