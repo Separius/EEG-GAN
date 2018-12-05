@@ -42,8 +42,28 @@ exp:
     FID-IS AuC for truncation trick
     G_1(Z) = o1, o2, o3, o4 -> F(o1,o2,o3) = o4
 inception:
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_slowing/v1.0.1/
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_seizure/v1.4.0/
+        O(14 G)
+        different sizes into 6 classes? + has .lbl file (per channel)
+        v1.4.0/edf/train/03_tcp_ar_a/008/00000883/s003_2010_09_01/00000883_s003_t000.tse
+        label_seconds = {
+            'bckg': 1096377.9117999997,
+            'gnsz': 20566.001400000005,
+            'tcsz': 1716.8315000000002,
+            'fnsz': 40037.60220000003,
+            'tnsz': 414.3747000000001,
+            'cpsz': 24611.84239999999,
+            'absz': 494.86399999999946,
+            'spsz': 1329.6840000000002,
+            'mysz': 1292.888
+        } (sum = 1186841.9999999998, without background = 90464.08820000011 (10%)) ~= 330 Min
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.1/
+        O(14 G)
+        different sizes into 6 classes? / does not have tse (only channel based)
+        v1.0.0/edf/eval/002/bckg_002_a__ch003.lab
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/v1.0.0/
+        O(14 G)
+        two classes based on report file(small) => like our labels
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
+        O(30G)
+        two classes based on report file(larger) => like our labels

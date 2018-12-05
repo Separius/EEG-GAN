@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from torch import nn
 from utils import cudize, pixel_norm
+from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
 
 
@@ -147,7 +148,7 @@ class EqualizedConv1d(nn.Module):
                               kernel_size=kernel_size, padding=padding, bias=True)
         self.conv.bias.data.zero_()
         if init == 'kaiming_normal':
-            torch.nn.init.kaiming_normal_(self.conv.weight)
+            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
         elif init == 'xavier_uniform':
             torch.nn.init.xavier_uniform_(self.conv.weight, math.sqrt(2))
         elif init == 'orthogonal':

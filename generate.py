@@ -39,7 +39,7 @@ def save_pics(xx, generator):
 if __name__ == '__main__':
     params = simple_argparser(default_params)
     if os.path.isdir(params['generator_path']):
-        params['generator_path'] = os.path.join(params['generator_path'], 'network-snapshot-generator-*.dat')
+        params['generator_path'] = os.path.join(params['generator_path'], '*-network-snapshot-generator-*.dat')
         all_generators = glob.glob(params['generator_path'])
     else:
         all_generators = [params['generator_path']]
