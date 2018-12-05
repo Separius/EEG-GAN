@@ -40,6 +40,7 @@ class EEGDataset(Dataset):
             return
         sizes = []
         num_points = []
+        self.datas = []
         for i in trange(num_files):
             is_ok = True
             for j in range(num_channels):
@@ -54,7 +55,7 @@ class EEGDataset(Dataset):
                         num_points.append((sizes[-1] - 1) * self.stride + seq_len)
                         self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
                     tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
-                    self.datas[i][j, :] = tmp
+                    self.datas[-1][j, :] = tmp
             if is_ok and per_user_normalization:
                 self.datas[-1], is_ok = self.normalize(self.datas[-1], self.per_channel_normalization)
                 if not is_ok:
