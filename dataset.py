@@ -34,7 +34,7 @@ class EEGDataset(Dataset):
         if given_data is not None:
             self.sizes = given_data[0]
             self.data_pointers = given_data[1]
-            self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2]))]
+            self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2].keys()))]
             return
         all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
         num_files = min(len(all_files), num_files)

@@ -1,3 +1,4 @@
+deterministic: true
 result_dir: 'results'
 exp_name: ''
 G_lr: 0.001

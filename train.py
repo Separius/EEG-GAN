@@ -2,26 +2,29 @@ import os
 import time
 import yaml
 import torch
+import random
 import signal
 import subprocess
 import numpy as np
 from box import Box
-from trainer import Trainer
 from torch.optim import Adam
 from functools import partial
-from dataset import EEGDataset
 from argparse import ArgumentParser
 from torch.utils.data import DataLoader
-from network import Generator, Discriminator
 from torch.optim.lr_scheduler import LambdaLR
-from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
-from plugins import (OutputGenerator, SaverPlugin, AbsoluteTimeMonitor,
-                     EfficientLossMonitor, DepthManager, TeeLogger)
-from utils import (load_pkl, save_pkl, cudize, random_latents, trainable_params, create_result_subdir,
-                   num_params, create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
+
+from trainer import Trainer
+from dataset import EEGDataset
+from network import Generator, Discriminator
+from losses import generator_loss, discriminator_loss
+from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor,
+                     EfficientLossMonitor, DepthManager, SaverPlugin)
+from utils import (cudize, random_latents, trainable_params, create_result_subdir, load_model,
+                   num_params, create_params, generic_arg_parse, get_structured_params, enable_benchmark)
 
 default_params = Box(
+    deterministic=False,
     result_dir='results',
     exp_name='',
     G_lr=0.001,
@@ -251,12 +254,18 @@ if __name__ == "__main__":
         print('loading config_file')
         params.update(yaml.load(open(params['config_file'], 'r')))
     params = get_structured_params(params)
+    if params['deterministic']:
+        params['num_data_workers'] = 0
+    random.seed(params['random_seed'])
     np.random.seed(params['random_seed'])
     torch.manual_seed(params['random_seed'])
     if torch.cuda.is_available():
         torch.cuda.set_device(params['cuda_device'])
         torch.cuda.manual_seed_all(params['random_seed'])
-        enable_benchmark()
+        if params['deterministic']:
+            torch.backends.cudnn.deterministic = True
+        else:
+            enable_benchmark()
     if params['is_test']:
         test()
     else:

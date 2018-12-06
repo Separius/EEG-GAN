@@ -109,36 +109,6 @@ class MinibatchStddev(nn.Module):
         return torch.cat([x, y], dim=1)
 
 
-class MinibatchStddevOld(nn.Module):
-    def __init__(self, group_size=4):
-        super().__init__()
-        self.temporal = False
-        self.out_channels = 1
-
-    def calc_mean(self, x, expand=True):
-        mean = torch.mean(x, dim=0, keepdim=True)
-        if not self.temporal:
-            mean = torch.mean(mean, dim=2, keepdim=True)
-        c = mean.size(1)
-        if self.out_channels == c:
-            return mean
-        if self.out_channels == 1:
-            return torch.mean(mean, dim=1, keepdim=True)
-        else:
-            step = c // self.out_channels
-            if expand:
-                return torch.cat(
-                    [torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True).expand(-1, step, -1) for i in
-                     range(self.out_channels)], dim=1)
-            return torch.cat([torch.mean(mean[:, step * i:step * (i + 1), :], dim=1, keepdim=True) for i in
-                              range(self.out_channels)], dim=1)
-
-    def forward(self, x):
-        mean = self.calc_mean(x).expand(x.size())
-        y = torch.sqrt(self.calc_mean((x - mean) ** 2, False)).expand(x.size(0), -1, x.size(2))
-        return torch.cat((x, y), dim=1)
-
-
 class ConditionalBatchNorm(nn.Module):
     def __init__(self, num_channels, num_classes):
         super(ConditionalBatchNorm, self).__init__()
