@@ -31,20 +31,20 @@ class EEGDataset(Dataset):
         self.dataset_freq = dataset_freq
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
-        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
-        num_files = min(len(self.all_files), num_files)
         if given_data is not None:
             self.sizes = given_data[0]
             self.data_pointers = given_data[1]
             self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2]))]
             return
+        all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        num_files = min(len(all_files), num_files)
         sizes = []
         num_points = []
         self.datas = []
         for i in trange(num_files):
             is_ok = True
             for j in range(num_channels):
-                with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
+                with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
                     tmp = list(map(float, f.read().split()))
                     if j == 0:
                         size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))

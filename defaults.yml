@@ -28,9 +28,12 @@ EEGDataset:
   seq_len: 512
   stride: 0.25
   num_channels: 5
-  per_file_normalization: true
+  per_user_normalization: true
   dataset_freq: 80
   model_dataset_depth_offset: 2
+  progression_scale: 2
+  num_files: 860
+  per_channel_normalization: false
 Generator:
   sngan_rgb: false
   act_alpha: 0.2
