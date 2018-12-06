@@ -41,18 +41,19 @@ def calc_grad(x_hat, pred_hat):
 
 
 def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor,
-                   fake: torch.tensor, loss_type: str, random_multiply: bool):
+                   fake: torch.tensor, loss_type: str, random_multiply: bool, feature_matching_lambda: float = 0.0):
     gen.zero_grad()
     z = Variable(fake)
     g_ = gen(z)
-    d_fake, _ = dis(g_)
+    d_fake, fake_features = dis(g_)
+    real_features = None
     scale = random.random() if random_multiply else 1.0
     if loss_type == 'hinge' or loss_type.startswith('wgan'):
         g_loss = -d_fake.mean()
     else:
         with torch.no_grad():
             x_real = Variable(real)
-            d_real, _ = dis(x_real)
+            d_real, real_features = dis(x_real)
         if loss_type == 'rsgan':
             g_loss = F.binary_cross_entropy_with_logits(d_fake - d_real, get_one(d_fake.size(0)))
         elif loss_type == 'rasgan':
@@ -65,11 +66,18 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
                 F.relu(1.0 - (d_fake - torch.mean(d_real))))) / 2
         else:
             raise ValueError('Invalid loss type')
+    if feature_matching_lambda != 0.0:
+        if real_features is None:
+            with torch.no_grad():
+                x_real = Variable(real)
+                _, real_features = dis(x_real)
+        diff = real_features.mean(dim=0) - fake_features.mean(dim=0)
+        g_loss = g_loss + (diff * diff).mean()
     return g_loss * scale
 
 
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, fake: torch.tensor,
-                       loss_type: str, iwass_epsilon: float, grad_lambda: float, iwass_target: float):
+                       loss_type: str, iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
     dis.zero_grad()
     gen.zero_grad()
     with torch.no_grad():
@@ -95,10 +103,10 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
         d_fake_mean = d_fake.mean()
         d_real_mean = d_real.mean()
         if loss_type == 'wgan_theirs':
-            d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_epsilon
+            d_loss = d_fake_mean - d_real_mean + (d_fake_mean + d_real_mean) ** 2 * iwass_drift_epsilon
             gp_gain = F.relu(d_real_mean - d_fake_mean)
         elif loss_type == 'wgan_gp':
-            d_loss = d_fake_mean - d_real_mean + (d_real ** 2).mean() * iwass_epsilon
+            d_loss = d_fake_mean - d_real_mean + (d_real ** 2).mean() * iwass_drift_epsilon
             gp_gain = 1
         else:
             raise ValueError('Invalid loss type')

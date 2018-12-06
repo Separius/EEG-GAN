@@ -5,8 +5,10 @@ import matplotlib
 import numpy as np
 from glob import glob
 from scipy import misc
+from scipy import linalg
 from copy import deepcopy
 from datetime import timedelta
+from scipy.stats import entropy
 from torch.autograd import Variable
 from utils import generate_samples, cudize
 from torch_utils import Plugin, LossMonitor, Logger
@@ -17,25 +19,22 @@ import matplotlib.pyplot as plt
 
 class DepthManager(Plugin):
     def __init__(self,  # everything starts from 0 or 1
-                 create_dataloader_fun,
-                 create_rlg,
-                 max_depth,
-                 tick_kimg_default,
-                 has_attention,
-                 get_optimizer,
-                 default_lr,
+                 create_dataloader_fun, create_rlg, max_depth,
+                 tick_kimg_default, has_attention, get_optimizer, default_lr,
+                 reset_optimizer: bool = True,
                  disable_progression=False,
                  depth_offset=0,  # starts form 0
                  attention_transition_kimg=400,
-                 minibatch_default=256,
+                 minibatch_default=2048,
                  # all overrides start from depth_offset+1
-                 minibatch_overrides={4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16},
-                 tick_kimg_overrides={4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1},
+                 minibatch_overrides={1: 1024, 2: 512, 3: 256, 4: 128, 5: 64, 6: 32, 7: 16, 8: 8, 9: 4},
+                 tick_kimg_overrides={4: 4, 5: 4, 6: 4, 7: 3, 8: 2, 9: 1},
                  lod_training_kimg=400,
                  lod_training_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200},
                  lod_transition_kimg=400,
                  lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
-        super(DepthManager, self).__init__([(1, 'iteration')])
+        super().__init__([(1, 'iteration')])
+        self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides
         self.tick_kimg_default = tick_kimg_default
@@ -51,13 +50,13 @@ class DepthManager(Plugin):
         self.max_depth = max_depth
         self.default_lr = default_lr
         self.attention_transition_kimg = attention_transition_kimg
-        self.alpha_map, (self.start_gamma, self.end_gamma) = self.pre_compute_alpha_map(self.depth_offset, max_depth,
-                                                                                        lod_training_kimg,
-                                                                                        lod_training_kimg_overrides,
-                                                                                        lod_transition_kimg,
-                                                                                        lod_transition_kimg_overrides,
-                                                                                        has_attention,
-                                                                                        attention_transition_kimg)
+        self.alpha_map, self.start_gamma, self.end_gamma = self.pre_compute_alpha_map(self.depth_offset, max_depth,
+                                                                                      lod_training_kimg,
+                                                                                      lod_training_kimg_overrides,
+                                                                                      lod_transition_kimg,
+                                                                                      lod_transition_kimg_overrides,
+                                                                                      has_attention,
+                                                                                      attention_transition_kimg)
 
     def register(self, trainer):
         self.trainer = trainer
@@ -83,7 +82,7 @@ class DepthManager(Plugin):
                 end_gamma = pointer + int(attention_transition_kimg * 1000)
             pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
             points.append(pointer)
-        return points, (start_gamma, end_gamma)
+        return points, start_gamma, end_gamma
 
     def calc_progress(self, cur_nimg=None):
         if cur_nimg is None:
@@ -110,12 +109,12 @@ class DepthManager(Plugin):
         depth, alpha = self.calc_progress()
         dataset = self.trainer.dataset
         if depth != self.depth:
-            self.trainer.D.depth = self.trainer.G.depth = dataset.model_depth = depth
+            self.trainer.discriminator.depth = self.trainer.generator.depth = dataset.model_depth = depth
             self.depth = depth
             minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
-            self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
-                self.minibatch_default * self.default_lr / minibatch_size,
-                self.trainer.lr_scheduler_g.last_epoch if self.trainer.lr_scheduler_g is not None else None)
+            if self.reset_optimizer:
+                self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
+                    self.minibatch_default * self.default_lr / minibatch_size)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
@@ -123,7 +122,7 @@ class DepthManager(Plugin):
             self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
-            self.trainer.D.alpha = self.trainer.G.alpha = dataset.alpha = alpha
+            self.trainer.discriminator.alpha = self.trainer.generator.alpha = dataset.alpha = alpha
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
@@ -134,15 +133,15 @@ class DepthManager(Plugin):
             else:
                 gamma = (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)
             gamma = min(1, max(0, gamma))
-            self.trainer.D.set_gamma(gamma)
-            self.trainer.G.set_gamma(gamma)
+            self.trainer.discriminator.set_gamma(gamma)
+            self.trainer.generator.set_gamma(gamma)
             self.trainer.stats['gamma']['val'] = gamma
 
 
 class EfficientLossMonitor(LossMonitor):
-
-    def __init__(self, loss_no, stat_name, monitor_threshold, monitor_warmup, monitor_patience):
-        super(EfficientLossMonitor, self).__init__()
+    def __init__(self, loss_no, stat_name, monitor_threshold: float = 10.0, monitor_warmup: int = 50,
+                 monitor_patience: int = 5):
+        super().__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
         self.threshold = monitor_threshold
@@ -157,7 +156,7 @@ class EfficientLossMonitor(LossMonitor):
         return val
 
     def epoch(self, idx):
-        super(EfficientLossMonitor, self).epoch(idx)
+        super().epoch(idx)
         if idx > self.warmup:
             loss_value = self.trainer.stats[self.stat_name]['epoch_mean']
             if abs(loss_value) > self.threshold:
@@ -169,11 +168,8 @@ class EfficientLossMonitor(LossMonitor):
 
 
 class AbsoluteTimeMonitor(Plugin):
-    stat_name = 'time'
-
-    def __init__(self, base_time=0):
-        super(AbsoluteTimeMonitor, self).__init__([(1, 'epoch')])
-        self.base_time = base_time
+    def __init__(self):
+        super().__init__([(1, 'epoch')])
         self.start_time = time.time()
         self.epoch_start = self.start_time
         self.start_nimg = None
@@ -190,7 +186,7 @@ class AbsoluteTimeMonitor(Plugin):
         self.epoch_start = cur_time
         kimg_time = tick_time / (self.trainer.cur_nimg - self.start_nimg) * 1000
         self.start_nimg = self.trainer.cur_nimg
-        self.trainer.stats['time'] = timedelta(seconds=time.time() - self.start_time + self.base_time)
+        self.trainer.stats['time'] = timedelta(seconds=time.time() - self.start_time)
         self.trainer.stats['sec']['tick'] = tick_time
         self.trainer.stats['sec']['kimg'] = kimg_time
 
@@ -198,7 +194,7 @@ class AbsoluteTimeMonitor(Plugin):
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
-    def __init__(self, checkpoints_path, keep_old_checkpoints=True, network_snapshot_ticks=50):
+    def __init__(self, checkpoints_path, keep_old_checkpoints: bool = True, network_snapshot_ticks: int = 50):
         super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
@@ -209,14 +205,9 @@ class SaverPlugin(Plugin):
     def epoch(self, epoch_index):
         if not self.keep_old_checkpoints:
             self._clear(self.last_pattern.format('*', '*'))
-        for model, name in [(self.trainer.G, 'generator'), (self.trainer.D, 'discriminator')]:
-            torch.save(
-                model,
-                os.path.join(
-                    self.checkpoints_path,
-                    self.last_pattern.format(name, '{:06}'.format(self.trainer.cur_nimg // 1000))
-                )
-            )
+        for model, name in [(self.trainer.generator, 'generator'), (self.trainer.discriminator, 'discriminator')]:
+            torch.save(model, os.path.join(self.checkpoints_path, self.last_pattern.format(name, '{:06}'.format(
+                self.trainer.cur_nimg // 1000))))
 
     def end(self, *args):
         self.epoch(*args)
@@ -227,11 +218,39 @@ class SaverPlugin(Plugin):
             os.remove(file_name)
 
 
+class EvalDiscriminator(Plugin):
+    def __init__(self, create_dataloader_fun, output_snapshot_ticks: int = 25):
+        super().__init__([(1, 'epoch')])
+        self.create_dataloader_fun = create_dataloader_fun
+        self.output_snapshot_ticks = output_snapshot_ticks
+
+    def register(self, trainer):
+        self.trainer = trainer
+        self.trainer.stats['memorization'] = {
+            'log_name': 'memorization',
+            'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
+            'val': float('nan'), 'epoch': 0,
+        }
+
+    def epoch(self, epoch_index):
+        if epoch_index % self.output_snapshot_ticks != 0:
+            return
+        self.trainer.discriminator.eval()
+        values = []
+        for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
+            d_real, _ = self.trainer.discriminator(data)
+            values.append(d_real.mean().item())
+        values = np.array(values).mean()
+        self.trainer.stats['memorization']['val'] = values
+        self.trainer.stats['memorization']['epoch'] = epoch_index
+        self.trainer.discriminator.train()
+
+
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir, seq_len, max_freq, res_len, samples_count=8,
-                 output_snapshot_ticks=25):
-        super(OutputGenerator, self).__init__([(1, 'epoch'), (1, 'end')])
+    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int, samples_count: int = 8,
+                 output_snapshot_ticks: int = 25):
+        super().__init__([(1, 'epoch')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len
@@ -252,7 +271,7 @@ class OutputGenerator(Plugin):
 
     def register(self, trainer):
         self.trainer = trainer
-        self.my_g_clone = self.flatten_params(self.trainer.G)
+        self.my_g_clone = self.flatten_params(self.trainer.generator)
 
     @staticmethod
     def get_images(seq_len, frequency, epoch, generated):
@@ -283,31 +302,26 @@ class OutputGenerator(Plugin):
         return images
 
     def epoch(self, epoch_index):
-        for p, avg_p in zip(self.trainer.G.parameters(), self.my_g_clone):
-            avg_p.mul_(0.9).add_(0.1, p.data)
-        if epoch_index % self.output_snapshot_ticks == 0 or epoch_index == 'end':
+        for p, avg_p in zip(self.trainer.generator.parameters(), self.my_g_clone):
+            avg_p.mul_(0.999).add_(0.001 * p.data)
+        if epoch_index % self.output_snapshot_ticks == 0:
             z = self.sample_fn(self.samples_count)
-            if not isinstance(z, (list, tuple)):
-                z = (z,)
-            gen_input = (cudize(Variable(x)) for x in z)
-            original_param = self.flatten_params(self.trainer.G)
-            self.load_params(self.my_g_clone, self.trainer.G)
-            out = generate_samples(self.trainer.G, gen_input)
-            self.load_params(original_param, self.trainer.G)
+            gen_input = cudize(Variable(z))
+            original_param = self.flatten_params(self.trainer.generator)
+            self.load_params(self.my_g_clone, self.trainer.generator)
+            out = generate_samples(self.trainer.generator, gen_input)
+            self.load_params(original_param, self.trainer.generator)
             frequency = self.max_freq * out.shape[2] / self.seq_len
             res_len = min(self.res_len, out.shape[2])
             images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
             for i, image in enumerate(images):
                 misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
-    def end(self, *args):
-        self.epoch('end')
-
 
 class TeeLogger(Logger):
 
     def __init__(self, log_file, exp_name, *args, **kwargs):
-        super(TeeLogger, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.log_file = open(log_file, 'a', 1)
         self.exp_name = exp_name
 
@@ -317,3 +331,208 @@ class TeeLogger(Logger):
 
     def epoch(self, epoch_idx):
         self._log_all('log_epoch_fields')
+
+
+class SlicedWDistance(Plugin):
+    def __init__(self, progression_scale: int, patches_per_item: int = 16,
+                 patch_size: int = 49, number_of_batches: int = 128, number_of_projections: int = 512,
+                 dir_repeats: int = 4, dirs_per_repeat: int = 128):
+        super().__init__([(1, 'end')])
+        self.progression_scale = progression_scale
+        self.patches_per_item = patches_per_item
+        self.patch_size = patch_size
+        self.number_of_batches = number_of_batches
+        self.number_of_projections = number_of_projections
+        self.dir_repeats = dir_repeats
+        self.dirs_per_repeat = dirs_per_repeat
+
+    def register(self, trainer):
+        self.trainer = trainer
+
+    def sliced_wasserstein(self, A: np.array, B: np.array):
+        assert A.ndim == 2 and A.shape == B.shape  # (neighborhood, descriptor_component)
+        results = []
+        for repeat in range(self.dir_repeats):
+            dirs = np.random.randn(A.shape[1], self.dirs_per_repeat)  # (descriptor_component, direction)
+            dirs /= np.sqrt(
+                np.sum(np.square(dirs), axis=0, keepdims=True))  # normalize descriptor components for each direction
+            dirs = dirs.astype(np.float32)
+            projA = np.matmul(A, dirs)  # (neighborhood, direction)
+            projB = np.matmul(B, dirs)
+            projA = np.sort(projA, axis=0)  # sort neighborhood projections for each direction
+            projB = np.sort(projB, axis=0)
+            dists = np.abs(projA - projB)  # pointwise wasserstein distances
+            results.append(np.mean(dists))  # average over neighborhoods and directions
+        return np.mean(results)  # average over repeats
+
+    def end(self, *args):
+        all_fakes = []
+        all_reals = []
+        for i in range(self.number_of_batches):
+            fake_latents_in = cudize(self.trainer.random_latents_generator())
+            all_fakes.append(self.trainer.generator(fake_latents_in).cpu().numpy())
+            all_reals.append(next(self.trainer.dataiter).numpy())
+        all_fakes = np.concatenate(all_fakes, axis=0)
+        all_reals = np.concatenate(all_reals, axis=0)
+        fake_descriptors = self.get_descriptors(all_fakes)
+        real_descriptors = self.get_descriptors(all_reals)
+        swd = [self.sliced_wasserstein(fake, real) for fake, real in zip(fake_descriptors, real_descriptors)]
+        swd.append(np.mean(np.array(swd)))
+        print(swd)  # TODO do something better than printing + call end on Ctrl+C maybe? + make sure it's right
+
+    def get_descriptors(self, batch: np.array):
+        b, c, t_max = batch.shape
+        t = t_max
+        num_levels = 0
+        while t >= self.patch_size:
+            num_levels += 1
+            t //= self.progression_scale
+        all_descriptors = []
+        for level in range(num_levels):
+            descriptors = []
+            max_index = batch.shape[2] - self.patch_size
+            for i in range(b):
+                for k in range(self.patches_per_item):
+                    rand_index = np.random.randint(0, max_index)
+                    descriptors.append(batch[i, :, rand_index:rand_index + 49])
+            descriptors = np.stack(descriptors, axis=0)  # N, c, patch_size
+            descriptors = descriptors.reshape((-1, c))
+            descriptors -= np.mean(descriptors, axis=0, keepdims=True)
+            descriptors /= np.std(descriptors, axis=0, keepdims=True)
+            all_descriptors.append(descriptors)
+            batch = batch[:, :, ::self.progression_scale]
+        return all_descriptors
+
+
+class InceptionScore(Plugin):
+    def __init__(self, inception_network):
+        super().__init__([(1, 'end')])
+        self.inception_network = inception_network
+
+    def end(self, *args):
+        pass
+
+    @staticmethod
+    def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
+        """Computes the inception score of the generated images imgs
+        imgs -- Torch dataset of (3xHxW) numpy images normalized in the range [-1, 1]
+        cuda -- whether or not to run on GPU
+        batch_size -- batch size for feeding into Inception v3
+        splits -- number of splits
+        """
+        N = len(imgs)
+
+        assert batch_size > 0
+        assert N > batch_size
+
+        # Set up dtype
+        if cuda:
+            dtype = torch.cuda.FloatTensor
+        else:
+            if torch.cuda.is_available():
+                print("WARNING: You have a CUDA device, so you should probably set cuda=True")
+            dtype = torch.FloatTensor
+
+        # Set up dataloader
+        dataloader = torch.utils.data.DataLoader(imgs, batch_size=batch_size)
+
+        # Load inception model
+        inception_model = inception_v3(pretrained=True, transform_input=False).type(dtype)
+        inception_model.eval()
+        up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
+
+        def get_pred(x):
+            if resize:
+                x = up(x)
+            x = inception_model(x)
+            return F.softmax(x).data.cpu().numpy()
+
+        # Get predictions
+        preds = np.zeros((N, 1000))
+
+        for i, batch in enumerate(dataloader, 0):
+            batch = batch.type(dtype)
+            batchv = Variable(batch)
+            batch_size_i = batch.size()[0]
+
+            preds[i * batch_size:i * batch_size + batch_size_i] = get_pred(batchv)
+
+        # Now compute the mean kl-div
+        split_scores = []
+
+        for k in range(splits):
+            part = preds[k * (N // splits): (k + 1) * (N // splits), :]
+            py = np.mean(part, axis=0)
+            scores = []
+            for i in range(part.shape[0]):
+                pyx = part[i, :]
+                scores.append(entropy(pyx, py))
+            split_scores.append(np.exp(np.mean(scores)))
+
+        return np.mean(split_scores), np.std(split_scores)
+
+    def register(self, trainer):
+        self.trainer = trainer
+
+
+class FID(Plugin):
+    def __init__(self, inception_network):
+        super().__init__([(1, 'end')])
+        self.inception_network = inception_network
+
+    def end(self, *args):
+        pass
+
+    def register(self, trainer):
+        self.trainer = trainer
+
+    @staticmethod
+    def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
+        """Numpy implementation of the Frechet Distance.
+        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
+        and X_2 ~ N(mu_2, C_2) is
+                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
+
+        Stable version by Dougal J. Sutherland.
+        Params:
+        -- mu1 : Numpy array containing the activations of the pool_3 layer of the
+                 inception net ( like returned by the function 'get_predictions')
+                 for generated samples.
+        -- mu2   : The sample mean over activations of the pool_3 layer, precalcualted
+                   on an representive data set.
+        -- sigma1: The covariance matrix over activations of the pool_3 layer for
+                   generated samples.
+        -- sigma2: The covariance matrix over activations of the pool_3 layer,
+                   precalcualted on an representive data set.
+        Returns:
+        --   : The Frechet Distance.
+        """
+
+        mu1 = np.atleast_1d(mu1)
+        mu2 = np.atleast_1d(mu2)
+
+        sigma1 = np.atleast_2d(sigma1)
+        sigma2 = np.atleast_2d(sigma2)
+
+        assert mu1.shape == mu2.shape, "Training and test mean vectors have different lengths"
+        assert sigma1.shape == sigma2.shape, "Training and test covariances have different dimensions"
+
+        diff = mu1 - mu2
+
+        # product might be almost singular
+        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        if not np.isfinite(covmean).all():
+            print("fid calculation produces singular product; adding %s to diagonal of cov estimates" % eps)
+            offset = np.eye(sigma1.shape[0]) * eps
+            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+
+        # numerical error might give slight imaginary component
+        if np.iscomplexobj(covmean):
+            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3):
+                m = np.max(np.abs(covmean.imag))
+                raise ValueError("Imaginary component {}".format(m))
+            covmean = covmean.real
+
+        tr_covmean = np.trace(covmean)
+
+        return diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * tr_covmean

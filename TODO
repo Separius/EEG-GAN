@@ -24,7 +24,6 @@ biggan:
     2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
     monitor max singular value of weights
     batch norm (cond or not) + D == bad
-failed section: qrnn, tcn, dilated rnn, sru, sample rnn, wavenet, ae, vae
 exp:
     train arl-eeg on a subset
     plot the loss values

@@ -4,20 +4,20 @@ import inspect
 import numpy as np
 from pickle import load, dump
 from functools import partial
+import torch.nn.functional as F
 from argparse import ArgumentParser
 
 EPSILON = 1e-8
+half_tensor = None
 
 
 def generate_samples(generator, gen_input):
-    out = generator.forward(*gen_input)
-    out = out.cpu().data.numpy()
-    return out
+    return generator(gen_input).data.cpu().numpy()
 
 
 def save_pkl(file_name, obj):
     with open(file_name, 'wb') as f:
-        dump(obj, f)
+        dump(obj, f, protocol=4)
 
 
 def load_pkl(file_name):
@@ -25,8 +25,22 @@ def load_pkl(file_name):
         return load(f)
 
 
-def random_latents(num_latents, latent_size, t=1):
-    return torch.randn(num_latents, latent_size)
+def get_half(num_latents, latent_size):
+    global half_tensor
+    if half_tensor is None or half_tensor.size() != (num_latents, latent_size):
+        half_tensor = torch.ones(num_latents, latent_size) * 0.5
+    return half_tensor
+
+
+def random_latents(num_latents, latent_size, z_distribution='normal'):
+    if z_distribution == 'normal':
+        return torch.randn(num_latents, latent_size)
+    elif z_distribution == 'censored':
+        return F.relu(torch.randn(num_latents, latent_size))
+    elif z_distribution == 'bernoulli':
+        return torch.bernoulli(get_half(num_latents, latent_size))
+    else:
+        raise ValueError()
 
 
 def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}-{exp_name}'):
@@ -67,8 +81,7 @@ def create_params(classes, excludes=None, overrides=None):
         params[nm] = {
             k: (v.default if nm not in overrides or k not in overrides[nm] else overrides[nm][k])
             for k, v in dict(inspect.signature(cls.__init__).parameters).items()
-            if v.default != inspect._empty and
-               (nm not in excludes or k not in excludes[nm])
+            if v.default != inspect._empty and (nm not in excludes or k not in excludes[nm])
         }
     return params
 

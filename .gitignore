@@ -6,3 +6,4 @@ data/
 confs/
 *.pkl
 .vscode/
+.mypy_cache/

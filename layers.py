@@ -2,14 +2,14 @@ import math
 import torch
 import numpy as np
 from torch import nn
+from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
 from utils import cudize, pixel_norm, EPSILON
-from torch.nn.init import calculate_gain, _calculate_correct_fan
 
 
 class PixelNorm(nn.Module):
     def __init__(self):
-        super(PixelNorm, self).__init__()
+        super().__init__()
 
     def forward(self, x):
         return pixel_norm(x)
@@ -17,7 +17,7 @@ class PixelNorm(nn.Module):
 
 class ScaledTanh(nn.Tanh):
     def __init__(self, scale=0.5):
-        super(ScaledTanh, self).__init__()
+        super().__init__()
         self.scale = scale
 
     def forward(self, x):
@@ -31,13 +31,12 @@ class GDropLayer(nn.Module):
     """
 
     def __init__(self, mode='mul', strength=0.2, axes=(0, 1), normalize=False):
-        super(GDropLayer, self).__init__()
+        super().__init__()
         self.mode = mode.lower()
-        assert self.mode in ['mul', 'drop', 'prop'], 'Invalid GDropLayer mode' % mode
+        assert self.mode in {'mul', 'drop', 'prop'}, 'Invalid GDropLayer mode' % mode
         self.strength = strength
         self.axes = [axes] if isinstance(axes, int) else list(axes)
         self.normalize = normalize
-        self.gain = None
 
     def forward(self, x, deterministic=False):
         if deterministic or not self.strength:
@@ -66,7 +65,7 @@ class GDropLayer(nn.Module):
 
 class SelfAttention(nn.Module):
     def __init__(self, channels_in, spectral=True):
-        super(SelfAttention, self).__init__()
+        super().__init__()
         d_key = max(channels_in // 8, 2)
         self.gamma = 0
         self.key_conv = nn.Conv1d(channels_in, d_key, kernel_size=1, bias=False)
@@ -88,8 +87,7 @@ class SelfAttention(nn.Module):
         value = self.value_conv(x)
         out = torch.bmm(value, attention.permute(0, 2, 1))
         out = out.view(batch_size, -1, t)
-        out = self.gamma * out + x
-        return out
+        return self.gamma * out + x
 
 
 class MinibatchStddev(nn.Module):
@@ -102,84 +100,67 @@ class MinibatchStddev(nn.Module):
         group_size = min(s[0], self.group_size)
         y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
         y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
-        y = (y ** 2).mean(dim=0)  # B//G,C,T
-        y = torch.sqrt(y + EPSILON)  # B//G,C,T
+        # TODO epsilon is not needed
+        y = torch.sqrt((y ** 2).mean(dim=0) + EPSILON)  # B//G,C,T
         y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
         y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)
 
 
-class ConditionalBatchNorm(nn.Module):
-    def __init__(self, num_channels, num_classes):
-        super(ConditionalBatchNorm, self).__init__()
+class ConditionalGeneralNorm(nn.Module):
+    def __init__(self, num_features, num_classes, norm_class):
+        super().__init__()
         if num_classes == 0:
-            self.bn = nn.BatchNorm1d(num_channels)
+            self.normalizer = norm_class(num_features)
+            self.embed = None
         else:
-            self.gamma_embedding = nn.EmbeddingBag(num_classes, num_channels)
-            self.gamma_embedding.weight.data.fill_(1.0)
-            self.beta_embedding = nn.EmbeddingBag(num_classes, num_channels)
-            self.beta_embedding.weight.data.zero_()
-            self.bn = None
+            self.num_features = num_features
+            self.normalizer = norm_class(num_features, affine=False)
+            self.embed = nn.Embedding(num_classes, num_features * 2)
+            self.embed.weight.data[:, :num_features].normal_(1, 0.02)
+            self.embed.weight.data[:, num_features:].zero_()
 
     def forward(self, x, y=None):
-        if self.bn is not None:
-            return self.bn(x)
-        x_size = x.size()
-        channels = x_size[1]
-        gammas = self.gamma_embedding(y).unsqueeze(2).expand(x_size)
-        betas = self.beta_embedding(y).unsqueeze(2).expand(x_size)
-        input_channel_major = x.permute(1, 0, 2).contiguous().view(channels, -1)
-        mean = input_channel_major.mean(dim=1)
-        var = input_channel_major.var(dim=1)
-        x = (x - mean.view(1, channels, 1).expand(x_size)) * torch.rsqrt(
-            var.view(1, channels, 1).expand(x_size) + EPSILON)
-        return gammas * x + betas
+        out = self.normalizer(x)
+        if self.embed is None or y is None:
+            return out
+        gamma, beta = self.embed(y).chunk(2, dim=1)
+        return gamma.view(-1, self.num_features, 1) * out + beta.view(-1, self.num_features, 1)
 
 
-class ConditionalLayerNorm(nn.Module):
-    def __init__(self, num_channels, num_classes):
-        super(ConditionalLayerNorm, self).__init__()
-        if num_classes == 0:
-            self.gn = nn.GroupNorm(1, num_channels)
-            return
-        self.gamma_embedding = nn.EmbeddingBag(num_classes, num_channels)
-        self.gamma_embedding.weight.data.fill_(1.0)
-        self.beta_embedding = nn.EmbeddingBag(num_classes, num_channels)
-        self.beta_embedding.weight.data.zero_()
-        self.gn = None
+class ConditionalBatchNorm(ConditionalGeneralNorm):
+    def __init__(self, num_features, num_classes):
+        super().__init__(num_features, num_classes, nn.BatchNorm1d)
 
-    def forward(self, x, y=None):
-        if self.gn is not None:
-            return self.gn(x)
-        x_size = x.size()
-        betas = self.beta_embedding(y).unsqueeze(2).expand(x_size)
-        input_batch_major = x.view(x.size(0), -1)
-        mean = input_batch_major.mean(dim=1).view(-1, 1, 1).expand(x_size)
-        var = input_batch_major.var(dim=1).view(-1, 1, 1).expand(x_size)
-        gammas = self.gamma_embedding(y).unsqueeze(2).expand(x_size)
-        return gammas * (x - mean) * torch.rsqrt(var + EPSILON) + betas
+
+class ConditionalLayerNorm(ConditionalGeneralNorm):
+    def __init__(self, num_features, num_classes):
+        def norm_class(*args, **kwargs):
+            return nn.GroupNorm(1, *args, **kwargs)
+
+        super().__init__(num_features, num_classes, norm_class)
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True):
-        super(EqualizedConv1d, self).__init__()
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True,
+                 init='kaiming_normal'):
+        super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, padding=padding, bias=True)
         self.conv.bias.data.zero_()
-        if spectral:
-            self.conv = spectral_norm(self.conv)
-        if not equalized:
+        if init == 'kaiming_normal':
             torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+        elif init == 'xavier_uniform':
+            torch.nn.init.xavier_uniform_(self.conv.weight, math.sqrt(2))
+        elif init == 'orthogonal':
+            torch.nn.init.orthogonal_(self.conv.weight)
+        if not equalized:
             self.scale = 1.0
         else:
-            # torch.nn.init.normal_(self.conv.weight)
-            # fan = _calculate_correct_fan(self.conv.weight, 'fan_in')
-            # gain = calculate_gain('leaky_relu', 0)
-            # std = gain / math.sqrt(fan)
-            # self.scale = 1.0 / std
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
             self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
+        if spectral:
+            self.conv = spectral_norm(self.conv)
 
     def forward(self, x):
         return self.conv(x * self.scale)
@@ -187,11 +168,11 @@ class EqualizedConv1d(nn.Module):
 
 class GeneralConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False):
-        super(GeneralConv, self).__init__()
+                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal'):
+        super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized)
+                               equalized=equalized, init=init)
         norm = None
         if act_norm == 'layer':
             norm = ConditionalLayerNorm(out_channels, num_classes)

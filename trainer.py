@@ -4,10 +4,11 @@ from utils import cudize
 
 class Trainer(object):
 
-    def __init__(self, D, G, d_loss, g_loss, optimizer_d, optimizer_g, dataset, random_latents_generator,
-                 lr_scheduler_g, lr_scheduler_d, d_training_repeats=1, tick_kimg_default=5, resume_nimg=0):
-        self.D = D
-        self.G = G
+    def __init__(self, discriminator, generator, d_loss, g_loss, optimizer_d, optimizer_g, dataset,
+                 random_latents_generator, lr_scheduler_g, lr_scheduler_d, d_training_repeats: int = 1,
+                 tick_kimg_default: float = 5.0, resume_nimg: int = 0):
+        self.discriminator = discriminator
+        self.generator = generator
         self.d_loss = d_loss
         self.g_loss = g_loss
         self.lr_scheduler_g = lr_scheduler_g
@@ -82,11 +83,11 @@ class Trainer(object):
         for i in range(self.d_training_repeats):
             real_images_expr = cudize(next(self.dataiter))
             self.cur_nimg += real_images_expr.size(0)
-            d_loss = self.d_loss(self.D, self.G, real_images_expr, fake_latents_in)
+            d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
             d_loss.backward()
             self.optimizer_d.step()
             fake_latents_in = cudize(self.random_latents_generator())
-        g_loss = self.g_loss(self.D, self.G, real_images_expr, fake_latents_in)
+        g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
         g_loss.backward()
         self.optimizer_g.step()
         self.iterations += 1
