@@ -4,66 +4,118 @@ import glob
 import torch
 import numpy as np
 from tqdm import trange
+from utils import load_pkl, save_pkl
 from torch.utils.data import Dataset
+
+DATASET_VERSION = 1
 
 
 class EEGDataset(Dataset):
-    def __init__(self, dir_path='./data/tuh2', seq_len=512, stride=0.25, num_channels=5,
-                 per_file_normalization=True, dataset_freq=80,
-                 model_dataset_depth_offset=2):  # start from progression_scale^2 instead of progression_scale^0
+    # TODO conditional DB
+    def __init__(self, given_data, dir_path: str = './data/tuh1', seq_len: int = 512, stride: float = 0.25,
+                 num_channels: int = 5, per_user_normalization: bool = True, dataset_freq: int = 80,
+                 progression_scale: int = 2, num_files: int = 12518, per_channel_normalization: bool = False,
+                 model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
+        super().__init__()
         self.model_depth = 0
         self.alpha = 1.0
         self.model_dataset_depth_offset = model_dataset_depth_offset
         self.dir_path = dir_path
-        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
-        num_files = len(self.all_files)
         self.seq_len = seq_len
-        self.progression_scale = 2
+        self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.max_freq = dataset_freq
-        self.per_file_normalization = per_file_normalization
+        self.per_user_normalization = per_user_normalization
+        self.per_channel_normalization = per_channel_normalization
         self.dataset_freq = dataset_freq
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
+        self.all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        num_files = min(len(self.all_files), num_files)
+        if given_data is not None:
+            self.sizes = given_data[0]
+            self.data_pointers = given_data[1]
+            self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2]))]
+            return
         sizes = []
-        for i in range(num_files):
-            with open(self.all_files[i]) as f:
-                all_data_len = len(list(map(float, f.read().split())))
-                sizes.append(max(int(np.ceil((all_data_len - seq_len + 1) / self.stride)), 0))
-        self.sizes = sizes
-        self.data_pointers = [(i, j) for i in range(num_files) for j in range(self.sizes[i])]
-        num_points = [((self.sizes[i] - 1) * self.stride + seq_len) if self.sizes[i] > 0 else 1 for i in
-                      range(num_files)]
-        self.datas = [np.zeros((num_channels, num_points[i]), dtype=np.float32) for i in range(num_files)]
+        num_points = []
+        self.datas = []
         for i in trange(num_files):
+            is_ok = True
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(self.all_files[i][:-6], j + 1)) as f:
-                    tmp = np.array(list(map(float, f.read().split())), dtype=np.float32)[:num_points[i]]
-                    self.datas[i][j, :] = tmp
-            if per_file_normalization and self.sizes[i] > 0:
-                self.datas[i] = self.normalize(self.datas[i])
-        if not per_file_normalization:
-            self.normalize_all(num_files)
-        self.description = {
-            'len': len(self),
-            'shape': self.shape,
-            'depth_range': (self.min_dataset_depth, self.max_dataset_depth)
-        }
+                    tmp = list(map(float, f.read().split()))
+                    if j == 0:
+                        size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
+                        if size <= 0:
+                            is_ok = False
+                            break
+                        sizes.append(size)
+                        num_points.append((sizes[-1] - 1) * self.stride + seq_len)
+                        self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
+                    tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
+                    self.datas[-1][j, :] = tmp
+            if is_ok and per_user_normalization:
+                self.datas[-1], is_ok = self.normalize(self.datas[-1], self.per_channel_normalization)
+                if not is_ok:
+                    del sizes[-1]
+                    del num_points[-1]
+                    del self.datas[-1]
+        self.sizes = sizes
+        self.data_pointers = [(i, j) for i, s in enumerate(self.sizes) for j in range(s)]
+        if not per_user_normalization:
+            self.normalize_all()
 
-    def normalize_all(self, num_files):
-        all_max = max([self.datas[i].max() for i in range(num_files)])
-        all_min = min([self.datas[i].min() for i in range(num_files)])
+    @classmethod
+    def from_config(cls, dir_path: str, seq_len: int, stride: float, num_channels: int, per_user_normalization: bool,
+                    dataset_freq: int, progression_scale: int, model_dataset_depth_offset: int, num_files: int,
+                    per_channel_normalization: bool):
+        target_location = os.path.join(dir_path,
+                                       '{}l_{}c_{}p_{}o_{}m_{}v.npz'.format(seq_len, num_channels, progression_scale,
+                                                                            model_dataset_depth_offset,
+                                                                            per_user_normalization * 2 + per_channel_normalization * 1,
+                                                                            DATASET_VERSION))
+        if os.path.exists(target_location):
+            print('loading dataset from file')
+            given_data = np.load(target_location)
+            given_data = [load_pkl(target_location + '_sizes.pkl'), load_pkl(target_location + '_pointers.pkl'),
+                          given_data]
+        else:
+            print('creating dataset from scratch')
+            given_data = None
+        dataset = cls(given_data, dir_path, seq_len, stride, num_channels, per_user_normalization,
+                      dataset_freq, progression_scale, num_files, per_channel_normalization, model_dataset_depth_offset)
+        if given_data is None:
+            np.savez_compressed(target_location, *dataset.datas)
+            save_pkl(target_location + '_sizes.pkl', dataset.sizes)
+            save_pkl(target_location + '_pointers.pkl', dataset.data_pointers)
+        return dataset
+
+    def normalize_all(self):
+        num_files = len(self.datas)
+        all_max = np.max(
+            np.array([self.datas[i].max(axis=1 if self.per_channel_normalization else None) for i in range(num_files)]),
+            axis=0)
+        all_min = np.min(
+            np.array([self.datas[i].min(axis=1 if self.per_channel_normalization else None) for i in range(num_files)]),
+            axis=0)
+        is_ok = True
         for i in range(num_files):
-            self.datas[i] = self.normalize(self.datas[i], all_max, all_min)
+            self.datas[i], is_ok = self.normalize(self.datas[i], self.per_channel_normalization, all_max, all_min)
+        if not is_ok:
+            raise ValueError('data is constant!')
 
     @staticmethod
-    def normalize(arr, arr_max=None, arr_min=None):
+    def normalize(arr, per_channel, arr_max=None, arr_min=None):
         if arr_max is None:
-            arr_max = arr.max()
+            arr_max = arr.max(axis=1 if per_channel else None)
         if arr_min is None:
-            arr_min = arr.min()
-        return ((arr - arr_min) / (arr_max - arr_min)) * 2.0 - 1.0
+            arr_min = arr.min(axis=1 if per_channel else None)
+        is_ok = arr_max != arr_min
+        if per_channel:
+            is_ok = is_ok.all()
+        return ((arr - arr_min) / ((arr_max - arr_min) if is_ok else 1.0)) * 2.0 - 1.0, is_ok
 
     @property
     def data(self):
@@ -96,7 +148,7 @@ class EEGDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
-        return torch.from_numpy(datapoint.astype('float32'))
+        return torch.from_numpy(datapoint.astype(np.float32))
 
     def alpha_fade(self, datapoint):
         if self.alpha == 1:

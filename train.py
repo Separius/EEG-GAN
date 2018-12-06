@@ -135,15 +135,7 @@ def test():
 
 def main(params):
     dataset_params = params['EEGDataset']
-    if params.load_dataset and os.path.exists(params.load_dataset):
-        print('loading dataset from file')
-        dataset = load_pkl(params.load_dataset)
-    else:
-        print('creating dataset from scratch')
-        dataset = EEGDataset(**dataset_params)
-        if params.load_dataset:
-            print('saving dataset to file')
-            save_pkl(params.load_dataset, dataset)
+    dataset = EEGDataset.from_config(**dataset_params)
     if params.config_file and params.exp_name == '':
         params.exp_name = params.config_file.split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params.result_dir, params.exp_name)

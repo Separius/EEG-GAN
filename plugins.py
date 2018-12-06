@@ -9,8 +9,7 @@ from copy import deepcopy
 from datetime import timedelta
 from torch.autograd import Variable
 from utils import generate_samples, cudize
-from torch.utils.trainer.plugins.plugin import Plugin
-from torch.utils.trainer.plugins import LossMonitor, Logger
+from torch_utils import Plugin, LossMonitor, Logger
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
