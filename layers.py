@@ -2,6 +2,7 @@ import math
 import torch
 import numpy as np
 from torch import nn
+import torch.nn.functional as F
 from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
@@ -62,8 +63,7 @@ class GDropLayer(nn.Module):
 
 class SelfAttention(nn.Module):
     # TODO output the attention map
-    # TODO use Factorized Attention
-    def __init__(self, channels_in, sagan=True, spectral=True):
+    def __init__(self, channels_in, sagan=True, spectral=True, factorized_attention=False):
         super().__init__()
         d_key = max(channels_in // 8, 2)
         conv_conf = dict(kernel_size=1, equalized=False, spectral=spectral,
@@ -76,6 +76,7 @@ class SelfAttention(nn.Module):
         self.final_conv = GeneralConv(channels_in // 2, channels_in, **conv_conf)
         self.softmax = nn.Softmax(dim=-1)
         self.scale = 1.0 if sagan else math.sqrt(d_key)
+        self.factorized_attention = factorized_attention
         if spectral:
             self.key_conv = spectral_norm(self.key_conv)
             self.query_conv = spectral_norm(self.query_conv)
@@ -85,13 +86,15 @@ class SelfAttention(nn.Module):
     def forward(self, x):  # BCT
         if self.gamma == 0:
             return x
-        batch_size, _, t = x.size()
-        query = self.query_conv(x).permute(0, 2, 1)  # BTC//8
-        key = self.pooling(self.key_conv(x))  # BC//8T[//2]
-        energy = torch.bmm(query, key)  # BTT[//2]
-        attention = self.softmax(energy / self.scale)  # BTnormed(T[//2])
-        value = self.pooling(self.value_conv(x))  # BC//2T[//2]
-        out = torch.bmm(value, attention.permute(0, 2, 1))  # BC//2T
+        query = self.query_conv(x)  # BC/8T
+        key = self.pooling(self.key_conv(x))  # BC/8T[/2]
+        value = self.pooling(self.value_conv(x))  # BC/2T[/2]
+        if not self.factorized_attention:
+            out = F.softmax(torch.bmm(key.permute(0, 2, 1), query) / self.scale, dim=1)  # Bnormed(T[/2])T
+            out = torch.bmm(value, out)  # BC/2T
+        else:
+            out = torch.bmm(value, F.softmax(key.permute(0, 2, 1), dim=2))  # BC/2C/8
+            out = torch.bmm(out, F.softmax(query, dim=2)) / self.scale  # BC/2T
         out = self.final_conv(out)  # BCT
         return self.gamma * out + x
 

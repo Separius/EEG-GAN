@@ -53,9 +53,9 @@ class GBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
-                 sagan_non_local, to_rgb_mode: str = 'pggan', latent_size: int = 256, normalize_latents: bool = True,
-                 dropout: float = 0.2, do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
-                 no_tanh: bool = False):
+                 sagan_non_local, factorized_attention, to_rgb_mode: str = 'pggan', latent_size: int = 256,
+                 normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul', spectral: bool = False,
+                 act_norm: Optional[str] = 'pixel', no_tanh: bool = False):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
@@ -79,7 +79,7 @@ class Generator(nn.Module):
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral))
+            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
@@ -162,8 +162,8 @@ class DBlock(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
                  self_attention_layers, num_classes, progression_scale, init, act_alpha, residual, sagan_non_local,
-                 sngan_rgb: bool = False, dropout: float = 0.2, do_mode: str = 'mul', spectral: bool = False,
-                 act_norm: Optional[str] = None, group_size: int = 4):
+                 factorized_attention, sngan_rgb: bool = False, dropout: float = 0.2, do_mode: str = 'mul',
+                 spectral: bool = False, act_norm: Optional[str] = None, group_size: int = 4):
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
         resolution = dataset_shape[-1]
@@ -185,7 +185,7 @@ class Discriminator(nn.Module):
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral))
+            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,

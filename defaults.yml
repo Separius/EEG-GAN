@@ -29,6 +29,7 @@ init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal
 act_alpha: 0.2
 residual: false
 sagan_non_local: true
+use_factorized_attention: false
 
 Trainer:
   d_training_repeats: 1
