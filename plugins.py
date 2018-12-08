@@ -25,15 +25,26 @@ class DepthManager(Plugin):
                  disable_progression=False,
                  depth_offset=0,  # starts form 0
                  attention_transition_kimg=400,
-                 minibatch_default=2048,
-                 # all overrides start from depth_offset+1
-                 minibatch_overrides={1: 1024, 2: 512, 3: 256, 4: 128, 5: 64, 6: 32, 7: 16, 8: 8, 9: 4},
-                 tick_kimg_overrides={4: 4, 5: 4, 6: 4, 7: 3, 8: 2, 9: 1},
+                 minibatch_default=8192,
                  lod_training_kimg=400,
-                 lod_training_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200},
-                 lod_transition_kimg=400,
-                 lod_transition_kimg_overrides={1: 200, 2: 200, 3: 200, 4: 200}):
+                 lod_transition_kimg=400):
         super().__init__([(1, 'iteration')])
+        # TODO read these from the config file
+        # all overrides start from depth_offset+1
+        minibatch_overrides = {
+            0: 8192,
+            1: 4096,
+            2: 2048 + 1024,
+            3: 2048,
+            4: 1024 + 512,
+            5: 1024,
+            6: 256,
+            7: 128 + 64
+        }
+        tick_kimg_overrides = {}
+        lod_training_kimg_overrides = {}
+        lod_transition_kimg_overrides = {}
+
         self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
         self.minibatch_overrides = minibatch_overrides

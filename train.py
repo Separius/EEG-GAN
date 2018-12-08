@@ -25,7 +25,7 @@ default_params = dict(
     cpu_deterministic=False,
     result_dir='results',
     exp_name='',
-    lr=0.001,  # generator's learning rate
+    lr=0.0001,  # generator's learning rate
     total_kimg=6000,
     resume_network='',  # 001-test/network-snapshot-{}-000025.dat
     num_data_workers=0,
@@ -36,7 +36,7 @@ default_params = dict(
     feature_matching_lambda=0.0,
     loss_type='wgan_gp',  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
     cuda_device=0,
-    ttur=False,
+    ttur=True,
     config_file=None,
     fmap_base=1024,
     fmap_max=256,
@@ -50,6 +50,8 @@ default_params = dict(
     validation_ratio=0.0,  # set to 0.0 to disable
     z_distribution='normal',  # or 'bernoulli' or 'censored'
     init='kaiming_normal',  # or xavier_uniform or orthogonal
+    act_alpha=0.2,
+    residual=False
 )
 
 
@@ -99,7 +101,8 @@ def main(params):
         shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
                                    fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
                                    fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
-                                   equalized=params['equalized'], self_attention_layers=params['self_attention_layers'],
+                                   residual=params['residual'], equalized=params['equalized'],
+                                   self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
                                    num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
         generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
         discriminator = Discriminator(**shared_model_params, **params['Discriminator'])

@@ -1,7 +1,7 @@
 cpu_deterministic: false
 result_dir: 'results'
 exp_name: ''
-G_lr: 0.001
+G_lr: 0.0001
 total_kimg: 6000
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
@@ -12,7 +12,7 @@ iwass_target: 1.0
 feature_matching_lambda: 0.0
 loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
-ttur: false
+ttur: true
 #config_file: null
 fmap_base: 1024
 fmap_max: 256
@@ -26,6 +26,8 @@ lr_rampup_kimg: 0.0 # used to be 40
 validation_ratio: 0.0
 z_distribution: 'normal' # normal, bernoulli, censored
 init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal
+act_alpha: 0.2
+residual: false
 
 Trainer:
   d_training_repeats: 1
@@ -59,16 +61,9 @@ DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0
   attention_transition_kimg: 400
-  minibatch_default: 2048 #used to be 256
-  # all overrides start from depth_offset+1
-  # used to be {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
-  # {7: 1024, 6: 2048, 5: 4096, 4: 4096} 3,2,1:8192
-  minibatch_overrides: {1: 1024, 2: 512, 3: 256, 4: 128, 5: 64, 6: 32, 7: 16, 8: 8, 9: 4}
-  tick_kimg_overrides: {4: 4, 5: 4, 6: 4, 7: 3, 8: 2, 9: 1}
+  minibatch_default: 8192 #used to be 256
   lod_training_kimg: 400
-  lod_training_kimg_overrides: {1: 200, 2: 200, 3: 200, 4: 200}
   lod_transition_kimg: 400
-  lod_transition_kimg_overrides: {1: 200, 2: 200, 3: 200, 4: 200}
 
 SaverPlugin:
   keep_old_checkpoints: true
