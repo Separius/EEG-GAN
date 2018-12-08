@@ -61,32 +61,38 @@ class GDropLayer(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    # TODO same as SAGAN
     # TODO output the attention map
     # TODO use Factorized Attention
-    def __init__(self, channels_in, spectral=True):
+    def __init__(self, channels_in, sagan=True, spectral=True):
         super().__init__()
         d_key = max(channels_in // 8, 2)
+        conv_conf = dict(kernel_size=1, equalized=False, spectral=spectral,
+                         init='xavier_uniform', bias=False, act_alpha=-1)
         self.gamma = 0
-        self.key_conv = nn.Conv1d(channels_in, d_key, kernel_size=1, bias=False)
-        self.query_conv = nn.Conv1d(channels_in, d_key, kernel_size=1, bias=False)
-        self.value_conv = nn.Conv1d(channels_in, channels_in, kernel_size=1)
+        self.pooling = nn.MaxPool1d(2) if sagan else nn.Sequential()
+        self.key_conv = GeneralConv(channels_in, d_key, **conv_conf)
+        self.query_conv = GeneralConv(channels_in, d_key, **conv_conf)
+        self.value_conv = GeneralConv(channels_in, channels_in // 2, **conv_conf)
+        self.final_conv = GeneralConv(channels_in // 2, channels_in, **conv_conf)
         self.softmax = nn.Softmax(dim=-1)
-        self.scale = math.sqrt(d_key)
+        self.scale = 1.0 if sagan else math.sqrt(d_key)
         if spectral:
+            self.key_conv = spectral_norm(self.key_conv)
+            self.query_conv = spectral_norm(self.query_conv)
             self.value_conv = spectral_norm(self.value_conv)
+            self.final_conv = spectral_norm(self.final_conv)
 
-    def forward(self, x):
+    def forward(self, x):  # BCT
         if self.gamma == 0:
             return x
         batch_size, _, t = x.size()
-        query = self.query_conv(x).permute(0, 2, 1)
-        key = self.key_conv(x)
-        energy = torch.bmm(query, key)
-        attention = self.softmax(energy / self.scale)
-        value = self.value_conv(x)
-        out = torch.bmm(value, attention.permute(0, 2, 1))
-        out = out.view(batch_size, -1, t)
+        query = self.query_conv(x).permute(0, 2, 1)  # BTC//8
+        key = self.pooling(self.key_conv(x))  # BC//8T[//2]
+        energy = torch.bmm(query, key)  # BTT[//2]
+        attention = self.softmax(energy / self.scale)  # BTnormed(T[//2])
+        value = self.pooling(self.value_conv(x))  # BC//2T[//2]
+        out = torch.bmm(value, attention.permute(0, 2, 1))  # BC//2T
+        out = self.final_conv(out)  # BCT
         return self.gamma * out + x
 
 
@@ -142,11 +148,12 @@ class ConditionalLayerNorm(ConditionalGeneralNorm):
 
 class EqualizedConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding=0,
-                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0):
+                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0, bias=True):
         super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
-                              kernel_size=kernel_size, padding=padding, bias=True)
-        self.conv.bias.data.zero_()
+                              kernel_size=kernel_size, padding=padding, bias=bias)
+        if bias:
+            self.conv.bias.data.zero_()
         act_alpha = act_alpha if act_alpha > 0 else 1
         if init == 'kaiming_normal':
             torch.nn.init.kaiming_normal_(self.conv.weight, a=act_alpha)
@@ -168,11 +175,11 @@ class EqualizedConv1d(nn.Module):
 
 class GeneralConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal'):
+                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized, init=init, act_alpha=act_alpha)
+                               equalized=equalized, init=init, act_alpha=act_alpha, bias=bias)
         norm = None
         if act_norm == 'layer':
             norm = ConditionalLayerNorm(out_channels, num_classes)
