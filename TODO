@@ -1,3 +1,5 @@
+Spectral Norm => NO PIX NORM + NO Scaled
+
 condition:
     handle class conditioning data, generator, discriminator, inference
     instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
@@ -43,7 +45,7 @@ exp:
 inception:
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_seizure/v1.4.0/
         O(14 G)
-        different sizes into 6 classes? + has .lbl file (per channel)
+        different sizes into 9 classes? + has .lbl file (per channel)
         v1.4.0/edf/train/03_tcp_ar_a/008/00000883/s003_2010_09_01/00000883_s003_t000.tse
         label_seconds = {
             'bckg': 1096377.9117999997,
@@ -58,11 +60,8 @@ inception:
         } (sum = 1186841.9999999998, without background = 90464.08820000011 (10%)) ~= 330 Min
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_events/v1.0.1/
         O(14 G)
-        different sizes into 6 classes? / does not have tse (only channel based)
+        different sizes into 6 classes? / does not contain tse (only channel based)
         v1.0.0/edf/eval/002/bckg_002_a__ch003.lab
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_epilepsy/v1.0.0/
-        O(14 G)
-        two classes based on report file(small) => like our labels
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
         O(30G)
         two classes based on report file(larger) => like our labels
