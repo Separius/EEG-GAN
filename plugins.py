@@ -60,8 +60,7 @@ class DepthManager(Plugin):
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
         if self.start_gamma is not None:
             self.trainer.stats['gamma'] = {'log_name': 'gamma', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
-        is_resuming = self.trainer.optimizer_d is not None
-        self.iteration(is_resuming)
+        self.iteration(is_resuming=self.trainer.optimizer_d is not None)
 
     @staticmethod
     def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
@@ -188,7 +187,6 @@ class AbsoluteTimeMonitor(Plugin):
         self.trainer.stats['sec']['kimg'] = kimg_time
 
 
-# TODO HERE
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
@@ -220,7 +218,7 @@ class SaverPlugin(Plugin):
 
 
 class EvalDiscriminator(Plugin):
-    def __init__(self, create_dataloader_fun, output_snapshot_ticks: int = 25):
+    def __init__(self, create_dataloader_fun, output_snapshot_ticks):
         super().__init__([(1, 'tick')])
         self.create_dataloader_fun = create_dataloader_fun
         self.output_snapshot_ticks = output_snapshot_ticks
@@ -236,7 +234,7 @@ class EvalDiscriminator(Plugin):
     def epoch(self, epoch_index):
         if epoch_index % self.output_snapshot_ticks != 0:
             return
-        self.trainer.discriminator.eval()
+        self.trainer.discriminator.eval()  # TODO is this right?, maybe we should use no_grad() instead
         values = []
         for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
             d_real, _ = self.trainer.discriminator(data)
@@ -249,9 +247,10 @@ class EvalDiscriminator(Plugin):
 
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int, samples_count: int = 8,
-                 output_snapshot_ticks: int = 25):
+    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int,
+                 samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.999):
         super().__init__([(1, 'tick')])
+        self.old_weight = old_weight
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len
@@ -304,12 +303,16 @@ class OutputGenerator(Plugin):
 
     def epoch(self, epoch_index):
         for p, avg_p in zip(self.trainer.generator.parameters(), self.my_g_clone):
-            avg_p.mul_(0.999).add_(0.001 * p.data)
+            avg_p.mul_(self.old_weight).add_((1.0 - self.old_weight) * p.data)
         if epoch_index % self.output_snapshot_ticks == 0:
             z = self.sample_fn(self.samples_count)
             gen_input = cudize(Variable(z))
             original_param = self.flatten_params(self.trainer.generator)
             self.load_params(self.my_g_clone, self.trainer.generator)
+            dest = os.path.join(self.checkpoints_dir, SaverPlugin.last_pattern.format('smooth_generator',
+                                                                                      '{:06}'.format(
+                                                                                          self.trainer.cur_nimg // 1000)))
+            torch.save({'cur_nimg': self.trainer.cur_nimg, 'model': self.trainer.generator.state_dict()}, dest)
             out = generate_samples(self.trainer.generator, gen_input)
             self.load_params(original_param, self.trainer.generator)
             frequency = self.max_freq * out.shape[2] / self.seq_len
@@ -335,10 +338,11 @@ class TeeLogger(Logger):
 
 
 class SlicedWDistance(Plugin):
-    def __init__(self, progression_scale: int, patches_per_item: int = 16,
+    def __init__(self, progression_scale: int, output_snapshot_ticks: int, patches_per_item: int = 16,
                  patch_size: int = 49, number_of_batches: int = 128, number_of_projections: int = 512,
                  dir_repeats: int = 4, dirs_per_repeat: int = 128):
-        super().__init__([(1, 'end')])
+        super().__init__([(1, 'tick')])
+        self.output_snapshot_ticks = output_snapshot_ticks
         self.progression_scale = progression_scale
         self.patches_per_item = patches_per_item
         self.patch_size = patch_size
@@ -349,6 +353,11 @@ class SlicedWDistance(Plugin):
 
     def register(self, trainer):
         self.trainer = trainer
+        self.trainer.stats['swd'] = {
+            'log_name': 'swd',
+            'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
+            'val': float('nan'), 'tick': 0,
+        }
 
     def sliced_wasserstein(self, A: np.array, B: np.array):
         assert A.ndim == 2 and A.shape == B.shape  # (neighborhood, descriptor_component)
@@ -366,20 +375,25 @@ class SlicedWDistance(Plugin):
             results.append(np.mean(dists))  # average over neighborhoods and directions
         return np.mean(results)  # average over repeats
 
-    def end(self, *args):
+    def epoch(self, epoch_index):
+        if epoch_index % self.output_snapshot_ticks != 0:
+            return
         all_fakes = []
         all_reals = []
+        self.trainer.generator.eval()  # TODO is this necessary of just no_grad() is enough
         for i in range(self.number_of_batches):
             fake_latents_in = cudize(self.trainer.random_latents_generator())
             all_fakes.append(self.trainer.generator(fake_latents_in).cpu().numpy())
             all_reals.append(next(self.trainer.dataiter).numpy())
+        self.trainer.generator.train()
         all_fakes = np.concatenate(all_fakes, axis=0)
         all_reals = np.concatenate(all_reals, axis=0)
         fake_descriptors = self.get_descriptors(all_fakes)
         real_descriptors = self.get_descriptors(all_reals)
         swd = [self.sliced_wasserstein(fake, real) for fake, real in zip(fake_descriptors, real_descriptors)]
         swd.append(np.mean(np.array(swd)))
-        print(swd)  # TODO do something better than printing + call end on Ctrl+C maybe? + make sure it's right
+        self.trainer.stats['swd']['val'] = swd
+        self.trainer.stats['swd']['tick'] = epoch_index
 
     def get_descriptors(self, batch: np.array):
         b, c, t_max = batch.shape
@@ -405,6 +419,7 @@ class SlicedWDistance(Plugin):
         return all_descriptors
 
 
+# TODO
 class InceptionScore(Plugin):
     def __init__(self, inception_network):
         super().__init__([(1, 'end')])
@@ -440,7 +455,7 @@ class InceptionScore(Plugin):
         # Load inception model
         inception_model = inception_v3(pretrained=True, transform_input=False).type(dtype)
         inception_model.eval()
-        up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
+        up = torch.nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
 
         def get_pred(x):
             if resize:
@@ -476,6 +491,7 @@ class InceptionScore(Plugin):
         self.trainer = trainer
 
 
+# TODO
 class FID(Plugin):
     def __init__(self, inception_network):
         super().__init__([(1, 'end')])

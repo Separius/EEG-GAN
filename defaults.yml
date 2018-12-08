@@ -32,7 +32,6 @@ residual: false
 Trainer:
   d_training_repeats: 1
   tick_kimg_default: 5.0
-  resume_nimg: 0
 
 Generator:
   to_rgb_mode: 'pggan' # pggan, sagan, sngan
@@ -80,6 +79,7 @@ SlicedWDistance:
 OutputGenerator:
   samples_count: 8
   output_snapshot_ticks: 25
+  old_weight: 0.999
 
 Adam:
   betas: !!python/tuple [0.0, 0.99]
@@ -90,9 +90,6 @@ EfficientLossMonitor:
   monitor_threshold: 10.0
   monitor_warmup: 50
   monitor_patience: 5
-
-EvalDiscriminator:
-  output_snapshot_ticks: 25
 
 EEGDataset:
   dir_path: './data/tuh1'

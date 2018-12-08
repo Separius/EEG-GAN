@@ -65,9 +65,9 @@ class InfiniteRandomSampler(SubsetRandomSampler):
 
 def load_models(resume_network, result_dir, logger):
     logger.log('Resuming {}'.format(resume_network))
-    generator, g_optimizer, g_cur_img = load_model(os.path.join(result_dir, resume_network.format('generator')), True)
-    discriminator, d_optimizer, d_cur_img = load_model(os.path.join(result_dir, resume_network.format('discriminator')),
-                                                       True)
+    dest = os.path.join(result_dir, resume_network)
+    generator, g_optimizer, g_cur_img = load_model(dest.format('generator'), True)
+    discriminator, d_optimizer, d_cur_img = load_model(dest.format('discriminator'), True)
     assert g_cur_img == d_cur_img
     return generator, g_optimizer, discriminator, d_optimizer, g_cur_img
 
@@ -199,8 +199,9 @@ def main(params):
         OutputGenerator(lambda x: random_latents(x, latent_size, params['z_distribution']), result_dir, dataset.seq_len,
                         dataset.dataset_freq, dataset.seq_len, **params['OutputGenerator']))
     if params['validation_ratio'] > 0:
-        trainer.register_plugin(EvalDiscriminator(get_dataloader, **params['EvalDiscriminator']))
-    trainer.register_plugin(SlicedWDistance(dataset.progression_scale))
+        trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
+    trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
+                                            **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
