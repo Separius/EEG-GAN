@@ -234,15 +234,14 @@ class EvalDiscriminator(Plugin):
     def epoch(self, epoch_index):
         if epoch_index % self.output_snapshot_ticks != 0:
             return
-        self.trainer.discriminator.eval()  # TODO is this right?, maybe we should use no_grad() instead
         values = []
-        for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
-            d_real, _ = self.trainer.discriminator(data)
-            values.append(d_real.mean().item())
+        with torch.no_grad():
+            for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
+                d_real, _ = self.trainer.discriminator(data)
+                values.append(d_real.mean().item())
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
         self.trainer.stats['memorization']['epoch'] = epoch_index
-        self.trainer.discriminator.train()
 
 
 class OutputGenerator(Plugin):
@@ -380,12 +379,11 @@ class SlicedWDistance(Plugin):
             return
         all_fakes = []
         all_reals = []
-        self.trainer.generator.eval()  # TODO is this necessary of just no_grad() is enough
-        for i in range(self.number_of_batches):
-            fake_latents_in = cudize(self.trainer.random_latents_generator())
-            all_fakes.append(self.trainer.generator(fake_latents_in).cpu().numpy())
-            all_reals.append(next(self.trainer.dataiter).numpy())
-        self.trainer.generator.train()
+        with torch.no_grad():
+            for i in range(self.number_of_batches):
+                fake_latents_in = cudize(self.trainer.random_latents_generator())
+                all_fakes.append(self.trainer.generator(fake_latents_in).cpu().numpy())
+                all_reals.append(next(self.trainer.dataiter).numpy())
         all_fakes = np.concatenate(all_fakes, axis=0)
         all_reals = np.concatenate(all_reals, axis=0)
         fake_descriptors = self.get_descriptors(all_fakes)
