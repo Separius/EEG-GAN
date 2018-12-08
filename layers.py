@@ -2,15 +2,12 @@ import math
 import torch
 import numpy as np
 from torch import nn
+from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
-from utils import cudize, pixel_norm, EPSILON
 
 
 class PixelNorm(nn.Module):
-    def __init__(self):
-        super().__init__()
-
     def forward(self, x):
         return pixel_norm(x)
 
@@ -64,6 +61,9 @@ class GDropLayer(nn.Module):
 
 
 class SelfAttention(nn.Module):
+    # TODO same as SAGAN
+    # TODO output the attention map
+    # TODO use Factorized Attention
     def __init__(self, channels_in, spectral=True):
         super().__init__()
         d_key = max(channels_in // 8, 2)
@@ -100,8 +100,7 @@ class MinibatchStddev(nn.Module):
         group_size = min(s[0], self.group_size)
         y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
         y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
-        # TODO epsilon is not needed
-        y = torch.sqrt((y ** 2).mean(dim=0) + EPSILON)  # B//G,C,T
+        y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
         y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
         y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)
@@ -142,24 +141,25 @@ class ConditionalLayerNorm(ConditionalGeneralNorm):
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False, equalized=True,
-                 init='kaiming_normal'):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0,
+                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0):
         super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, padding=padding, bias=True)
         self.conv.bias.data.zero_()
+        act_alpha = act_alpha if act_alpha > 0 else 1
         if init == 'kaiming_normal':
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=calculate_gain('conv1d'))
+            torch.nn.init.kaiming_normal_(self.conv.weight, a=act_alpha)
         elif init == 'xavier_uniform':
-            torch.nn.init.xavier_uniform_(self.conv.weight, math.sqrt(2))
+            torch.nn.init.xavier_uniform_(self.conv.weight, gain=calculate_gain('leaky_relu', param=act_alpha))
         elif init == 'orthogonal':
-            torch.nn.init.orthogonal_(self.conv.weight)
+            torch.nn.init.orthogonal_(self.conv.weight, gain=calculate_gain('leaky_relu', param=act_alpha))
         if not equalized:
             self.scale = 1.0
         else:
             self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
-        if spectral:
+        if spectral:  # TODO should I do this here or before the initialization?
             self.conv = spectral_norm(self.conv)
 
     def forward(self, x):
@@ -172,7 +172,7 @@ class GeneralConv(nn.Module):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized, init=init)
+                               equalized=equalized, init=init, act_alpha=act_alpha)
         norm = None
         if act_norm == 'layer':
             norm = ConditionalLayerNorm(out_channels, num_classes)

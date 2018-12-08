@@ -4,10 +4,9 @@ from utils import cudize
 import torch.nn.functional as F
 from torch.autograd import Variable, grad
 
-mixing_factors = None
-grad_outputs = None
 one = None
 zero = None
+mixing_factors = None
 
 
 def get_mixing_factor(batch_size):
@@ -21,29 +20,25 @@ def get_mixing_factor(batch_size):
 def get_one(batch_size):
     global one
     if one is None or batch_size != one.size(0):
-        one = Variable(cudize(torch.ones(batch_size)))
+        one = cudize(torch.ones(batch_size))
     return one
 
 
 def get_zero(batch_size):
     global zero
     if zero is None or batch_size != zero.size(0):
-        zero = Variable(cudize(torch.zeros(batch_size)))
+        zero = cudize(torch.zeros(batch_size))
     return zero
 
 
 def calc_grad(x_hat, pred_hat):
-    global grad_outputs
-    if grad_outputs is None or pred_hat.size(0) != grad_outputs.size(0):
-        grad_outputs = cudize(torch.ones(pred_hat.size()))
-    return grad(outputs=pred_hat, inputs=x_hat, grad_outputs=grad_outputs, create_graph=True, retain_graph=True,
-                only_inputs=True)[0]
+    return grad(outputs=pred_hat, inputs=x_hat, grad_outputs=get_one(pred_hat.size(0)),
+                create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
-def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor,
-                   fake: torch.tensor, loss_type: str, random_multiply: bool, feature_matching_lambda: float = 0.0):
+def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor,
+                   loss_type: str, random_multiply: bool, feature_matching_lambda: float = 0.0):
     gen.zero_grad()
-    z = Variable(fake)
     g_ = gen(z)
     d_fake, fake_features = dis(g_)
     real_features = None
@@ -52,8 +47,7 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
         g_loss = -d_fake.mean()
     else:
         with torch.no_grad():
-            x_real = Variable(real)
-            d_real, real_features = dis(x_real)
+            d_real, real_features = dis(real)
         if loss_type == 'rsgan':
             g_loss = F.binary_cross_entropy_with_logits(d_fake - d_real, get_one(d_fake.size(0)))
         elif loss_type == 'rasgan':
@@ -69,22 +63,18 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
     if feature_matching_lambda != 0.0:
         if real_features is None:
             with torch.no_grad():
-                x_real = Variable(real)
-                _, real_features = dis(x_real)
+                _, real_features = dis(real)
         diff = real_features.mean(dim=0) - fake_features.mean(dim=0)
         g_loss = g_loss + (diff * diff).mean()
     return g_loss * scale
 
 
-def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, fake: torch.tensor,
+def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor,
                        loss_type: str, iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
     dis.zero_grad()
-    gen.zero_grad()
+    d_real, _ = dis(real)
     with torch.no_grad():
-        z = Variable(fake)
-    x_real = Variable(real)
-    d_real, d_last_real = dis(x_real)
-    g_ = Variable(gen(z).data)
+        g_ = gen(z)
     d_fake, _ = dis(g_)
     batch_size = d_real.size(0)
     gp_gain = 1.0 if grad_lambda != 0 else 0
@@ -97,8 +87,8 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
                                                      get_one(batch_size)) + F.binary_cross_entropy_with_logits(
             d_fake - d_real.mean(), get_zero(batch_size))) / 2.0
     elif loss_type == 'rahinge':
-        d_loss = (torch.mean(F.relu(1.0 - (d_real - torch.mean(d_fake)))) + torch.mean(
-            F.relu(1.0 + (d_fake - torch.mean(d_real))))) / 2
+        d_loss = (torch.mean(F.relu(1.0 - (d_real - d_fake.mean()))) + torch.mean(
+            F.relu(1.0 + (d_fake - d_real.mean())))) / 2
     elif loss_type.startswith('wgan'):  # wgan and wgan_theirs
         d_fake_mean = d_fake.mean()
         d_real_mean = d_real.mean()
@@ -113,9 +103,9 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
     else:
         raise ValueError('Invalid loss type')
     if gp_gain != 0 and grad_lambda != 0:
-        alpha = get_mixing_factor(x_real.size(0))
-        min_size = min(g_.size(2), x_real.size(2))
-        x_hat = Variable(alpha * x_real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
+        alpha = get_mixing_factor(real.size(0))
+        min_size = min(g_.size(2), real.size(2))
+        x_hat = Variable(alpha * real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
                          requires_grad=True)
         pred_hat, _ = dis(x_hat)
         g = calc_grad(x_hat, pred_hat).view(batch_size, -1)

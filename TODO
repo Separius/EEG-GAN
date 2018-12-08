@@ -1,5 +1,8 @@
 Spectral Norm => NO PIX NORM + NO Scaled
-
+NO PROGRESSION => RESIDUAL
+code:
+    mutable params => bug
+    save and load optimizer as well
 condition:
     handle class conditioning data, generator, discriminator, inference
     instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
