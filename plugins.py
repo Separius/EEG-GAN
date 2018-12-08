@@ -7,6 +7,7 @@ from glob import glob
 from scipy import misc
 from scipy import linalg
 from copy import deepcopy
+from trainer import Trainer
 from datetime import timedelta
 from scipy.stats import entropy
 from torch.autograd import Variable
@@ -18,38 +19,22 @@ import matplotlib.pyplot as plt
 
 
 class DepthManager(Plugin):
+    # TODO read these from the config file
+    minibatch_override = {0: 8192, 1: 4096, 2: 2048 + 1024, 3: 2048, 4: 1024 + 512, 5: 1024, 6: 256, 7: 128 + 64}
+    tick_kimg_override = {0: 5, 1: 5, 2: 5, 3: 4, 4: 4, 5: 3, 6: 3, 7: 2}
+    training_kimg_override = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
+    transition_kimg_override = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
+
     def __init__(self,  # everything starts from 0 or 1
                  create_dataloader_fun, create_rlg, max_depth,
                  tick_kimg_default, has_attention, get_optimizer, default_lr,
-                 reset_optimizer: bool = True,
-                 disable_progression=False,
-                 depth_offset=0,  # starts form 0
-                 attention_transition_kimg=400,
-                 minibatch_default=8192,
-                 lod_training_kimg=400,
-                 lod_transition_kimg=400):
+                 reset_optimizer: bool = True, disable_progression=False,
+                 minibatch_default=8192, depth_offset=0,  # starts form 0
+                 attention_transition_kimg=400, lod_training_kimg=400, lod_transition_kimg=400):
         super().__init__([(1, 'iteration')])
-        # TODO read these from the config file
-        # all overrides start from depth_offset+1
-        minibatch_overrides = {
-            0: 8192,
-            1: 4096,
-            2: 2048 + 1024,
-            3: 2048,
-            4: 1024 + 512,
-            5: 1024,
-            6: 256,
-            7: 128 + 64
-        }
-        tick_kimg_overrides = {}
-        lod_training_kimg_overrides = {}
-        lod_transition_kimg_overrides = {}
-
         self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
-        self.minibatch_overrides = minibatch_overrides
         self.tick_kimg_default = tick_kimg_default
-        self.tick_kimg_overrides = tick_kimg_overrides
         self.create_dataloader_fun = create_dataloader_fun
         self.create_rlg = create_rlg
         self.trainer = None
@@ -63,9 +48,9 @@ class DepthManager(Plugin):
         self.attention_transition_kimg = attention_transition_kimg
         self.alpha_map, self.start_gamma, self.end_gamma = self.pre_compute_alpha_map(self.depth_offset, max_depth,
                                                                                       lod_training_kimg,
-                                                                                      lod_training_kimg_overrides,
+                                                                                      self.training_kimg_override,
                                                                                       lod_transition_kimg,
-                                                                                      lod_transition_kimg_overrides,
+                                                                                      self.transition_kimg_override,
                                                                                       has_attention,
                                                                                       attention_transition_kimg)
 
@@ -75,7 +60,8 @@ class DepthManager(Plugin):
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
         if self.start_gamma is not None:
             self.trainer.stats['gamma'] = {'log_name': 'gamma', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
-        self.iteration()
+        is_resuming = self.trainer.optimizer_d is not None
+        self.iteration(is_resuming)
 
     @staticmethod
     def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
@@ -116,20 +102,20 @@ class DepthManager(Plugin):
             alpha = 1.0
         return depth, alpha
 
-    def iteration(self, *args):
+    def iteration(self, is_resuming=False, *args):
         depth, alpha = self.calc_progress()
         dataset = self.trainer.dataset
         if depth != self.depth:
             self.trainer.discriminator.depth = self.trainer.generator.depth = dataset.model_depth = depth
             self.depth = depth
-            minibatch_size = self.minibatch_overrides.get(depth - self.depth_offset, self.minibatch_default)
-            if self.reset_optimizer:
+            minibatch_size = self.minibatch_override.get(depth - self.depth_offset, self.minibatch_default)
+            if self.reset_optimizer and not is_resuming:
                 self.trainer.optimizer_g, self.trainer.optimizer_d, self.trainer.lr_scheduler_g, self.trainer.lr_scheduler_d = self.get_optimizer(
                     self.minibatch_default * self.default_lr / minibatch_size)
             self.data_loader = self.create_dataloader_fun(minibatch_size)
             self.trainer.dataiter = iter(self.data_loader)
             self.trainer.random_latents_generator = self.create_rlg(minibatch_size)
-            tick_duration_kimg = self.tick_kimg_overrides.get(depth - self.depth_offset, self.tick_kimg_default)
+            tick_duration_kimg = self.tick_kimg_override.get(depth - self.depth_offset, self.tick_kimg_default)
             self.trainer.tick_duration_nimg = int(tick_duration_kimg * 1000)
             self.trainer.stats['minibatch_size'] = minibatch_size
         if alpha != self.alpha:
@@ -150,8 +136,8 @@ class DepthManager(Plugin):
 
 
 class EfficientLossMonitor(LossMonitor):
-    def __init__(self, loss_no, stat_name, monitor_threshold: float = 10.0, monitor_warmup: int = 50,
-                 monitor_patience: int = 5):
+    def __init__(self, loss_no, stat_name, monitor_threshold: float = 10.0,
+                 monitor_warmup: int = 50, monitor_patience: int = 5):
         super().__init__()
         self.loss_no = loss_no
         self.stat_name = stat_name
@@ -180,7 +166,7 @@ class EfficientLossMonitor(LossMonitor):
 
 class AbsoluteTimeMonitor(Plugin):
     def __init__(self):
-        super().__init__([(1, 'epoch')])
+        super().__init__([(1, 'tick')])
         self.start_time = time.time()
         self.epoch_start = self.start_time
         self.start_nimg = None
@@ -202,23 +188,27 @@ class AbsoluteTimeMonitor(Plugin):
         self.trainer.stats['sec']['kimg'] = kimg_time
 
 
+# TODO HERE
 class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
     def __init__(self, checkpoints_path, keep_old_checkpoints: bool = True, network_snapshot_ticks: int = 50):
-        super().__init__([(network_snapshot_ticks, 'epoch'), (1, 'end')])
+        super().__init__([(network_snapshot_ticks, 'tick')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
 
-    def register(self, trainer):
+    def register(self, trainer: Trainer):
         self.trainer = trainer
 
     def epoch(self, epoch_index):
         if not self.keep_old_checkpoints:
             self._clear(self.last_pattern.format('*', '*'))
-        for model, name in [(self.trainer.generator, 'generator'), (self.trainer.discriminator, 'discriminator')]:
-            torch.save(model, os.path.join(self.checkpoints_path, self.last_pattern.format(name, '{:06}'.format(
-                self.trainer.cur_nimg // 1000))))
+        dest = os.path.join(self.checkpoints_path,
+                            self.last_pattern.format('{}', '{:06}'.format(self.trainer.cur_nimg // 1000)))
+        for model, optimizer, name in [(self.trainer.generator, self.trainer.optimizer_g, 'generator'),
+                                       (self.trainer.discriminator, self.trainer.optimizer_d, 'discriminator')]:
+            torch.save({'cur_nimg': self.trainer.cur_nimg, 'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict()}, dest.format(name))
 
     def end(self, *args):
         self.epoch(*args)
@@ -231,7 +221,7 @@ class SaverPlugin(Plugin):
 
 class EvalDiscriminator(Plugin):
     def __init__(self, create_dataloader_fun, output_snapshot_ticks: int = 25):
-        super().__init__([(1, 'epoch')])
+        super().__init__([(1, 'tick')])
         self.create_dataloader_fun = create_dataloader_fun
         self.output_snapshot_ticks = output_snapshot_ticks
 
@@ -240,7 +230,7 @@ class EvalDiscriminator(Plugin):
         self.trainer.stats['memorization'] = {
             'log_name': 'memorization',
             'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
-            'val': float('nan'), 'epoch': 0,
+            'val': float('nan'), 'tick': 0,
         }
 
     def epoch(self, epoch_index):
@@ -253,7 +243,7 @@ class EvalDiscriminator(Plugin):
             values.append(d_real.mean().item())
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
-        self.trainer.stats['memorization']['epoch'] = epoch_index
+        self.trainer.stats['memorization']['tick'] = epoch_index
         self.trainer.discriminator.train()
 
 
@@ -261,7 +251,7 @@ class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int, samples_count: int = 8,
                  output_snapshot_ticks: int = 25):
-        super().__init__([(1, 'epoch')])
+        super().__init__([(1, 'tick')])
         self.sample_fn = sample_fn
         self.samples_count = samples_count
         self.res_len = res_len

@@ -132,5 +132,8 @@ def map_location(storage, location):
     return storage
 
 
-def load_model(model_path):
-    return torch.load(model_path, map_location=map_location)
+def load_model(model_path, return_all=False):
+    state = torch.load(model_path, map_location=map_location)
+    if not return_all:
+        return state['model']
+    return state['model'], state['optimizer'], state['cur_nimg']

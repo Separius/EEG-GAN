@@ -1,21 +1,19 @@
 import heapq
 from utils import cudize
+from network import Generator, Discriminator
 
 
 class Trainer(object):
 
-    def __init__(self, discriminator, generator, d_loss, g_loss, optimizer_d, optimizer_g, dataset,
-                 random_latents_generator, lr_scheduler_g, lr_scheduler_d, d_training_repeats: int = 1,
-                 tick_kimg_default: float = 5.0, resume_nimg: int = 0):
+    def __init__(self, discriminator: Discriminator, generator: Generator, d_loss, g_loss, dataset,
+                 random_latents_generator, resume_nimg, optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d,
+                 d_training_repeats: int = 1, tick_kimg_default: float = 5.0):
+        assert d_training_repeats >= 1
+        self.d_training_repeats = d_training_repeats
         self.discriminator = discriminator
         self.generator = generator
         self.d_loss = d_loss
         self.g_loss = g_loss
-        self.lr_scheduler_g = lr_scheduler_g
-        self.lr_scheduler_d = lr_scheduler_d
-        self.d_training_repeats = d_training_repeats
-        self.optimizer_d = optimizer_d
-        self.optimizer_g = optimizer_g
         self.dataset = dataset
         self.cur_nimg = resume_nimg
         self.random_latents_generator = random_latents_generator
@@ -24,14 +22,17 @@ class Trainer(object):
         self.iterations = 0
         self.cur_tick = 0
         self.time = 0
+        self.lr_scheduler_g = None
+        self.lr_scheduler_d = None
+        self.optimizer_g = optimizer_g
+        self.optimizer_d = optimizer_d
         self.stats = {
             'kimg_stat': {'val': self.cur_nimg / 1000., 'log_epoch_fields': ['{val:8.3f}'], 'log_name': 'kimg'},
             'tick_stat': {'val': self.cur_tick, 'log_epoch_fields': ['{val:5}'], 'log_name': 'tick'}
         }
         self.plugin_queues = {
             'iteration': [],
-            'epoch': [],
-            's': [],
+            'tick': [],
             'end': []
         }
 
@@ -70,17 +71,18 @@ class Trainer(object):
                     self.tick_start_nimg = self.cur_nimg
                     self.stats['kimg_stat']['val'] = self.cur_nimg / 1000.
                     self.stats['tick_stat']['val'] = self.cur_tick
-                    self.call_plugins('epoch', self.cur_tick)
+                    self.call_plugins('tick', self.cur_tick)
         except KeyboardInterrupt:
             return
         self.call_plugins('end', 1)
 
     def train(self):
         if self.lr_scheduler_g is not None:
-            self.lr_scheduler_d.step()
-            self.lr_scheduler_g.step()
+            self.lr_scheduler_g.step(self.cur_nimg / self.d_training_repeats)
         fake_latents_in = cudize(self.random_latents_generator())
         for i in range(self.d_training_repeats):
+            if self.lr_scheduler_d is not None:
+                self.lr_scheduler_d.step(self.cur_nimg)
             real_images_expr = cudize(next(self.dataiter))
             self.cur_nimg += real_images_expr.size(0)
             d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)

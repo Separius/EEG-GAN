@@ -19,7 +19,7 @@ default_params = {
 
 
 def output_samples(generator_path, num_samples):
-    G = cudize(load_model(generator_path))
+    G = cudize(load_model(generator_path))  # TODO change to first instantiate a G
     if num_samples < params['max_batch_size']:
         params['max_batch_size'] = num_samples
     outputs = []

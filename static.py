@@ -25,6 +25,7 @@ params = dict(
 )
 params = simple_argparser(params)
 
+# TODO change to first instantiate a G and D
 G = load_model(
     os.path.join(params['checkpoints_path'], params['pattern'].format('generator', params['snapshot_epoch'])))
 D = load_model(

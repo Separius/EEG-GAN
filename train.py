@@ -65,9 +65,11 @@ class InfiniteRandomSampler(SubsetRandomSampler):
 
 def load_models(resume_network, result_dir, logger):
     logger.log('Resuming {}'.format(resume_network))
-    generator = load_model(os.path.join(result_dir, resume_network.format('generator')))
-    discriminator = load_model(os.path.join(result_dir, resume_network.format('discriminator')))
-    return generator, discriminator
+    generator, g_optimizer, g_cur_img = load_model(os.path.join(result_dir, resume_network.format('generator')), True)
+    discriminator, d_optimizer, d_cur_img = load_model(os.path.join(result_dir, resume_network.format('discriminator')),
+                                                       True)
+    assert g_cur_img == d_cur_img
+    return generator, g_optimizer, discriminator, d_optimizer, g_cur_img
 
 
 def thread_exit(_signal, frame):
@@ -94,22 +96,62 @@ def main(params):
     if params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
 
-    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
+    logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'tick')])
+    shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
+                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
+                               fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
+                               residual=params['residual'], equalized=params['equalized'],
+                               self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
+                               num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
+    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
+    discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
+
+    def rampup(cur_nimg):
+        if cur_nimg < params['lr_rampup_kimg'] * 1000:
+            p = max(0.0, 1 - cur_nimg / (params['lr_rampup_kimg'] * 1000))
+            return np.exp(-p * p * 5.0)
+        else:
+            return 1.0
+
+    def get_optimizers(g_lr):
+        d_lr = g_lr
+        if params['ttur']:
+            d_lr *= 4.0
+            params['Adam']['betas'] = (0, 0.9)
+        opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
+        opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
+        if params['lr_rampup_kimg'] > 0:
+            lr_scheduler_g = LambdaLR(opt_g, rampup, -1)
+            lr_scheduler_d = LambdaLR(opt_d, rampup, -1)
+            return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
+        return opt_g, opt_d, None, None
+
     if params['resume_network'] != '':
-        generator, discriminator = load_models(params['resume_network'], params['result_dir'], logger)
+        print('resuming networks')
+        generator_state, opt_g_state, discriminator_state, opt_d_state, train_cur_img = load_models(
+            params['resume_network'], params['result_dir'], logger)
+        generator.load_state_dict(generator_state)
+        discriminator.load_state_dict(discriminator_state)
+        opt_g, opt_d, sched_g, sched_d = get_optimizers(params['lr'])
+        opt_g.load_state_dict(opt_g_state)
+        opt_d.load_state_dict(opt_d_state)
     else:
-        shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
-                                   fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
-                                   fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
-                                   residual=params['residual'], equalized=params['equalized'],
-                                   self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
-                                   num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
-        generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
-        discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
+        opt_g = None
+        opt_d = None
+        sched_g = None
+        sched_d = None
+        train_cur_img = 0
     latent_size = generator.latent_size
-    assert generator.max_depth == discriminator.max_depth
+    generator.train()
+    discriminator.train()
     generator = cudize(generator)
     discriminator = cudize(discriminator)
+    if opt_g is not None:
+        for opt in [opt_g, opt_d]:
+            for state in opt.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = cudize(v)
     d_loss_fun = partial(discriminator_loss, loss_type=params['loss_type'],
                          iwass_drift_epsilon=params['iwass_drift_epsilon'], grad_lambda=params['grad_lambda'],
                          iwass_target=params['iwass_target'])
@@ -144,29 +186,8 @@ def main(params):
     def get_random_latents(bs):
         return partial(random_latents, num_latents=bs, latent_size=latent_size, z_distribution=params['z_distribution'])
 
-    def rampup(cur_nimg):
-        if cur_nimg < params['lr_rampup_kimg'] * 1000:
-            p = max(0.0, 1 - cur_nimg / (params['lr_rampup_kimg'] * 1000))
-            return np.exp(-p * p * 5.0)
-        else:
-            return 1.0
-
-    def get_optimizers(g_lr):
-        d_lr = g_lr
-        if params['ttur']:
-            d_lr *= 4.0
-            params['Adam']['betas'] = (0, 0.9)
-        opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
-        opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
-        if params['lr_rampup_kimg'] > 0:
-            lr_scheduler_d = LambdaLR(opt_d, rampup, -1)
-            lr_scheduler_g = LambdaLR(opt_g, rampup, -1)
-            return opt_g, opt_d, lr_scheduler_g, lr_scheduler_d
-        return opt_g, opt_d, None, None
-
-    opt_g, opt_d, lr_scheduler_g, lr_scheduler_d = get_optimizers(params['lr'])
-    trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, opt_d, opt_g, dataset,
-                      get_random_latents(mb_def), lr_scheduler_g, lr_scheduler_d, **params['Trainer'])
+    trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
+                      train_cur_img, opt_g, opt_d, sched_g, sched_d, **params['Trainer'])
     trainer.register_plugin(
         DepthManager(get_dataloader, get_random_latents, max_depth, params['Trainer']['tick_kimg_default'],
                      len(params['self_attention_layers']) != 0, get_optimizers, params['lr'],

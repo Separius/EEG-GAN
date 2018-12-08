@@ -21,7 +21,7 @@ class Monitor(Plugin):
         if number_format is None:
             number_format = '.{}f'.format(precision)
         number_format = ':' + number_format
-        super(Monitor, self).__init__([(1, 'iteration'), (1, 'epoch')])
+        super(Monitor, self).__init__([(1, 'iteration'), (1, 'tick')])
 
         self.smoothing = smoothing
         self.with_running_average = running_average
@@ -81,7 +81,7 @@ class Logger(Plugin):
 
     def __init__(self, fields, interval=None):
         if interval is None:
-            interval = [(1, 'iteration'), (1, 'epoch')]
+            interval = [(1, 'iteration'), (1, 'tick')]
         super(Logger, self).__init__(interval)
         self.field_widths = defaultdict(lambda: defaultdict(int))
         self.fields = list(map(lambda f: f.split('.'), fields))
