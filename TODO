@@ -1,8 +1,7 @@
 Spectral Norm => NO PIX NORM + NO Scaled
 NO PROGRESSION => RESIDUAL
-code:
-    mutable params => bug
-    save and load optimizer as well
+BatchNorm + D == bad
+
 condition:
     handle class conditioning data, generator, discriminator, inference
     instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
@@ -14,9 +13,6 @@ plugin:
     gif(z1 -> z2)
     gif(const_z over epochs)
     imaginary fid, imaginary inception score
-    * SWD :: graph per size per time + plugins.py:365
-    * add validation dataset to evaluate accuracy of D over time (combat memorization)
-        * do something better than printing with these results
 Z:
     uses different z chunks for different layers [for each block, uses the same z_chunk]
 sampling:
@@ -25,10 +21,8 @@ sampling:
 biggan:
     increase batch size
     increase number of channels by 50%
-    orthogonal_reqularization on G weights
     2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
     monitor max singular value of weights
-    batch norm (cond or not) + D == bad
 exp:
     train arl-eeg on a subset
     plot the loss values

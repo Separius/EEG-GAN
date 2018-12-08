@@ -1,6 +1,6 @@
 cpu_deterministic: false
 result_dir: 'results'
-exp_name: ''
+#exp_name: ''
 G_lr: 0.0001
 total_kimg: 6000
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
@@ -35,9 +35,7 @@ Trainer:
 
 Generator:
   to_rgb_mode: 'pggan' # pggan, sagan, sngan
-  act_alpha: 0.2
   latent_size: 256
-  residual: false
   normalize_latents: true
   dropout: 0.2
   do_mode: 'mul' # mul, drop, prop
@@ -49,11 +47,9 @@ Discriminator:
   sngan_rgb: false
   dropout: 0.2
   do_mode: 'mul' # mul, drop, prop
-  residual: false
   spectral: false
   act_norm: null # pixel, batch, layer, None
   group_size: 4
-  act_alpha: 0.2
 
 DepthManager:
   reset_optimizer: true

@@ -32,7 +32,7 @@ class Trainer(object):
         }
         self.plugin_queues = {
             'iteration': [],
-            'tick': [],
+            'epoch': [],  # this is tick
             'end': []
         }
 
@@ -71,7 +71,7 @@ class Trainer(object):
                     self.tick_start_nimg = self.cur_nimg
                     self.stats['kimg_stat']['val'] = self.cur_nimg / 1000.
                     self.stats['tick_stat']['val'] = self.cur_tick
-                    self.call_plugins('tick', self.cur_tick)
+                    self.call_plugins('epoch', self.cur_tick)
         except KeyboardInterrupt:
             return
         self.call_plugins('end', 1)

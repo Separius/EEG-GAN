@@ -165,7 +165,7 @@ class EfficientLossMonitor(LossMonitor):
 
 class AbsoluteTimeMonitor(Plugin):
     def __init__(self):
-        super().__init__([(1, 'tick')])
+        super().__init__([(1, 'epoch')])
         self.start_time = time.time()
         self.epoch_start = self.start_time
         self.start_nimg = None
@@ -191,7 +191,7 @@ class SaverPlugin(Plugin):
     last_pattern = 'network-snapshot-{}-{}.dat'
 
     def __init__(self, checkpoints_path, keep_old_checkpoints: bool = True, network_snapshot_ticks: int = 50):
-        super().__init__([(network_snapshot_ticks, 'tick')])
+        super().__init__([(network_snapshot_ticks, 'epoch')])
         self.checkpoints_path = checkpoints_path
         self.keep_old_checkpoints = keep_old_checkpoints
 
@@ -219,7 +219,7 @@ class SaverPlugin(Plugin):
 
 class EvalDiscriminator(Plugin):
     def __init__(self, create_dataloader_fun, output_snapshot_ticks):
-        super().__init__([(1, 'tick')])
+        super().__init__([(1, 'epoch')])
         self.create_dataloader_fun = create_dataloader_fun
         self.output_snapshot_ticks = output_snapshot_ticks
 
@@ -228,7 +228,7 @@ class EvalDiscriminator(Plugin):
         self.trainer.stats['memorization'] = {
             'log_name': 'memorization',
             'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
-            'val': float('nan'), 'tick': 0,
+            'val': float('nan'), 'epoch': 0,
         }
 
     def epoch(self, epoch_index):
@@ -241,7 +241,7 @@ class EvalDiscriminator(Plugin):
             values.append(d_real.mean().item())
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
-        self.trainer.stats['memorization']['tick'] = epoch_index
+        self.trainer.stats['memorization']['epoch'] = epoch_index
         self.trainer.discriminator.train()
 
 
@@ -249,7 +249,7 @@ class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int,
                  samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.999):
-        super().__init__([(1, 'tick')])
+        super().__init__([(1, 'epoch')])
         self.old_weight = old_weight
         self.sample_fn = sample_fn
         self.samples_count = samples_count
@@ -341,7 +341,7 @@ class SlicedWDistance(Plugin):
     def __init__(self, progression_scale: int, output_snapshot_ticks: int, patches_per_item: int = 16,
                  patch_size: int = 49, number_of_batches: int = 128, number_of_projections: int = 512,
                  dir_repeats: int = 4, dirs_per_repeat: int = 128):
-        super().__init__([(1, 'tick')])
+        super().__init__([(1, 'epoch')])
         self.output_snapshot_ticks = output_snapshot_ticks
         self.progression_scale = progression_scale
         self.patches_per_item = patches_per_item
@@ -356,7 +356,7 @@ class SlicedWDistance(Plugin):
         self.trainer.stats['swd'] = {
             'log_name': 'swd',
             'log_epoch_fields': ['{val:.2f}', '{epoch:.2f}'],
-            'val': float('nan'), 'tick': 0,
+            'val': float('nan'), 'epoch': 0,
         }
 
     def sliced_wasserstein(self, A: np.array, B: np.array):
@@ -393,7 +393,7 @@ class SlicedWDistance(Plugin):
         swd = [self.sliced_wasserstein(fake, real) for fake, real in zip(fake_descriptors, real_descriptors)]
         swd.append(np.mean(np.array(swd)))
         self.trainer.stats['swd']['val'] = swd
-        self.trainer.stats['swd']['tick'] = epoch_index
+        self.trainer.stats['swd']['epoch'] = epoch_index
 
     def get_descriptors(self, batch: np.array):
         b, c, t_max = batch.shape
