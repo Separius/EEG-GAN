@@ -79,7 +79,7 @@ class Generator(nn.Module):
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention))
+            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention, init))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
@@ -185,7 +185,7 @@ class Discriminator(nn.Module):
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention))
+            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention, init))
             self.self_attention[layer] = dummy[-1]
         self.dummy = nn.ModuleList(dummy)
         self.blocks = nn.ModuleList([DBlock(nf(i - initial_size + 2), nf(i - initial_size + 1), num_channels,

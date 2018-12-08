@@ -7,12 +7,13 @@ condition:
     instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
 attention:
     output the attention map for visiualization
-    spectral norm in all the convs: BTC -> q=(BTC/8), k=(BT/2C/8)[maxpooling after conv] [no act in convs] v=(BT/2C/2) -> conv(att(q,k)*v) BTC * gamma + x
 plugin:
     picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
     gif(z1 -> z2)
     gif(const_z over epochs)
-    imaginary fid, imaginary inception score
+    * imaginary fid, imaginary inception score
+    * SWD gets out of mem + does not write results
+    * monitor max singular value of weights
 Z:
     uses different z chunks for different layers [for each block, uses the same z_chunk]
 sampling:
@@ -22,7 +23,6 @@ biggan:
     increase batch size
     increase number of channels by 50%
     2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
-    monitor max singular value of weights
 exp:
     train arl-eeg on a subset
     plot the loss values

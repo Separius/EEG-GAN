@@ -97,6 +97,7 @@ def main(params):
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     if params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
+    stats_to_log.extend(['swd.val', 'swd.epoch'])
 
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,

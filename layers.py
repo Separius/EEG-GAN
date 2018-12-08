@@ -63,11 +63,10 @@ class GDropLayer(nn.Module):
 
 class SelfAttention(nn.Module):
     # TODO output the attention map
-    def __init__(self, channels_in, sagan=True, spectral=True, factorized_attention=False):
+    def __init__(self, channels_in, sagan=True, spectral=True, factorized_attention=False, init='xavier_uniform'):
         super().__init__()
         d_key = max(channels_in // 8, 2)
-        conv_conf = dict(kernel_size=1, equalized=False, spectral=spectral,
-                         init='xavier_uniform', bias=False, act_alpha=-1)
+        conv_conf = dict(kernel_size=1, equalized=False, spectral=spectral, init=init, bias=False, act_alpha=-1)
         self.gamma = 0
         self.pooling = nn.MaxPool1d(2) if sagan else nn.Sequential()
         self.key_conv = GeneralConv(channels_in, d_key, **conv_conf)
