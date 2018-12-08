@@ -11,6 +11,7 @@ from trainer import Trainer
 from datetime import timedelta
 from scipy.stats import entropy
 from torch.autograd import Variable
+from sklearn.utils.extmath import randomized_svd
 from utils import generate_samples, cudize, EPSILON
 from torch_utils import Plugin, LossMonitor, Logger
 
@@ -334,6 +335,27 @@ class TeeLogger(Logger):
 
     def epoch(self, epoch_idx):
         self._log_all('log_epoch_fields')
+
+
+class WatchSingularValues(Plugin):
+    def __init__(self, network, one_divided_two: float = 10.0, output_snapshot_ticks: int = 5):
+        super().__init__([(1, 'epoch')])
+        self.network = network
+        self.one_divided_two = one_divided_two
+        self.output_snapshot_ticks = output_snapshot_ticks
+
+    def register(self, trainer):
+        self.trainer = trainer
+
+    def epoch(self, epoch_index):
+        if epoch_index % self.output_snapshot_ticks != 0:
+            return
+        for module in self.network.modules:
+            if isinstance(module, torch.nn.Conv1d):
+                weight = module.weight.data.cpu().numpy()
+                _, s, _ = randomized_svd(weight.reshape(weight.shape[0], -1), n_components=3)
+                if abs(s[0] / s[1]) > self.one_divided_two:
+                    raise ValueError(module)
 
 
 class SlicedWDistance(Plugin):
