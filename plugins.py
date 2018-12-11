@@ -1,4 +1,5 @@
 import os
+import gc
 import time
 import torch
 import matplotlib
@@ -337,6 +338,7 @@ class TeeLogger(Logger):
         self._log_all('log_epoch_fields')
 
 
+# TODO use this
 class WatchSingularValues(Plugin):
     def __init__(self, network, one_divided_two: float = 10.0, output_snapshot_ticks: int = 5):
         super().__init__([(1, 'epoch')])
@@ -360,14 +362,14 @@ class WatchSingularValues(Plugin):
 
 class SlicedWDistance(Plugin):
     def __init__(self, progression_scale: int, output_snapshot_ticks: int, patches_per_item: int = 16,
-                 patch_size: int = 49, number_of_items: int = 8192, number_of_projections: int = 512,
+                 patch_size: int = 49, max_items: int = 128, number_of_projections: int = 512,
                  dir_repeats: int = 4, dirs_per_repeat: int = 128):
         super().__init__([(1, 'epoch')])
         self.output_snapshot_ticks = output_snapshot_ticks
         self.progression_scale = progression_scale
         self.patches_per_item = patches_per_item
         self.patch_size = patch_size
-        self.number_of_items = number_of_items
+        self.max_items = max_items
         self.number_of_projections = number_of_projections
         self.dir_repeats = dir_repeats
         self.dirs_per_repeat = dirs_per_repeat
@@ -385,33 +387,30 @@ class SlicedWDistance(Plugin):
         for repeat in range(self.dir_repeats):
             dirs = cudize(torch.randn(A.shape[1], self.dirs_per_repeat))  # (descriptor_component, direction)
             dirs /= torch.sqrt(
-                (dirs * dirs).sum(dim=0, keepdims=True) + EPSILON)  # normalize descriptor components for each direction
+                (dirs * dirs).sum(dim=0, keepdim=True) + EPSILON)  # normalize descriptor components for each direction
             projA = torch.matmul(A, dirs)  # (neighborhood, direction)
             projB = torch.matmul(B, dirs)
             projA = torch.sort(projA, dim=0)[0]  # sort neighborhood projections for each direction
             projB = torch.sort(projB, dim=0)[0]
             dists = (projA - projB).abs()  # pointwise wasserstein distances
             results.append(dists.mean())  # average over neighborhoods and directions
-        return np.mean(results)  # average over repeats
+        return torch.mean(torch.stack(results)).item()  # average over repeats
 
     def epoch(self, epoch_index):
         if epoch_index % self.output_snapshot_ticks != 0:
             return
+        gc.collect()
         all_fakes = []
         all_reals = []
         with torch.no_grad():
-            current_items = 0
-            while True:
-                fake_latents_in = cudize(self.trainer.random_latents_generator())
-                all_fakes.append(self.trainer.generator(fake_latents_in))
-                all_reals.append(cudize(next(self.trainer.dataiter)))
-                current_items += fake_latents_in.size(0)
-                if current_items >= self.number_of_items:
-                    break
-        all_fakes = torch.cat(all_fakes, axis=0)
-        all_reals = torch.cat(all_reals, axis=0)
+            fake_latents_in = cudize(self.trainer.random_latents_generator()[:self.max_items])
+            all_fakes.append(self.trainer.generator(fake_latents_in))
+            all_reals.append(cudize(next(self.trainer.dataiter)[:self.max_items]))
+        all_fakes = torch.cat(all_fakes, dim=0)
+        all_reals = torch.cat(all_reals, dim=0)
         swd = self.get_descriptors(all_fakes, all_reals)
-        swd.append(torch.FloatTensor(swd).mean())
+        if len(swd) > 0:
+            swd.append(np.array(swd).mean())
         self.trainer.stats['swd']['val'] = swd
         self.trainer.stats['swd']['epoch'] = epoch_index
 
@@ -430,14 +429,14 @@ class SlicedWDistance(Plugin):
                 batch = batchs[i]
                 descriptors = []
                 max_index = batch.shape[2] - self.patch_size
-                for i in range(b):
+                for j in range(b):
                     for k in range(self.patches_per_item):
                         rand_index = np.random.randint(0, max_index)
-                        descriptors.append(batch[i, :, rand_index:rand_index + 49])
+                        descriptors.append(batch[i, :, rand_index:rand_index + self.patch_size])
                 descriptors = torch.stack(descriptors, dim=0)  # N, c, patch_size
                 descriptors = descriptors.reshape((-1, c))
-                descriptors -= torch.mean(descriptors, dim=0, keepdims=True)
-                descriptors /= torch.std(descriptors, dim=0, keepdims=True)
+                descriptors -= torch.mean(descriptors, dim=0, keepdim=True)
+                descriptors /= torch.std(descriptors, dim=0, keepdim=True)
                 both_descriptors[i] = descriptors
                 batchs[i] = batch[:, :, ::self.progression_scale]
             swd.append(self.sliced_wasserstein(both_descriptors[0], both_descriptors[1]))

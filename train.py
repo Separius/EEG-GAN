@@ -105,7 +105,7 @@ def main(params):
                                fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                                residual=params['residual'], equalized=params['equalized'],
                                sagan_non_local=params['sagan_non_local'],
-                               use_factorized_attention=params['use_factorized_attention'],
+                               factorized_attention=params['use_factorized_attention'],
                                self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
                                num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
     generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
