@@ -69,7 +69,7 @@ SaverPlugin:
 SlicedWDistance:
   patches_per_item: 16
   patch_size: 49
-  number_of_batches: 128
+  number_of_items: 8192
   number_of_projections: 512
   dir_repeats: 4
   dirs_per_repeat: 128

@@ -360,14 +360,14 @@ class WatchSingularValues(Plugin):
 
 class SlicedWDistance(Plugin):
     def __init__(self, progression_scale: int, output_snapshot_ticks: int, patches_per_item: int = 16,
-                 patch_size: int = 49, number_of_batches: int = 128, number_of_projections: int = 512,
+                 patch_size: int = 49, number_of_items: int = 8192, number_of_projections: int = 512,
                  dir_repeats: int = 4, dirs_per_repeat: int = 128):
         super().__init__([(1, 'epoch')])
         self.output_snapshot_ticks = output_snapshot_ticks
         self.progression_scale = progression_scale
         self.patches_per_item = patches_per_item
         self.patch_size = patch_size
-        self.number_of_batches = number_of_batches
+        self.number_of_items = number_of_items
         self.number_of_projections = number_of_projections
         self.dir_repeats = dir_repeats
         self.dirs_per_repeat = dirs_per_repeat
@@ -400,10 +400,14 @@ class SlicedWDistance(Plugin):
         all_fakes = []
         all_reals = []
         with torch.no_grad():
-            for i in range(self.number_of_batches):
+            current_items = 0
+            while True:
                 fake_latents_in = cudize(self.trainer.random_latents_generator())
                 all_fakes.append(self.trainer.generator(fake_latents_in))
                 all_reals.append(cudize(next(self.trainer.dataiter)))
+                current_items += fake_latents_in.size(0)
+                if current_items >= self.number_of_items:
+                    break
         all_fakes = torch.cat(all_fakes, axis=0)
         all_reals = torch.cat(all_reals, axis=0)
         swd = self.get_descriptors(all_fakes, all_reals)
