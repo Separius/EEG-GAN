@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
 from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance,
-                     EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator)
+                     EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
 from utils import (cudize, random_latents, trainable_params, create_result_subdir, num_params,
                    create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
 
@@ -53,7 +53,8 @@ default_params = dict(
     act_alpha=0.2,
     residual=False,
     sagan_non_local=True,
-    use_factorized_attention=False
+    use_factorized_attention=False,
+    average_conditions=True
 )
 
 
@@ -105,6 +106,7 @@ def main(params):
                                fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                                residual=params['residual'], equalized=params['equalized'],
                                sagan_non_local=params['sagan_non_local'],
+                               average_conditions=params['average_conditions'],
                                factorized_attention=params['use_factorized_attention'],
                                self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
                                num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
@@ -208,6 +210,8 @@ def main(params):
     trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
                                             **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
+    trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))
+    trainer.register_plugin(WatchSingularValues(discriminator, **params['WatchSingularValues']))
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])
@@ -217,7 +221,7 @@ def main(params):
 if __name__ == "__main__":
     parser = ArgumentParser()
     need_arg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, SlicedWDistance,
-                        OutputGenerator, Adam, EfficientLossMonitor, EvalDiscriminator, EEGDataset]
+                        OutputGenerator, Adam, EfficientLossMonitor, EvalDiscriminator, EEGDataset, WatchSingularValues]
     excludes = {'Adam': {'lr', 'amsgrad'}}
     default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
     auto_args = create_params(need_arg_classes, excludes, default_overrides)

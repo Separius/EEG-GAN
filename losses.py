@@ -36,18 +36,21 @@ def calc_grad(x_hat, pred_hat):
                 create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
+# TODO add non saturating loss
+# TODO add mixup
+# TODO add R1
 def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor,
                    loss_type: str, random_multiply: bool, feature_matching_lambda: float = 0.0):
     gen.zero_grad()
-    g_ = gen(z)
-    d_fake, fake_features = dis(g_)
+    g_, _ = gen(z)
+    d_fake, fake_features, _ = dis(g_)
     real_features = None
     scale = random.random() if random_multiply else 1.0
     if loss_type == 'hinge' or loss_type.startswith('wgan'):
         g_loss = -d_fake.mean()
     else:
         with torch.no_grad():
-            d_real, real_features = dis(real)
+            d_real, real_features, _ = dis(real)
         if loss_type == 'rsgan':
             g_loss = F.binary_cross_entropy_with_logits(d_fake - d_real, get_one(d_fake.size(0)))
         elif loss_type == 'rasgan':
@@ -63,19 +66,22 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
     if feature_matching_lambda != 0.0:
         if real_features is None:
             with torch.no_grad():
-                _, real_features = dis(real)
+                _, real_features, _ = dis(real)
         diff = real_features.mean(dim=0) - fake_features.mean(dim=0)
         g_loss = g_loss + (diff * diff).mean()
     return g_loss * scale
 
 
+# TODO add non saturating loss
+# TODO add mixup
+# TODO add R1
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor,
                        loss_type: str, iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
     dis.zero_grad()
-    d_real, _ = dis(real)
+    d_real, _, _ = dis(real)
     with torch.no_grad():
-        g_ = gen(z)
-    d_fake, _ = dis(g_)
+        g_, _ = gen(z)
+    d_fake, _, _ = dis(g_)
     batch_size = d_real.size(0)
     gp_gain = 1.0 if grad_lambda != 0 else 0
     if loss_type == 'hinge':
@@ -107,7 +113,7 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
         min_size = min(g_.size(2), real.size(2))
         x_hat = Variable(alpha * real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
                          requires_grad=True)
-        pred_hat, _ = dis(x_hat)
+        pred_hat, _, _ = dis(x_hat)
         g = calc_grad(x_hat, pred_hat).view(batch_size, -1)
         gp = g.norm(p=2, dim=1) - iwass_target
         if loss_type == 'wgan_theirs':

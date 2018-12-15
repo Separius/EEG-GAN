@@ -1,60 +1,37 @@
 Spectral Norm => NO PIX NORM + NO Scaled
 NO PROGRESSION => RESIDUAL
 BatchNorm + D == bad
+TODOs in the code
 
 condition:
     handle class conditioning data, generator, discriminator, inference
     instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
-attention:
-    output the attention map for visiualization
+    report text as condition?
 plugin:
     picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE
     gif(z1 -> z2)
     gif(const_z over epochs)
-    * imaginary fid, imaginary inception score
-    * SWD gets out of mem + does not write results
-    * monitor max singular value of weights
 Z:
     uses different z chunks for different layers [for each block, uses the same z_chunk]
-sampling:
-    https://github.com/shinseung428/DRS_Tensorflow
-    truncation_tirck (of norm(z) > threshold, resample)
+    per channel noise * learned weight after each conv
+    ConditionalNormFunc(AdaIn, LayerNorm, BatchNorm) * (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0) / None)
+Up/Down:
+    Bilinear instead of NN
 biggan:
-    increase batch size
     increase number of channels by 50%
     2 d iters, 5e-5 lr for G and 2e-4 for D; adam (0, 0.999)
 exp:
     train arl-eeg on a subset
     plot the loss values
-    aggregation graphs (like the eeg paper)
+    aggregation graphs (like the eeg paper) in freq domain
     condition interpolation * Z(*chunks) interpolation
     D(x) as supervised weight
     connection net F(D_intermediate(x)) = z
-    dumb length extension(+ intermediate concatenation)
-    dumb selected sampling(based on D value)
     "one in the batch" conditioning
     240Hz
     more channels
-    multi-conditioning
-    unk one hot or multi hot of options / n
     FID-IS AuC for truncation trick
     G_1(Z) = o1, o2, o3, o4 -> F(o1,o2,o3) = o4
 inception:
-    https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_seizure/v1.4.0/
-        O(14 G)
-        different sizes into 9 classes? + has .lbl file (per channel)
-        v1.4.0/edf/train/03_tcp_ar_a/008/00000883/s003_2010_09_01/00000883_s003_t000.tse
-        label_seconds = {
-            'bckg': 1096377.9117999997,
-            'gnsz': 20566.001400000005,
-            'tcsz': 1716.8315000000002,
-            'fnsz': 40037.60220000003,
-            'tnsz': 414.3747000000001,
-            'cpsz': 24611.84239999999,
-            'absz': 494.86399999999946,
-            'spsz': 1329.6840000000002,
-            'mysz': 1292.888
-        } (sum = 1186841.9999999998, without background = 90464.08820000011 (10%)) ~= 330 Min
     https://www.isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
-        O(30G)
-        two classes based on report file(larger) => like our labels
+        O(30G), two classes based on report file(larger) => like our labels

@@ -2,14 +2,6 @@ import glob
 import pyedflib
 import numpy as np
 from tqdm import tqdm
-from tensorflow.keras.models import Model
-from tensorflow.keras.constraints import max_norm
-from tensorflow.keras.layers import Input, Flatten
-from tensorflow.keras.layers import SpatialDropout2D
-from tensorflow.keras.layers import BatchNormalization
-from tensorflow.keras.layers import Dense, Activation, Dropout
-from tensorflow.keras.layers import Conv2D, AveragePooling2D
-from tensorflow.keras.layers import SeparableConv2D, DepthwiseConv2D
 
 REF_CHANNELS = {'EEG FP1-REF', 'EEG FP2-REF'}
 dataset = []
@@ -24,6 +16,16 @@ for f_name in tqdm(glob.glob('data/normal/v2.0.0/**/*.edf', recursive=True)):
                 break
         if is_ok:
             dataset.append(np.stack([f.readSignal(labels[channel]) for channel in REF_CHANNELS], axis=0))
+
+# TODO creat a network (like chrono-net?) and train it => implement Inception and FID plugins
+from tensorflow.keras.models import Model
+from tensorflow.keras.constraints import max_norm
+from tensorflow.keras.layers import Input, Flatten
+from tensorflow.keras.layers import SpatialDropout2D
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.layers import Dense, Activation, Dropout
+from tensorflow.keras.layers import Conv2D, AveragePooling2D
+from tensorflow.keras.layers import SeparableConv2D, DepthwiseConv2D
 
 
 def eeg_net_keras(nb_classes, chans=64, samples=128, dropout_rate=0.25,

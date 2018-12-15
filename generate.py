@@ -18,6 +18,12 @@ default_params = {
 }
 
 
+# TODO sampling based on D value
+# TODO sampling based on rejection sampling: https://github.com/shinseung428/DRS_Tensorflow
+# TODO sampling with truncation trick: truncation_tirck (of norm(z) > threshold, resample)
+# TODO visualize attention map of G and D
+
+
 def output_samples(generator_path, num_samples):
     G = cudize(load_model(generator_path))  # TODO change to first instantiate a G
     if num_samples < params['max_batch_size']:

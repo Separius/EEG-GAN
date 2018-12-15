@@ -102,8 +102,8 @@ def get_structured_params(params):
 def cudize(thing):
     has_cuda = torch.cuda.is_available()
     if isinstance(thing, (list, tuple)):
-        return [item.cuda() if has_cuda else item for item in thing]
-    return thing.cuda() if has_cuda else thing
+        return [item.cuda(non_blocking=True) if has_cuda else item for item in thing]
+    return thing.cuda(non_blocking=True) if has_cuda else thing
 
 
 def trainable_params(model):

@@ -338,9 +338,8 @@ class TeeLogger(Logger):
         self._log_all('log_epoch_fields')
 
 
-# TODO use this
 class WatchSingularValues(Plugin):
-    def __init__(self, network, one_divided_two: float = 10.0, output_snapshot_ticks: int = 5):
+    def __init__(self, network, one_divided_two: float = 10.0, output_snapshot_ticks: int = 20):
         super().__init__([(1, 'epoch')])
         self.network = network
         self.one_divided_two = one_divided_two
@@ -355,7 +354,7 @@ class WatchSingularValues(Plugin):
         for module in self.network.modules:
             if isinstance(module, torch.nn.Conv1d):
                 weight = module.weight.data.cpu().numpy()
-                _, s, _ = randomized_svd(weight.reshape(weight.shape[0], -1), n_components=3)
+                _, s, _ = randomized_svd(weight.reshape(weight.shape[0], -1), n_components=2)
                 if abs(s[0] / s[1]) > self.one_divided_two:
                     raise ValueError(module)
 
@@ -402,6 +401,7 @@ class SlicedWDistance(Plugin):
         gc.collect()
         all_fakes = []
         all_reals = []
+        # TODO make it more memory efficient
         with torch.no_grad():
             fake_latents_in = cudize(self.trainer.random_latents_generator()[:self.max_items])
             all_fakes.append(self.trainer.generator(fake_latents_in))

@@ -53,9 +53,9 @@ class GBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
-                 sagan_non_local, factorized_attention, to_rgb_mode: str = 'pggan', latent_size: int = 256,
-                 normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul', spectral: bool = False,
-                 act_norm: Optional[str] = 'pixel', no_tanh: bool = False):
+                 sagan_non_local, factorized_attention, average_conditions, to_rgb_mode: str = 'pggan',
+                 latent_size: int = 256, normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul',
+                 spectral: bool = False, act_norm: Optional[str] = 'pixel', no_tanh: bool = False):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
@@ -71,7 +71,7 @@ class Generator(nn.Module):
             latent_size = nf(0)
         self.normalize_latents = normalize_latents
         layer_settings = dict(do=dropout, do_mode=do_mode, num_classes=num_classes,
-                              act_norm=act_norm, act_alpha=act_alpha)
+                              act_norm=act_norm, act_alpha=act_alpha, average_conditions=average_conditions)
         initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, is_residual=residual, spectral=spectral,
@@ -102,9 +102,11 @@ class Generator(nn.Module):
 
     def do_layer(self, l, h, y=None, last=False):
         if l in self.self_attention:
-            h = self.self_attention[l](h)
+            h, attention_map = self.self_attention[l](h)
+        else:
+            attention_map = None
         h = self.upsampler(h)
-        return self.blocks[l](h, y, last)
+        return self.blocks[l](h, y, last), attention_map
 
     def forward(self, z, y=None):
         if self.normalize_latents:
@@ -112,15 +114,18 @@ class Generator(nn.Module):
         h = z.unsqueeze(2)
         h = self.block0(h, y, self.depth == 0)
         if self.depth == 0:
-            return h
+            return h, {}
+        all_attention_maps = {}
         for i in range(self.depth - 1):
-            h = self.do_layer(i, h, y)
+            h, attention_map = self.do_layer(i, h, y)
+            if attention_map is not None:
+                all_attention_maps[i] = attention_map
         h = self.upsampler(h)
         ult = self.blocks[self.depth - 1](h, y, True)
         if self.alpha == 1.0:
-            return ult
+            return ult, all_attention_maps
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
-        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha
+        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha, all_attention_maps
 
 
 class DBlock(nn.Module):
@@ -162,8 +167,8 @@ class DBlock(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
                  self_attention_layers, num_classes, progression_scale, init, act_alpha, residual, sagan_non_local,
-                 factorized_attention, sngan_rgb: bool = False, dropout: float = 0.2, do_mode: str = 'mul',
-                 spectral: bool = False, act_norm: Optional[str] = None, group_size: int = 4):
+                 factorized_attention, average_conditions, sngan_rgb: bool = False, dropout: float = 0.2,
+                 do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = None, group_size: int = 4):
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
         resolution = dataset_shape[-1]
@@ -194,7 +199,7 @@ class Discriminator(nn.Module):
                                             spectral=spectral, init=init, sngan_rgb=sngan_rgb, **layer_settings) for i
                                      in range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
-            self.class_emb = nn.EmbeddingBag(num_classes, nf(initial_size - 2))
+            self.class_emb = nn.Linear(num_classes, nf(initial_size - 2), False)
             if spectral:
                 self.class_emb = spectral_norm(self.class_emb)
         else:
@@ -205,6 +210,7 @@ class Discriminator(nn.Module):
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
         self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
+        self.average_conditions = average_conditions
 
     def set_gamma(self, new_gamma):
         for self_attention_layer in self.self_attention.values():
@@ -219,13 +225,19 @@ class Discriminator(nn.Module):
                 xlowres = self.downsampler(xhighres)
                 preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
                 h = h * self.alpha + (1 - self.alpha) * preult_rgb
+        all_attention_maps = {}
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
                 h = self.downsampler(h)
             if (i - 2) in self.self_attention:
-                h = self.self_attention[i - 2](h)
+                h, attention_map = self.self_attention[i - 2](h)
+                if attention_map is not None:
+                    all_attention_maps[i] = attention_map
         o = self.linear(h).mean(dim=2).squeeze()
-        if y:
-            o = o + F.sum(self.class_emb(y) * h, axis=1).mean(dim=2)
-        return o, h
+        if y is not None and self.class_emb:
+            emb = self.class_emb(y)
+            if self.average_conditions:
+                emb = emb / y.sum(dim=1, keepdim=True)
+            o = o + F.sum(emb * h, axis=1).mean(dim=2)
+        return o, h, all_attention_maps

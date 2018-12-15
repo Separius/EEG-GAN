@@ -11,7 +11,7 @@ DATASET_VERSION = 1
 
 
 class EEGDataset(Dataset):
-    # TODO conditional DB
+    # TODO conditional DB: for each session you would have a meta info file, list of 0(not present) and 1 + 1/n for unk
     def __init__(self, given_data, dir_path: str = './data/tuh1', seq_len: int = 512, stride: float = 0.25,
                  num_channels: int = 5, per_user_normalization: bool = True, dataset_freq: int = 80,
                  progression_scale: int = 2, num_files: int = 12518, per_channel_normalization: bool = False,

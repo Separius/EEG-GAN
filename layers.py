@@ -62,7 +62,6 @@ class GDropLayer(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    # TODO output the attention map
     def __init__(self, channels_in, sagan=True, spectral=True, factorized_attention=False, init='xavier_uniform'):
         super().__init__()
         d_key = max(channels_in // 8, 2)
@@ -90,12 +89,14 @@ class SelfAttention(nn.Module):
         value = self.pooling(self.value_conv(x))  # BC/2T[/2]
         if not self.factorized_attention:
             out = F.softmax(torch.bmm(key.permute(0, 2, 1), query) / self.scale, dim=1)  # Bnormed(T[/2])T
+            attention_map = out
             out = torch.bmm(value, out)  # BC/2T
         else:
             out = torch.bmm(value, F.softmax(key.permute(0, 2, 1), dim=2))  # BC/2C/8
+            attention_map = None
             out = torch.bmm(out, F.softmax(query, dim=2)) / self.scale  # BC/2T
         out = self.final_conv(out)  # BCT
-        return self.gamma * out + x
+        return self.gamma * out + x, attention_map
 
 
 class MinibatchStddev(nn.Module):
@@ -115,7 +116,7 @@ class MinibatchStddev(nn.Module):
 
 
 class ConditionalGeneralNorm(nn.Module):
-    def __init__(self, num_features, num_classes, norm_class):
+    def __init__(self, norm_class, num_features, num_classes, average, spectral):
         super().__init__()
         if num_classes == 0:
             self.normalizer = norm_class(num_features)
@@ -123,29 +124,35 @@ class ConditionalGeneralNorm(nn.Module):
         else:
             self.num_features = num_features
             self.normalizer = norm_class(num_features, affine=False)
-            self.embed = nn.Embedding(num_classes, num_features * 2)
-            self.embed.weight.data[:, :num_features].normal_(1, 0.02)
-            self.embed.weight.data[:, num_features:].zero_()
+            self.embed = nn.Linear(num_classes, num_features * 2, False)
+            self.embed.weight.data[:num_features, :].normal_(1, 0.02)
+            self.embed.weight.data[num_features:, :].zero_()
+            if spectral:
+                self.embed = spectral_norm(self.embed)
+            self.average = average
 
     def forward(self, x, y=None):
         out = self.normalizer(x)
         if self.embed is None or y is None:
             return out
-        gamma, beta = self.embed(y).chunk(2, dim=1)
+        embed = self.embed(y)
+        if self.average:
+            embed = embed / y.sum(dim=1, keepdim=True)
+        gamma, beta = embed.chunk(2, dim=1)
         return gamma.view(-1, self.num_features, 1) * out + beta.view(-1, self.num_features, 1)
 
 
 class ConditionalBatchNorm(ConditionalGeneralNorm):
-    def __init__(self, num_features, num_classes):
-        super().__init__(num_features, num_classes, nn.BatchNorm1d)
+    def __init__(self, *args, **kwargs):
+        super().__init__(nn.BatchNorm1d, *args, **kwargs)
 
 
 class ConditionalLayerNorm(ConditionalGeneralNorm):
-    def __init__(self, num_features, num_classes):
+    def __init__(self, *args, **kwargs):
         def norm_class(*args, **kwargs):
             return nn.GroupNorm(1, *args, **kwargs)
 
-        super().__init__(num_features, num_classes, norm_class)
+        super().__init__(norm_class, *args, **kwargs)
 
 
 class EqualizedConv1d(nn.Module):
@@ -168,7 +175,7 @@ class EqualizedConv1d(nn.Module):
         else:
             self.scale = ((torch.mean(self.conv.weight.data ** 2)) ** 0.5).item()
         self.conv.weight.data.copy_(self.conv.weight.data / self.scale)
-        if spectral:  # TODO should I do this here or before the initialization?
+        if spectral:
             self.conv = spectral_norm(self.conv)
 
     def forward(self, x):
@@ -177,16 +184,17 @@ class EqualizedConv1d(nn.Module):
 
 class GeneralConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True):
+                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True,
+                 average_conditions=True):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
                                equalized=equalized, init=init, act_alpha=act_alpha, bias=bias)
         norm = None
         if act_norm == 'layer':
-            norm = ConditionalLayerNorm(out_channels, num_classes)
+            norm = ConditionalLayerNorm(out_channels, num_classes, average_conditions, spectral)
         elif act_norm == 'batch':
-            norm = ConditionalBatchNorm(out_channels, num_classes)
+            norm = ConditionalBatchNorm(out_channels, num_classes, average_conditions, spectral)
         self.conv = conv
         self.norm = norm
         self.net = []
