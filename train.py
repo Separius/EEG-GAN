@@ -45,7 +45,6 @@ default_params = dict(
     equalized=True,
     kernel_size=3,
     self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
-    num_classes=0,  # TODO handle class conditioning data, generator, discriminator, inference
     random_multiply=False,
     lr_rampup_kimg=0.0,  # set to 0 to disable (used to be 40)
     validation_ratio=0.0,  # set to 0.0 to disable
@@ -55,7 +54,8 @@ default_params = dict(
     residual=False,
     sagan_non_local=True,
     use_factorized_attention=False,
-    average_conditions=True
+    average_conditions=True,
+    one_hot_probability=0.8
 )
 
 
@@ -101,6 +101,7 @@ def main(params):
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
     stats_to_log.extend(['swd.val', 'swd.epoch'])
 
+    num_classes = 0 if dataset.class_options is None else sum(dataset.class_options)
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
                                fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
@@ -110,7 +111,7 @@ def main(params):
                                average_conditions=params['average_conditions'],
                                factorized_attention=params['use_factorized_attention'],
                                self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
-                               num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
+                               num_classes=num_classes, progression_scale=dataset.progression_scale)
     for n in ('Generator', 'Discriminator'):
         p = params[n]
         if p['spectral']:
@@ -203,7 +204,11 @@ def main(params):
                           drop_last=True)
 
     def get_random_latents(bs):
-        return partial(random_latents, num_latents=bs, latent_size=latent_size, z_distribution=params['z_distribution'])
+        def partial_function():
+            return {'z': random_latents(bs, latent_size, params['z_distribution']),
+                    'y': dataset.generate_class_condition(bs, params['one_hot_probability'])}
+
+        return partial_function
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, sched_g, sched_d, **params['Trainer'])
@@ -215,8 +220,8 @@ def main(params):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: random_latents(x, latent_size, params['z_distribution']), result_dir, dataset.seq_len,
-                        dataset.dataset_freq, dataset.seq_len, **params['OutputGenerator']))
+        OutputGenerator(lambda x: get_random_latents(x)(), result_dir, dataset.seq_len, dataset.dataset_freq,
+                        dataset.seq_len, **params['OutputGenerator']))
     if params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
     trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],

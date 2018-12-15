@@ -239,7 +239,7 @@ class EvalDiscriminator(Plugin):
         values = []
         with torch.no_grad():
             for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
-                d_real, _ = self.trainer.discriminator(data)
+                d_real, _, _ = self.trainer.discriminator(cudize(data))
                 values.append(d_real.mean().item())
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
@@ -307,7 +307,7 @@ class OutputGenerator(Plugin):
             avg_p.mul_(self.old_weight).add_((1.0 - self.old_weight) * p.data)
         if epoch_index % self.output_snapshot_ticks == 0:
             z = self.sample_fn(self.samples_count)
-            gen_input = cudize(Variable(z))
+            gen_input = cudize(z)
             original_param = self.flatten_params(self.trainer.generator)
             self.load_params(self.my_g_clone, self.trainer.generator)
             dest = os.path.join(self.checkpoints_dir, SaverPlugin.last_pattern.format('smooth_generator',
@@ -405,7 +405,7 @@ class SlicedWDistance(Plugin):
         with torch.no_grad():
             fake_latents_in = cudize(self.trainer.random_latents_generator()[:self.max_items])
             all_fakes.append(self.trainer.generator(fake_latents_in))
-            all_reals.append(cudize(next(self.trainer.dataiter)[:self.max_items]))
+            all_reals.append(cudize(next(self.trainer.dataiter)['x'][:self.max_items]))
         all_fakes = torch.cat(all_fakes, dim=0)
         all_reals = torch.cat(all_reals, dim=0)
         swd = self.get_descriptors(all_fakes, all_reals)

@@ -100,9 +100,13 @@ def get_structured_params(params):
 
 
 def cudize(thing):
+    if thing is None:
+        return None
     has_cuda = torch.cuda.is_available()
     if isinstance(thing, (list, tuple)):
         return [item.cuda(non_blocking=True) if has_cuda else item for item in thing]
+    if isinstance(thing, dict):
+        return {k: v.cuda(non_blocking=True) for k, v in thing.items()}
     return thing.cuda(non_blocking=True) if has_cuda else thing
 
 

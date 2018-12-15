@@ -52,7 +52,6 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     # TODO instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
-    # TODO uses different z chunks for different layers [for each block, uses the same z_chunk]
     # TODO per channel noise * learned weight after each conv
     # TODO ConditionalNormFunc(AdaIn, LayerNorm, BatchNorm) * (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0) / None)
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
@@ -114,6 +113,10 @@ class Generator(nn.Module):
         return self.blocks[l](h, y, last), attention_map
 
     def forward(self, z, y=None):
+        if isinstance(z, tuple):
+            z, y = z
+        if isinstance(z, dict):
+            z, y = z['z'], z['y']
         if self.normalize_latents:
             z = pixel_norm(z)
         h = z.unsqueeze(2)
@@ -224,6 +227,10 @@ class Discriminator(nn.Module):
             self_attention_layer.gamma = new_gamma
 
     def forward(self, x, y=None):
+        if isinstance(x, tuple):
+            x, y = x
+        if isinstance(x, dict):
+            x, y = x['x'], x['y']
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:

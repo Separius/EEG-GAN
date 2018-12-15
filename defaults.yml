@@ -20,7 +20,6 @@ fmap_min: 64
 equalized: true
 kernel_size: 3
 self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
-num_classes: 0
 random_multiply: false
 lr_rampup_kimg: 0.0 # used to be 40
 validation_ratio: 0.0
@@ -31,6 +30,7 @@ residual: false
 sagan_non_local: true
 use_factorized_attention: false
 average_conditions: true
+one_hot_probability: 0.8
 
 Trainer:
   d_training_repeats: 1

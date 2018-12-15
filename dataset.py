@@ -4,14 +4,13 @@ import glob
 import torch
 import numpy as np
 from tqdm import trange
-from utils import load_pkl, save_pkl
 from torch.utils.data import Dataset
+from utils import load_pkl, save_pkl, EPSILON
 
 DATASET_VERSION = 1
 
 
 class EEGDataset(Dataset):
-    # TODO conditional DB: for each session you would have a meta info file, list of 0(not present) and 1 + 1/n for unk
     # TODO 240Hz; 21 channels; isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/; no cleansing
     def __init__(self, given_data, dir_path: str = './data/tuh1', seq_len: int = 512, stride: float = 0.25,
                  num_channels: int = 5, per_user_normalization: bool = True, dataset_freq: int = 80,
@@ -32,6 +31,7 @@ class EEGDataset(Dataset):
         self.dataset_freq = dataset_freq
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
+        self.y, self.class_options = self.read_meta_info(os.path.join(dir_path, 'meta.info'))
         if given_data is not None:
             self.sizes = given_data[0]
             self.data_pointers = given_data[1]
@@ -67,6 +67,39 @@ class EEGDataset(Dataset):
         self.data_pointers = [(i, j) for i, s in enumerate(self.sizes) for j in range(s)]
         if not per_user_normalization:
             self.normalize_all()
+
+    def generate_class_condition(self, batch_size, one_hot_probability=0.8):
+        if self.y is None:
+            return None
+        res = np.zeros((batch_size, len(self.y[0])), dtype=np.float32)
+        start_index = 0
+        for num_options in self.class_options:
+            normalized = np.random.uniform(EPSILON, 1, (batch_size, num_options))
+            normalized /= normalized.sum(axis=1, keepdims=True)
+            res[:, start_index:start_index + num_options] = np.where(
+                np.random.uniform(0, 1, (batch_size, num_options)) > one_hot_probability, normalized,
+                np.eye(num_options)[np.random.choice(num_options, batch_size)])
+            start_index += num_options
+        return torch.from_numpy(res)
+
+    @staticmethod
+    def read_meta_info(file_name):
+        if not os.path.exists(file_name):
+            return None, None
+        # example:
+        # 3,2,2
+        # 0.33,0.33,0.34,1,0,0,1
+        attributes = []
+        num_values = None
+        first_line = True
+        with open(file_name) as f:
+            for line in f:
+                if first_line:
+                    num_values = [int(p) for p in line.split(',')]
+                    first_line = False
+                    continue
+                attributes.append(np.array([float(p) for p in line.split(',')], dtype=np.float32))
+        return np.stack(attributes, axis=0), num_values
 
     @classmethod
     def from_config(cls, dir_path: str, seq_len: int, stride: float, num_channels: int, per_user_normalization: bool,
@@ -149,7 +182,8 @@ class EEGDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
-        return torch.from_numpy(datapoint.astype(np.float32))
+        return {'x': torch.from_numpy(datapoint.astype(np.float32)),
+                'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
 
     def alpha_fade(self, datapoint):
         if self.alpha == 1:

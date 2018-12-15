@@ -4,7 +4,6 @@ from network import Generator, Discriminator
 
 
 class Trainer(object):
-
     # TODO d_training_repeats = 2, TTUR = TRUE (BIG-GAN)
     def __init__(self, discriminator: Discriminator, generator: Generator, d_loss, g_loss, dataset,
                  random_latents_generator, resume_nimg, optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d,
@@ -85,12 +84,14 @@ class Trainer(object):
             if self.lr_scheduler_d is not None:
                 self.lr_scheduler_d.step(self.cur_nimg)
             real_images_expr = cudize(next(self.dataiter))
-            self.cur_nimg += real_images_expr.size(0)
-            d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
+            self.cur_nimg += real_images_expr['x'].size(0)
+            d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr['x'], fake_latents_in['z'],
+                                 real_images_expr['y'], fake_latents_in['y'])
             d_loss.backward()
             self.optimizer_d.step()
             fake_latents_in = cudize(self.random_latents_generator())
-        g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
+        g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr['x'], fake_latents_in['z'],
+                             real_images_expr['y'], fake_latents_in['y'])
         g_loss.backward()
         self.optimizer_g.step()
         self.iterations += 1

@@ -35,6 +35,7 @@ def output_samples(generator_path, num_samples):
     if num_samples < params['max_batch_size']:
         params['max_batch_size'] = num_samples
     outputs = []
+    # TODO class condition by instantiating a DataSet
     for i in trange(int(math.ceil(num_samples / params['max_batch_size']))):
         outputs.append(generate_samples(G, cudize(
             Variable(random_latents(params['max_batch_size'], G.latent_size, G.z_distribution)))))
