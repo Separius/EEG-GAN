@@ -22,6 +22,12 @@ default_params = {
 # TODO sampling based on rejection sampling: https://github.com/shinseung428/DRS_Tensorflow
 # TODO sampling with truncation trick: truncation_tirck (of norm(z) > threshold, resample)
 # TODO visualize attention map of G and D
+# TODO picture: top_generated, bottom 5 nearest neighbors in feature_space of D / feature_space of Inception / MSE(time) / MSE(freq)
+# TODO gif(z1 -> z2)
+# TODO gif(const_z over epochs)
+# TODO aggregation graphs (like the eeg paper) in freq domain
+# TODO condition interpolation * Z(*chunks) interpolation
+# TODO FID-IS AuC for truncation trick
 
 
 def output_samples(generator_path, num_samples):

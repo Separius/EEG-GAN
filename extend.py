@@ -3,6 +3,8 @@ import torch
 from utils import cudize, enable_benchmark, load_model, save_pkl, simple_argparser
 
 
+# TODO G_1(Z) = o1, o2, o3, o4 -> F(o1,o2,o3) = o4 and H(o2, o3, o4) = o1
+
 def run_static(gen, disc, pop_size=128, stage=3, ratio=0.95, y=None):
     latent_size = gen.latent_size
     # TODO it should be based on z_distribution

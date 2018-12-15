@@ -51,6 +51,10 @@ class GBlock(nn.Module):
 
 
 class Generator(nn.Module):
+    # TODO instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
+    # TODO uses different z chunks for different layers [for each block, uses the same z_chunk]
+    # TODO per channel noise * learned weight after each conv
+    # TODO ConditionalNormFunc(AdaIn, LayerNorm, BatchNorm) * (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0) / None)
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
                  sagan_non_local, factorized_attention, average_conditions, to_rgb_mode: str = 'pggan',
@@ -92,6 +96,7 @@ class Generator(nn.Module):
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         self.progression_scale = progression_scale
+        # TODO use bilinear
         self.upsampler = partial(F.interpolate, size=None, mode='linear',
                                  align_corners=True, scale_factor=progression_scale)
         self.z_distribution = z_distribution
@@ -165,6 +170,7 @@ class DBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
+    # TODO "one in the batch" conditioning (remember to disable stats)
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
                  self_attention_layers, num_classes, progression_scale, init, act_alpha, residual, sagan_non_local,
                  factorized_attention, average_conditions, sngan_rgb: bool = False, dropout: float = 0.2,
@@ -209,6 +215,7 @@ class Discriminator(nn.Module):
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
+        # TODO use bilinear
         self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
         self.average_conditions = average_conditions
 

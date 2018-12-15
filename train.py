@@ -38,13 +38,14 @@ default_params = dict(
     cuda_device=0,
     ttur=True,
     config_file=None,
+    # TODO increase number of channels by 50% (BIG-GAN)
     fmap_base=1024,
     fmap_max=256,
     fmap_min=64,
     equalized=True,
     kernel_size=3,
     self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
-    num_classes=0,
+    num_classes=0,  # TODO handle class conditioning data, generator, discriminator, inference
     random_multiply=False,
     lr_rampup_kimg=0.0,  # set to 0 to disable (used to be 40)
     validation_ratio=0.0,  # set to 0.0 to disable
@@ -110,6 +111,17 @@ def main(params):
                                factorized_attention=params['use_factorized_attention'],
                                self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
                                num_classes=params['num_classes'], progression_scale=dataset.progression_scale)
+    for n in ('Generator', 'Discriminator'):
+        p = params[n]
+        if p['spectral']:
+            if p['act_norm'] == 'pixel':
+                logger.log('Warning, setting pixel normalization with spectral norm in {} is not a good idea'.format(n))
+            if params['equalized']:
+                logger.log('Warning, setting equalized weights with spectral norm in {} is not a good idea'.format(n))
+    if params['DepthManager']['disable_progression'] and not params['residual']:
+        logger.log('Warning, you have set the residual to false and disabled the progression')
+    if params['Discriminator']['act_norm'] is not None:
+        logger.log('Warning, you are using an activation normalization in discriminator')
     generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
     discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
 
@@ -124,7 +136,7 @@ def main(params):
         d_lr = g_lr
         if params['ttur']:
             d_lr *= 4.0
-            params['Adam']['betas'] = (0, 0.9)
+            params['Adam']['betas'] = (0, 0.9)  # TODO BIG-GAN uses 0.999
         opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
         opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
         if params['lr_rampup_kimg'] > 0:
@@ -134,7 +146,7 @@ def main(params):
         return opt_g, opt_d, None, None
 
     if params['resume_network'] != '':
-        print('resuming networks')
+        logger.log('resuming networks')
         generator_state, opt_g_state, discriminator_state, opt_d_state, train_cur_img = load_models(
             params['resume_network'], params['result_dir'], logger)
         generator.load_state_dict(generator_state)
