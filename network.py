@@ -1,4 +1,5 @@
 import math
+import torch
 from torch import nn
 from typing import Optional
 from utils import pixel_norm
@@ -10,7 +11,7 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh
 
 class GBlock(nn.Module):
     def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True,
-                 initial_kernel_size=None, is_residual=False, no_tanh=False,
+                 initial_kernel_size=None, is_residual=False, no_tanh=False, per_channel_noise=False,
                  spectral=False, to_rgb_mode='pggan', init='kaiming_normal', **layer_settings):
         super().__init__()
         is_first = initial_kernel_size is not None
@@ -19,6 +20,11 @@ class GBlock(nn.Module):
                               pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
         self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize,
                               spectral=spectral, init=init, **layer_settings)
+        if per_channel_noise:
+            self.c1_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
+            self.c2_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
+        else:
+            self.c1_noise_weight, self.c1_noise_weight = None, None
         if to_rgb_mode == 'pggan':
             to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1,
                                  equalized=equalized, spectral=spectral, init=init)
@@ -42,7 +48,10 @@ class GBlock(nn.Module):
             self.residual = None
 
     def forward(self, x, y=None, last=False):
-        h = self.c2(self.c1(x, y), y)
+        c1 = self.c1(x, y, None if self.c1_noise_weight is None else torch.random.randn(
+            *self.c1_noise_weight.size()) * self.c1_noise_weight)
+        h = self.c2(c1, y, None if self.c2_noise_weight is None else torch.random.randn(
+            *self.c2_noise_weight.size()) * self.c2_noise_weight)
         if last:
             return self.toRGB(h)
         if self.residual is not None:
@@ -52,13 +61,13 @@ class GBlock(nn.Module):
 
 class Generator(nn.Module):
     # TODO instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
-    # TODO per channel noise * learned weight after each conv
-    # TODO ConditionalNormFunc(AdaIn, LayerNorm, BatchNorm) * (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0) / None)
+    # TODO (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0))
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
                  sagan_non_local, factorized_attention, average_conditions, to_rgb_mode: str = 'pggan',
                  latent_size: int = 256, normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul',
-                 spectral: bool = False, act_norm: Optional[str] = 'pixel', no_tanh: bool = False):
+                 spectral: bool = False, act_norm: Optional[str] = 'pixel', no_tanh: bool = False,
+                 per_channel_noise=False):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
@@ -78,7 +87,8 @@ class Generator(nn.Module):
         initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, is_residual=residual, spectral=spectral,
-                             no_tanh=no_tanh, to_rgb_mode=to_rgb_mode, init=init, **layer_settings)
+                             no_tanh=no_tanh, to_rgb_mode=to_rgb_mode, init=init, per_channel_noise=per_channel_noise,
+                             **layer_settings)
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
@@ -88,14 +98,13 @@ class Generator(nn.Module):
         self.blocks = nn.ModuleList([GBlock(nf(i - initial_size + 1), nf(i - initial_size + 2), num_channels,
                                             ksize=kernel_size, equalized=equalized, is_residual=residual,
                                             spectral=spectral, no_tanh=no_tanh, to_rgb_mode=to_rgb_mode,
-                                            init=init, **layer_settings)
+                                            init=init, per_channel_noise=per_channel_noise, **layer_settings)
                                      for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         self.progression_scale = progression_scale
-        # TODO use bilinear
         self.upsampler = partial(F.interpolate, size=None, mode='linear',
                                  align_corners=True, scale_factor=progression_scale)
         self.z_distribution = z_distribution
@@ -218,7 +227,6 @@ class Discriminator(nn.Module):
         self.depth = 0
         self.alpha = 1.0
         self.max_depth = len(self.blocks) - 1
-        # TODO use bilinear
         self.downsampler = nn.AvgPool1d(kernel_size=progression_scale)
         self.average_conditions = average_conditions
 

@@ -36,9 +36,6 @@ def calc_grad(x_hat, pred_hat):
                 create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
-# TODO add non saturating loss
-# TODO add mixup
-# TODO add R1, gamma = 10
 def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor, real_label, z_label,
                    loss_type: str, random_multiply: bool, feature_matching_lambda: float = 0.0):
     gen.zero_grad()
@@ -72,9 +69,6 @@ def generator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tenso
     return g_loss * scale
 
 
-# TODO add non saturating loss
-# TODO add mixup
-# TODO add R1
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.tensor, z: torch.tensor, real_label,
                        z_label, loss_type: str, iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
     dis.zero_grad()

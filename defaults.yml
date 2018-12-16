@@ -45,6 +45,7 @@ Generator:
   spectral: false
   act_norm: 'pixel' # pixel, batch, layer, None
   no_tanh: false
+  per_channel_noise: false
 
 Discriminator:
   sngan_rgb: false

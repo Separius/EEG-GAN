@@ -209,10 +209,13 @@ class GeneralConv(nn.Module):
             self.net.append(GDropLayer(strength=do, mode=do_mode))
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, x, y=None, *args, **kwargs):
+    def forward(self, x, y=None, z=None, *args, **kwargs):
+        c = self.conv(x)
+        if z is not None:
+            c = c * z
         if self.norm:
-            return self.net(self.norm(self.conv(x), y))
-        return self.net(self.conv(x))
+            c = self.norm(c, y)
+        return self.net(c)
 
     def __repr__(self):
         param_str = '(conv = {}, norm = {})'.format(self.conv.conv, self.norm)
