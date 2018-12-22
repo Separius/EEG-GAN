@@ -236,7 +236,8 @@ class EvalDiscriminator(Plugin):
             return
         values = []
         with torch.no_grad():
-            for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False):
+            for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False,
+                                                   self.trainer.dataset.model_depth, self.trainer.dataset.alpha):
                 d_real, _, _ = self.trainer.discriminator(cudize(data))
                 values.append(d_real.mean().item())
         values = np.array(values).mean()

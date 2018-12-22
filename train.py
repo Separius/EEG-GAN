@@ -46,7 +46,6 @@ default_params = dict(
     self_attention_layers=[],  # starts from 0 or null (for G it means putting it after ith layer)
     random_multiply=False,
     lr_rampup_kimg=0.0,  # set to 0 to disable (used to be 40)
-    validation_ratio=0.0,  # set to 0.0 to disable
     z_distribution='normal',  # or 'bernoulli' or 'censored'
     init='kaiming_normal',  # or xavier_uniform or orthogonal
     act_alpha=0.2,
@@ -54,7 +53,8 @@ default_params = dict(
     sagan_non_local=True,
     use_factorized_attention=False,
     average_conditions=True,
-    one_hot_probability=0.8
+    one_hot_probability=0.8,
+    dataset_freq=80,
 )
 
 
@@ -85,7 +85,7 @@ def worker_init(x):
 
 def main(params):
     dataset_params = params['EEGDataset']
-    dataset = EEGDataset.from_config(**dataset_params)
+    dataset, val_dataset = EEGDataset.from_config(**dataset_params)
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
@@ -96,7 +96,7 @@ def main(params):
     if len(params['self_attention_layers']) != 0:
         stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
-    if params['validation_ratio'] > 0:
+    if dataset_params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
     stats_to_log.extend(['swd.val', 'swd.epoch'])
 
@@ -183,21 +183,20 @@ def main(params):
         logger.log('commit hash: {}'.format(subprocess.check_output(['git', 'describe', '--always']).strip()))
     except:
         logger.log('current time: {}'.format(time.time()))
-    logger.log('dataset shape: {}'.format(dataset.shape))
+    logger.log('training dataset shape: {}'.format(dataset.shape))
+    if dataset_params['validation_ratio'] > 0:
+        logger.log('val dataset shape: {}'.format(val_dataset.shape))
     logger.log('Total number of parameters in Generator: {}'.format(num_params(generator)))
     logger.log('Total number of parameters in Discriminator: {}'.format(num_params(discriminator)))
 
     mb_def = params['DepthManager']['minibatch_default']
-    dataset_len = len(dataset)
-    train_idx = list(range(dataset_len))
-    np.random.shuffle(train_idx)
 
-    train_idx, val_idx = train_idx[int(dataset_len * params['validation_ratio']):], train_idx[:int(
-        dataset_len * params['validation_ratio'])]
-
-    def get_dataloader(minibatch_size, is_training=True):
-        return DataLoader(dataset, minibatch_size,
-                          sampler=InfiniteRandomSampler(train_idx) if is_training else SubsetRandomSampler(val_idx),
+    def get_dataloader(minibatch_size, is_training=True, depth=0, alpha=1):
+        ds = dataset if is_training else val_dataset
+        if not is_training:
+            ds.model_depth = depth
+            ds.alpha = alpha
+        return DataLoader(ds, minibatch_size, sampler=InfiniteRandomSampler(list(range(len(ds)))),
                           worker_init_fn=worker_init, num_workers=params['num_data_workers'], pin_memory=False,
                           drop_last=True)
 
@@ -218,15 +217,17 @@ def main(params):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: get_random_latents(x)(), result_dir, dataset.seq_len, dataset.dataset_freq,
+        OutputGenerator(lambda x: get_random_latents(x)(), result_dir, dataset.seq_len, params['dataset_freq'],
                         dataset.seq_len, **params['OutputGenerator']))
     if params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
     trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
                                             **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
-    trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))
-    trainer.register_plugin(WatchSingularValues(discriminator, **params['WatchSingularValues']))
+    if params['Generator']['spectral']:
+        trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))
+    if params['Discriminator']['spectral']:
+        trainer.register_plugin(WatchSingularValues(discriminator, **params['WatchSingularValues']))
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])

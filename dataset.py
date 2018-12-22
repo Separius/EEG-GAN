@@ -3,19 +3,18 @@ import math
 import glob
 import torch
 import numpy as np
-from tqdm import trange
+from random import shuffle
+from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from utils import load_pkl, save_pkl, EPSILON
 
-DATASET_VERSION = 1
+DATASET_VERSION = 2
 
 
 class EEGDataset(Dataset):
-    # TODO 240Hz; 21 channels; isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
-    # TODO correct validation set (normalization uses all) + session based validation
-    def __init__(self, given_data, dir_path: str = './data/tuh1', seq_len: int = 512, stride: float = 0.25,
-                 num_channels: int = 5, per_user_normalization: bool = True, dataset_freq: int = 80,
-                 progression_scale: int = 2, num_files: int = 12518, per_channel_normalization: bool = False,
+    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
+                 seq_len: int = 512, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
+                 progression_scale: int = 2, per_channel_normalization: bool = False,
                  model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
         super().__init__()
         self.model_depth = 0
@@ -26,24 +25,36 @@ class EEGDataset(Dataset):
         self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
-        self.max_freq = dataset_freq
         self.per_user_normalization = per_user_normalization
         self.per_channel_normalization = per_channel_normalization
-        self.dataset_freq = dataset_freq
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.y, self.class_options = self.read_meta_info(os.path.join(dir_path, 'meta.info'))
+        self.norms = norms
         if given_data is not None:
-            self.sizes = given_data[0]
-            self.data_pointers = given_data[1]
-            self.datas = [given_data[2]['arr_{}'.format(i)] for i in trange(len(given_data[2].keys()))]
+            self.sizes = given_data[0]['sizes']
+            self.files = given_data[0]['files']
+            self.norms = given_data[0]['norms']
+            self.data_pointers = given_data[0]['pointers']
+            self.datas = [given_data[1]['arr_{}'.format(i)] for i in trange(len(given_data[1].keys()))]
+            if self.y is not None:
+                self.y = [self.y[i] for i in self.files]
             return
         all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
-        num_files = min(len(all_files), num_files)
+        files = len(all_files)
+        files = [i for i in range(files)]
+        if train_files is None:
+            shuffle(files)
+            files = files[:int(len(all_files) * (1.0 - validation_ratio))]
+        else:
+            files = list(set(files) - set(train_files))
+        if self.y is not None:
+            self.y = [self.y[i] for i in files]
+        self.files = files
         sizes = []
         num_points = []
         self.datas = []
-        for i in trange(num_files):
+        for i in tqdm(files):
             is_ok = True
             for j in range(num_channels):
                 with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
@@ -88,53 +99,64 @@ class EEGDataset(Dataset):
         if not os.path.exists(file_name):
             return None, None
         # example:
-        # 3,2,2
-        # 0.33,0.33,0.34,1,0,0,1
+        # 3 2 2
+        # 0.33 0.33 0.34 1 0 0 1
         attributes = []
         num_values = None
         first_line = True
         with open(file_name) as f:
             for line in f:
                 if first_line:
-                    num_values = [int(p) for p in line.split(',')]
+                    num_values = [int(p) for p in line.split()]
                     first_line = False
                     continue
-                attributes.append(np.array([float(p) for p in line.split(',')], dtype=np.float32))
+                attributes.append(np.array([float(p) for p in line.split()], dtype=np.float32))
         return np.stack(attributes, axis=0), num_values
 
     @classmethod
-    def from_config(cls, dir_path: str, seq_len: int, stride: float, num_channels: int, per_user_normalization: bool,
-                    dataset_freq: int, progression_scale: int, model_dataset_depth_offset: int, num_files: int,
+    def from_config(cls, validation_ratio: float, dir_path: str, seq_len: int, stride: float, num_channels: int,
+                    per_user_normalization: bool, progression_scale: int, model_dataset_depth_offset: int,
                     per_channel_normalization: bool):
-        target_location = os.path.join(dir_path,
-                                       '{}l_{}c_{}p_{}o_{}m_{}v.npz'.format(seq_len, num_channels, progression_scale,
-                                                                            model_dataset_depth_offset,
-                                                                            per_user_normalization * 2 + per_channel_normalization * 1,
-                                                                            DATASET_VERSION))
-        if os.path.exists(target_location):
-            print('loading dataset from file')
-            given_data = np.load(target_location)
-            given_data = [load_pkl(target_location + '_sizes.pkl'), load_pkl(target_location + '_pointers.pkl'),
-                          given_data]
-        else:
-            print('creating dataset from scratch')
-            given_data = None
-        dataset = cls(given_data, dir_path, seq_len, stride, num_channels, per_user_normalization,
-                      dataset_freq, progression_scale, num_files, per_channel_normalization, model_dataset_depth_offset)
-        if given_data is None:
-            np.savez_compressed(target_location, *dataset.datas)
-            save_pkl(target_location + '_sizes.pkl', dataset.sizes)
-            save_pkl(target_location + '_pointers.pkl', dataset.data_pointers)
-        return dataset
+        mode = per_user_normalization * 2 + per_channel_normalization * 1
+        train_files = None
+        train_norms = None
+        datasets = [None, None]
+        for index, split in enumerate(('train', 'val')):
+            target_location = os.path.join(dir_path,
+                                           '{}%_{}l_{}c_{}p_{}o_{}m_{}v_{}.npz'.format(validation_ratio, seq_len,
+                                                                                       num_channels, progression_scale,
+                                                                                       model_dataset_depth_offset, mode,
+                                                                                       DATASET_VERSION, split))
+            if os.path.exists(target_location):
+                print('loading dataset from file')
+                given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
+            else:
+                print('creating dataset from scratch')
+                given_data = None
+            dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
+                          num_channels, per_user_normalization, progression_scale, per_channel_normalization,
+                          model_dataset_depth_offset)
+            if train_files is None:
+                train_files = dataset.files
+                train_norms = dataset.norms
+            # when train => get list of included_file_ids, get_{per channel or all}_normalization stuff
+            if given_data is None:
+                np.savez_compressed(target_location, *dataset.datas)
+                save_pkl(target_location + '.pkl', {'sizes': dataset.sizes, 'pointers': dataset.data_pointers,
+                                                    'norms': dataset.norms, 'files': dataset.files})
+            datasets[index] = dataset
+        return datasets[0], datasets[1]
 
     def normalize_all(self):
         num_files = len(self.datas)
-        all_max = np.max(
-            np.array([self.datas[i].max(axis=1 if self.per_channel_normalization else None) for i in range(num_files)]),
-            axis=0)
-        all_min = np.min(
-            np.array([self.datas[i].min(axis=1 if self.per_channel_normalization else None) for i in range(num_files)]),
-            axis=0)
+        if self.norms is None:
+            all_max = np.max(
+                np.array([data.max(axis=1 if self.per_channel_normalization else None) for data in self.datas]), axis=0)
+            all_min = np.min(
+                np.array([data.min(axis=1 if self.per_channel_normalization else None) for data in self.datas]), axis=0)
+            self.norms = (all_max, all_min)
+        else:
+            all_max, all_min = self.norms
         is_ok = True
         for i in range(num_files):
             self.datas[i], is_ok = self.normalize(self.datas[i], self.per_channel_normalization, all_max, all_min)

@@ -22,7 +22,6 @@ kernel_size: 3
 self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
 random_multiply: false
 lr_rampup_kimg: 0.0 # used to be 40
-validation_ratio: 0.0
 z_distribution: 'normal' # normal, bernoulli, censored
 init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal
 act_alpha: 0.2
@@ -31,6 +30,7 @@ sagan_non_local: true
 use_factorized_attention: false
 average_conditions: true
 one_hot_probability: 0.8
+dataset_freq: 80
 
 Trainer:
   d_training_repeats: 1 # 2 in big-gan
@@ -94,14 +94,13 @@ EfficientLossMonitor:
   monitor_patience: 5
 
 EEGDataset:
+  validation_ratio: 0.0 # set to 0.0 to disable
   dir_path: './data/tuh1'
   seq_len: 512
   stride: 0.25
   num_channels: 5
   per_user_normalization: true
-  dataset_freq: 80
   progression_scale: 2
-  num_files: 12518
   per_channel_normalization: false
   model_dataset_depth_offset: 2
 
