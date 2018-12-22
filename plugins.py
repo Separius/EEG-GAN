@@ -11,7 +11,6 @@ from copy import deepcopy
 from trainer import Trainer
 from datetime import timedelta
 from scipy.stats import entropy
-from torch.autograd import Variable
 from sklearn.utils.extmath import randomized_svd
 from utils import generate_samples, cudize, EPSILON
 from torch_utils import Plugin, LossMonitor, Logger
@@ -21,7 +20,6 @@ import matplotlib.pyplot as plt
 
 
 class DepthManager(Plugin):
-    # TODO read these from the config file
     minibatch_override = {0: 8192, 1: 4096, 2: 2048 + 1024, 3: 2048, 4: 1024 + 512, 5: 1024, 6: 256, 7: 128 + 64}
     tick_kimg_override = {0: 5, 1: 5, 2: 5, 3: 4, 4: 4, 5: 3, 6: 3, 7: 2}
     training_kimg_override = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
@@ -361,7 +359,7 @@ class WatchSingularValues(Plugin):
 
 class SlicedWDistance(Plugin):
     def __init__(self, progression_scale: int, output_snapshot_ticks: int, patches_per_item: int = 16,
-                 patch_size: int = 49, max_items: int = 128, number_of_projections: int = 512,
+                 patch_size: int = 49, max_items: int = 1024, number_of_projections: int = 512,
                  dir_repeats: int = 4, dirs_per_repeat: int = 128):
         super().__init__([(1, 'epoch')])
         self.output_snapshot_ticks = output_snapshot_ticks
@@ -384,7 +382,7 @@ class SlicedWDistance(Plugin):
     def sliced_wasserstein(self, A, B):
         results = []
         for repeat in range(self.dir_repeats):
-            dirs = cudize(torch.randn(A.shape[1], self.dirs_per_repeat))  # (descriptor_component, direction)
+            dirs = torch.randn(A.shape[1], self.dirs_per_repeat)  # (descriptor_component, direction)
             dirs /= torch.sqrt(
                 (dirs * dirs).sum(dim=0, keepdim=True) + EPSILON)  # normalize descriptor components for each direction
             projA = torch.matmul(A, dirs)  # (neighborhood, direction)
@@ -401,13 +399,18 @@ class SlicedWDistance(Plugin):
         gc.collect()
         all_fakes = []
         all_reals = []
-        # TODO make it more memory efficient
         with torch.no_grad():
-            fake_latents_in = cudize(self.trainer.random_latents_generator()[:self.max_items])
-            all_fakes.append(self.trainer.generator(fake_latents_in))
-            all_reals.append(cudize(next(self.trainer.dataiter)['x'][:self.max_items]))
-        all_fakes = torch.cat(all_fakes, dim=0)
-        all_reals = torch.cat(all_reals, dim=0)
+            remaining_items = self.max_items
+            while remaining_items > 0:
+                fake_latents_in = cudize(self.trainer.random_latents_generator()[:remaining_items])
+                all_fakes.append(self.trainer.generator(fake_latents_in).data.cpu())
+                remaining_items -= fake_latents_in.size(0)
+            all_fakes = torch.cat(all_fakes, dim=0)
+            remaining_items = self.max_items
+            while remaining_items > 0:
+                all_reals.append(cudize(next(self.trainer.dataiter)['x'][:self.max_items]))
+                remaining_items -= all_reals[-1].size(0)
+            all_reals = torch.cat(all_reals, dim=0)
         swd = self.get_descriptors(all_fakes, all_reals)
         if len(swd) > 0:
             swd.append(np.array(swd).mean())
@@ -426,19 +429,18 @@ class SlicedWDistance(Plugin):
             both_descriptors = [None, None]
             batchs = [batch1, batch2]
             for i in range(2):
-                batch = batchs[i]
                 descriptors = []
-                max_index = batch.shape[2] - self.patch_size
+                max_index = batchs[i].shape[2] - self.patch_size
                 for j in range(b):
                     for k in range(self.patches_per_item):
                         rand_index = np.random.randint(0, max_index)
-                        descriptors.append(batch[i, :, rand_index:rand_index + self.patch_size])
+                        descriptors.append(batchs[i][j, :, rand_index:rand_index + self.patch_size])
                 descriptors = torch.stack(descriptors, dim=0)  # N, c, patch_size
                 descriptors = descriptors.reshape((-1, c))
                 descriptors -= torch.mean(descriptors, dim=0, keepdim=True)
-                descriptors /= torch.std(descriptors, dim=0, keepdim=True)
+                descriptors /= torch.std(descriptors, dim=0, keepdim=True) + EPSILON
                 both_descriptors[i] = descriptors
-                batchs[i] = batch[:, :, ::self.progression_scale]
+                batchs[i] = batchs[i][:, :, ::self.progression_scale]
             swd.append(self.sliced_wasserstein(both_descriptors[0], both_descriptors[1]))
         return swd
 

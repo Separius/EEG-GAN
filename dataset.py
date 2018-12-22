@@ -11,7 +11,8 @@ DATASET_VERSION = 1
 
 
 class EEGDataset(Dataset):
-    # TODO 240Hz; 21 channels; isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/; no cleansing
+    # TODO 240Hz; 21 channels; isip.piconepress.com/projects/tuh_eeg/downloads/tuh_eeg_abnormal/v2.0.0/
+    # TODO correct validation set (normalization uses all) + session based validation
     def __init__(self, given_data, dir_path: str = './data/tuh1', seq_len: int = 512, stride: float = 0.25,
                  num_channels: int = 5, per_user_normalization: bool = True, dataset_freq: int = 80,
                  progression_scale: int = 2, num_files: int = 12518, per_channel_normalization: bool = False,

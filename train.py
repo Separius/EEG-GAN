@@ -38,7 +38,6 @@ default_params = dict(
     cuda_device=0,
     ttur=True,
     config_file=None,
-    # TODO increase number of channels by 50% (BIG-GAN)
     fmap_base=1024,
     fmap_max=256,
     fmap_min=64,
@@ -137,7 +136,7 @@ def main(params):
         d_lr = g_lr
         if params['ttur']:
             d_lr *= 4.0
-            params['Adam']['betas'] = (0, 0.9)  # TODO BIG-GAN uses 0.999
+            params['Adam']['betas'] = (0, 0.99)
         opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
         opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
         if params['lr_rampup_kimg'] > 0:
@@ -193,7 +192,6 @@ def main(params):
     train_idx = list(range(dataset_len))
     np.random.shuffle(train_idx)
 
-    # TODO this is not a correct validation set (normalization uses all)
     train_idx, val_idx = train_idx[int(dataset_len * params['validation_ratio']):], train_idx[:int(
         dataset_len * params['validation_ratio'])]
 

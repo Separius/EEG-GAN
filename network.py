@@ -182,7 +182,6 @@ class DBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    # TODO "one in the batch" conditioning (remember to disable stats)
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, equalized, kernel_size,
                  self_attention_layers, num_classes, progression_scale, init, act_alpha, residual, sagan_non_local,
                  factorized_attention, average_conditions, sngan_rgb: bool = False, dropout: float = 0.2,
