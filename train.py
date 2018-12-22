@@ -131,11 +131,13 @@ def main(params):
         else:
             return 1.0
 
+    if params['ttur']:
+        params['Adam']['betas'] = (0, 0.99)
+
     def get_optimizers(g_lr):
         d_lr = g_lr
         if params['ttur']:
             d_lr *= 4.0
-            params['Adam']['betas'] = (0, 0.99)
         opt_g = Adam(trainable_params(generator), g_lr, **params['Adam'])
         opt_d = Adam(trainable_params(discriminator), d_lr, **params['Adam'])
         if params['lr_rampup_kimg'] > 0:
@@ -170,9 +172,8 @@ def main(params):
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         state[k] = cudize(v)
-    d_loss_fun = partial(discriminator_loss, loss_type=params['loss_type'],
-                         iwass_drift_epsilon=params['iwass_drift_epsilon'], grad_lambda=params['grad_lambda'],
-                         iwass_target=params['iwass_target'])
+    d_loss_fun = partial(discriminator_loss, loss_type=params['loss_type'], iwass_target=params['iwass_target'],
+                         iwass_drift_epsilon=params['iwass_drift_epsilon'], grad_lambda=params['grad_lambda'])
     g_loss_fun = partial(generator_loss, random_multiply=params['random_multiply'], loss_type=params['loss_type'],
                          feature_matching_lambda=params['feature_matching_lambda'])
     max_depth = generator.max_depth

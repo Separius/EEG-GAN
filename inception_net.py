@@ -55,7 +55,7 @@ class ChronoNet(nn.Module):
         return self.linear(h), h
 
 
-params = parse_config({}, [EEGDataset, ChronoNet, Adam])
+params = parse_config(default_params, [EEGDataset, ChronoNet, Adam])
 train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
 train_dataset.model_depth = val_dataset.model_depth = train_dataset.max_dataset_depth
 train_dataset.alpha = val_dataset.alpha = 1.0

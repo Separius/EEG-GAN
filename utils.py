@@ -135,7 +135,7 @@ def enable_benchmark():
 
 
 def load_model(model_path, return_all=False):
-    state = torch.load(model_path, map_location='cpu')
+    state = torch.load(model_path, map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
     if not return_all:
         return state['model']
     return state['model'], state['optimizer'], state['cur_nimg']

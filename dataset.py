@@ -139,7 +139,6 @@ class EEGDataset(Dataset):
             if train_files is None:
                 train_files = dataset.files
                 train_norms = dataset.norms
-            # when train => get list of included_file_ids, get_{per channel or all}_normalization stuff
             if given_data is None:
                 np.savez_compressed(target_location, *dataset.datas)
                 save_pkl(target_location + '.pkl', {'sizes': dataset.sizes, 'pointers': dataset.data_pointers,

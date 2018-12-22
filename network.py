@@ -47,11 +47,13 @@ class GBlock(nn.Module):
         else:
             self.residual = None
 
+    @staticmethod
+    def get_per_channel_noise(noise_weight):
+        return None if noise_weight is None else torch.random.randn(*noise_weight.size()) * noise_weight
+
     def forward(self, x, y=None, last=False):
-        c1 = self.c1(x, y=y, z=None if self.c1_noise_weight is None else torch.random.randn(
-            *self.c1_noise_weight.size()) * self.c1_noise_weight)
-        h = self.c2(c1, y=y, z=None if self.c2_noise_weight is None else torch.random.randn(
-            *self.c2_noise_weight.size()) * self.c2_noise_weight)
+        c1 = self.c1(x, y=y, z=self.get_per_channel_noise(self.c1_noise_weight))
+        h = self.c2(c1, y=y, z=self.get_per_channel_noise(self.c2_noise_weight))
         if last:
             return self.toRGB(h)
         if self.residual is not None:
@@ -81,7 +83,7 @@ class Generator(nn.Module):
             latent_size = nf(0)
         if embed_classes_size is not None:
             self.y_encoder = nn.Linear(num_classes, embed_classes_size)
-            self.y_encoder.weight.data.normal_(1/embed_classes_size, 0.002)
+            self.y_encoder.weight.data.normal_(1 / embed_classes_size, 0.002)
             if spectral:
                 self.y_encoder = spectral_norm(self.y_encoder)
         else:
@@ -124,7 +126,10 @@ class Generator(nn.Module):
             layer.gamma = new_gamma
 
     def _cat_z(self, l, y, z):
-        return torch.cat([y, z[:, (2 + l) * self.latent_size:(3 + l) * self.latent_size]], dim=1) if self.split_z else y
+        if not self.split_z:
+            return y
+        z_slice = z[:, (2 + l) * self.latent_size:(3 + l) * self.latent_size]
+        return z_slice if y is None else torch.cat([y, z_slice], dim=1)
 
     def do_layer(self, l, h, y, z):
         if l in self.self_attention:
@@ -141,7 +146,7 @@ class Generator(nn.Module):
             z, y = z['z'], z.get('y', None)
         if self.normalize_latents:
             z = pixel_norm(z)
-        if self.y_encoder is not None and y is not None:
+        if y is not None and self.y_encoder is not None:
             y = self.y_encoder(y)
         h = z.unsqueeze(2)
         if self.split_z:

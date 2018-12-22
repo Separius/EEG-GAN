@@ -5,11 +5,18 @@ import pickle
 import numpy as np
 from scipy import misc
 from tqdm import trange, tqdm
+from dataset import EEGDataset
 from torch.autograd import Variable
 from plugins import OutputGenerator
-from utils import cudize, random_latents, generate_samples, simple_argparser, load_model
+from network import Generator, Discriminator
+from utils import cudize, random_latents, generate_samples, load_model, parse_config
 
 default_params = {
+    'config_file': None,
+    'cpu_deterministic': True,
+    'num_data_workers': 1,
+    'random_seed': 1373,
+    'cuda_device': 0,
     'generator_path': '',
     'num_samples': 1024,
     'num_pics': 0,
@@ -50,7 +57,18 @@ def save_pics(xx, generator):
 
 
 if __name__ == '__main__':
-    params = simple_argparser(default_params)
+    params = parse_config(default_params, [])
+    num_classes = 0 if dataset.class_options is None else sum(dataset.class_options)
+    shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
+                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
+                               fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
+                               residual=params['residual'], equalized=params['equalized'],
+                               sagan_non_local=params['sagan_non_local'],
+                               average_conditions=params['average_conditions'],
+                               factorized_attention=params['use_factorized_attention'],
+                               self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
+                               num_classes=num_classes, progression_scale=dataset.progression_scale)
+    generator = Generator
     if os.path.isdir(params['generator_path']):
         params['generator_path'] = os.path.join(params['generator_path'], '*-network-snapshot-generator-*.dat')
         all_generators = glob.glob(params['generator_path'])
