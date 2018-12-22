@@ -152,14 +152,12 @@ def main(params):
             params['resume_network'], params['result_dir'], logger)
         generator.load_state_dict(generator_state)
         discriminator.load_state_dict(discriminator_state)
-        opt_g, opt_d, sched_g, sched_d = get_optimizers(params['lr'])
+        opt_g, opt_d, _, _ = get_optimizers(params['lr'])
         opt_g.load_state_dict(opt_g_state)
         opt_d.load_state_dict(opt_d_state)
     else:
         opt_g = None
         opt_d = None
-        sched_g = None
-        sched_d = None
         train_cur_img = 0
     latent_size = generator.latent_size
     generator.train()
@@ -200,15 +198,16 @@ def main(params):
                           worker_init_fn=worker_init, num_workers=params['num_data_workers'], pin_memory=False,
                           drop_last=True)
 
-    def get_random_latents(bs):
+    def get_random_latents(bs, given_dataset=None):
         def partial_function():
             return {'z': random_latents(bs, latent_size, params['z_distribution']),
-                    'y': dataset.generate_class_condition(bs, params['one_hot_probability'])}
+                    'y': (dataset if given_dataset is None else given_dataset).generate_class_condition(bs, params[
+                        'one_hot_probability'])}
 
         return partial_function
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
-                      train_cur_img, opt_g, opt_d, sched_g, sched_d, **params['Trainer'])
+                      train_cur_img, opt_g, opt_d, **params['Trainer'])
     trainer.register_plugin(
         DepthManager(get_dataloader, get_random_latents, max_depth, params['Trainer']['tick_kimg_default'],
                      len(params['self_attention_layers']) != 0, get_optimizers, params['lr'],

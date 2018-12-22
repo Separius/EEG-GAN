@@ -1,8 +1,8 @@
-cpu_deterministic: false
+cpu_deterministic: true
 result_dir: 'results'
 #exp_name: ''
 G_lr: 0.0001
-total_kimg: 6000
+total_kimg: 100
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
@@ -14,9 +14,9 @@ loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
 ttur: true
 #config_file: null
-fmap_base: 1024
+fmap_base: 128
 fmap_max: 256
-fmap_min: 64
+fmap_min: 16
 equalized: true
 kernel_size: 3
 self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
@@ -35,7 +35,7 @@ inception_network_address: ''
 
 Trainer:
   d_training_repeats: 1 # 2 in big-gan
-  tick_kimg_default: 5.0
+  tick_kimg_default: 0.5
 
 Generator:
   to_rgb_mode: 'pggan' # pggan, sagan, sngan
@@ -62,15 +62,15 @@ DepthManager:
   reset_optimizer: true
   disable_progression: false
   depth_offset: 0  # starts form 0
-  attention_transition_kimg: 400
-  minibatch_default: 8192 #used to be 256
-  lod_training_kimg: 400
-  lod_transition_kimg: 400
-  tiny_sizes: false
+  attention_transition_kimg: 2
+  minibatch_default: 256
+  lod_training_kimg: 4
+  lod_transition_kimg: 4
+  tiny_sizes: true
 
 SaverPlugin:
   keep_old_checkpoints: true
-  network_snapshot_ticks: 50
+  network_snapshot_ticks: 2
 
 SlicedWDistance:
   patches_per_item: 16
@@ -82,7 +82,7 @@ SlicedWDistance:
 
 OutputGenerator:
   samples_count: 8
-  output_snapshot_ticks: 25
+  output_snapshot_ticks: 2
   old_weight: 0.999
 
 Adam:
@@ -96,7 +96,7 @@ EfficientLossMonitor:
   monitor_patience: 5
 
 EEGDataset:
-  validation_ratio: 0.0 # set to 0.0 to disable
+  validation_ratio: 0.1 # set to 0.0 to disable
   dir_path: './data/tuh1'
   seq_len: 512
   stride: 0.25
@@ -108,11 +108,11 @@ EEGDataset:
 
 WatchSingularValues:
   one_divided_two: 10.0
-  output_snapshot_ticks: 20
+  output_snapshot_ticks: 5
 
 InceptionScore:
-  num_samples: 16384
+  num_samples: 1024
 
 FID:
-  real_stats_location: './data/fid.pkl'
-  num_samples: 65536
+  real_stats_location: './data/fid_tiny.pkl'
+  num_samples: 1024

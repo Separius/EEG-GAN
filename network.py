@@ -81,7 +81,7 @@ class Generator(nn.Module):
 
         if latent_size is None:
             latent_size = nf(0)
-        if embed_classes_size is not None:
+        if embed_classes_size is not None and num_classes != 0:
             self.y_encoder = nn.Linear(num_classes, embed_classes_size)
             self.y_encoder.weight.data.normal_(1 / embed_classes_size, 0.002)
             if spectral:

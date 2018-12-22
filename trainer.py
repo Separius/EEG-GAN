@@ -5,8 +5,8 @@ from network import Generator, Discriminator
 
 class Trainer(object):
     def __init__(self, discriminator: Discriminator, generator: Generator, d_loss, g_loss, dataset,
-                 random_latents_generator, resume_nimg, optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d,
-                 d_training_repeats: int = 1, tick_kimg_default: float = 5.0):
+                 random_latents_generator, resume_nimg, optimizer_g, optimizer_d, d_training_repeats: int = 1,
+                 tick_kimg_default: float = 5.0):
         assert d_training_repeats >= 1
         self.d_training_repeats = d_training_repeats
         self.discriminator = discriminator
