@@ -48,9 +48,9 @@ class GBlock(nn.Module):
             self.residual = None
 
     def forward(self, x, y=None, last=False):
-        c1 = self.c1(x, y, None if self.c1_noise_weight is None else torch.random.randn(
+        c1 = self.c1(x, y=y, z=None if self.c1_noise_weight is None else torch.random.randn(
             *self.c1_noise_weight.size()) * self.c1_noise_weight)
-        h = self.c2(c1, y, None if self.c2_noise_weight is None else torch.random.randn(
+        h = self.c2(c1, y=y, z=None if self.c2_noise_weight is None else torch.random.randn(
             *self.c2_noise_weight.size()) * self.c2_noise_weight)
         if last:
             return self.toRGB(h)
@@ -60,14 +60,12 @@ class GBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    # TODO instead of bn(w=emb_l(y)); bn(w=linear_l(emb(y))||z_l) -> make sure zero centerd and one centred
-    # TODO (Ci / Fi(Zi,C) / Fi(Z0,C) / F0(Zi,Ci) / F0(Z0,Ci)) || (Fi(Zi) / Fi(Z0))
     def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
                  sagan_non_local, factorized_attention, average_conditions, to_rgb_mode: str = 'pggan',
                  latent_size: int = 256, normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul',
                  spectral: bool = False, act_norm: Optional[str] = 'pixel', no_tanh: bool = False,
-                 per_channel_noise=False):
+                 per_channel_noise=False, split_z=False, embed_classes_size: Optional[int] = None):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
@@ -81,6 +79,17 @@ class Generator(nn.Module):
 
         if latent_size is None:
             latent_size = nf(0)
+        if embed_classes_size is not None:
+            self.y_encoder = nn.Linear(num_classes, embed_classes_size)
+            self.y_encoder.weight.data.normal_(1/embed_classes_size, 0.002)
+            if spectral:
+                self.y_encoder = spectral_norm(self.y_encoder)
+        else:
+            self.y_encoder = None
+        num_classes = num_classes if embed_classes_size is None else embed_classes_size
+        if split_z:
+            latent_size //= R - initial_size + 1  # we also give part of the z to the first layer
+            num_classes += latent_size
         self.normalize_latents = normalize_latents
         layer_settings = dict(do=dropout, do_mode=do_mode, num_classes=num_classes,
                               act_norm=act_norm, act_alpha=act_alpha, average_conditions=average_conditions)
@@ -102,6 +111,7 @@ class Generator(nn.Module):
                                      for i in range(initial_size, R)])
         self.depth = 0
         self.alpha = 1.0
+        self.split_z = split_z
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
         self.progression_scale = progression_scale
@@ -113,32 +123,39 @@ class Generator(nn.Module):
         for layer in self.self_attention.values():
             layer.gamma = new_gamma
 
-    def do_layer(self, l, h, y=None, last=False):
+    def _cat_z(self, l, y, z):
+        return torch.cat([y, z[:, (2 + l) * self.latent_size:(3 + l) * self.latent_size]], dim=1) if self.split_z else y
+
+    def do_layer(self, l, h, y, z):
         if l in self.self_attention:
             h, attention_map = self.self_attention[l](h)
         else:
             attention_map = None
         h = self.upsampler(h)
-        return self.blocks[l](h, y, last), attention_map
+        return self.blocks[l](h, self._cat_z(l, y, z), False), attention_map
 
     def forward(self, z, y=None):
         if isinstance(z, tuple):
             z, y = z
         if isinstance(z, dict):
-            z, y = z['z'], z['y']
+            z, y = z['z'], z.get('y', None)
         if self.normalize_latents:
             z = pixel_norm(z)
+        if self.y_encoder is not None and y is not None:
+            y = self.y_encoder(y)
         h = z.unsqueeze(2)
-        h = self.block0(h, y, self.depth == 0)
+        if self.split_z:
+            h = z[:, :self.latent_size, :]
+        h = self.block0(h, self._cat_z(-1, y, z), self.depth == 0)
         if self.depth == 0:
             return h, {}
         all_attention_maps = {}
         for i in range(self.depth - 1):
-            h, attention_map = self.do_layer(i, h, y)
+            h, attention_map = self.do_layer(i, h, y, z)
             if attention_map is not None:
                 all_attention_maps[i] = attention_map
         h = self.upsampler(h)
-        ult = self.blocks[self.depth - 1](h, y, True)
+        ult = self.blocks[self.depth - 1](h, self._cat_z(self.depth - 1, y, z), True)
         if self.alpha == 1.0:
             return ult, all_attention_maps
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)

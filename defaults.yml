@@ -46,6 +46,8 @@ Generator:
   act_norm: 'pixel' # pixel, batch, layer, None
   no_tanh: false
   per_channel_noise: false
+  split_z: false
+  embed_classes_size: null # ~num_classes/2
 
 Discriminator:
   sngan_rgb: false
