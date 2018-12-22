@@ -206,7 +206,7 @@ class EEGDataset(Dataset):
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
         return {'x': torch.from_numpy(datapoint.astype(np.float32)),
-                'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
+                'y': None if self.y is None else torch.from_numpy(self.y[self.data_pointers[item][0]])}
 
     def alpha_fade(self, datapoint):
         if self.alpha == 1:

@@ -31,6 +31,7 @@ use_factorized_attention: false
 average_conditions: true
 one_hot_probability: 0.8
 dataset_freq: 80
+inception_network_address: ''
 
 Trainer:
   d_training_repeats: 1 # 2 in big-gan
@@ -107,3 +108,10 @@ EEGDataset:
 WatchSingularValues:
   one_divided_two: 10.0
   output_snapshot_ticks: 20.0
+
+InceptionScore:
+  num_samples: 16384
+
+FID:
+  real_stats_location: './data/fid.pkl'
+  num_samples: 65536

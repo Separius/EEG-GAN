@@ -2,7 +2,6 @@ import os
 import time
 import yaml
 import torch
-import random
 import signal
 import subprocess
 import numpy as np
@@ -10,16 +9,15 @@ from trainer import Trainer
 from torch.optim import Adam
 from functools import partial
 from dataset import EEGDataset
-from argparse import ArgumentParser
+from inception_net import ChronoNet
 from torch.utils.data import DataLoader
 from network import Generator, Discriminator
 from torch.optim.lr_scheduler import LambdaLR
 from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
-from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance,
+from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, InceptionScore, FID,
                      EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
-from utils import (cudize, random_latents, trainable_params, create_result_subdir, num_params,
-                   create_params, generic_arg_parse, get_structured_params, enable_benchmark, load_model)
+from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
 
 default_params = dict(
     cpu_deterministic=False,
@@ -55,6 +53,7 @@ default_params = dict(
     average_conditions=True,
     one_hot_probability=0.8,
     dataset_freq=80,
+    inception_network_address=''
 )
 
 
@@ -224,6 +223,11 @@ def main(params):
     trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
                                             **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
+    if params['inception_network_address'] != '':
+        inception_network = torch.load(params['inception_network_address'])
+        inception_network = inception_network.cudize().eval()
+        trainer.register_plugin(InceptionScore(inception_network, **params['InceptionScore']))
+        trainer.register_plugin(FID(inception_network, **params['FID']))
     if params['Generator']['spectral']:
         trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))
     if params['Discriminator']['spectral']:
@@ -231,38 +235,15 @@ def main(params):
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])
+    if params['inception_network_address'] != '':
+        print('inception_stats', trainer.inception_result[0], trainer.inception_result[1])
+        print('fid_stats', trainer.fid_result)
     del trainer
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    need_arg_classes = [Trainer, Generator, Discriminator, DepthManager, SaverPlugin, SlicedWDistance,
-                        OutputGenerator, Adam, EfficientLossMonitor, EvalDiscriminator, EEGDataset, WatchSingularValues]
-    excludes = {'Adam': {'lr', 'amsgrad'}}
-    default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
-    auto_args = create_params(need_arg_classes, excludes, default_overrides)
-    for k in default_params:
-        parser.add_argument('--{}'.format(k), type=partial(generic_arg_parse, hinttype=type(default_params[k])))
-    for cls in auto_args:
-        group = parser.add_argument_group(cls, 'Arguments for initialization of class {}'.format(cls))
-        for k in auto_args[cls]:
-            name = '{}.{}'.format(cls, k)
-            group.add_argument('--{}'.format(name), type=generic_arg_parse)
-            default_params[name] = auto_args[cls][k]
-    parser.set_defaults(**default_params)
-    params = vars(parser.parse_args())
-    if params['config_file']:
-        print('loading config_file')
-        params.update(yaml.load(open(params['config_file'], 'r')))
-    params = get_structured_params(params)
-    if params['cpu_deterministic']:
-        params['num_data_workers'] = 0
-    random.seed(params['random_seed'])
-    np.random.seed(params['random_seed'])
-    torch.manual_seed(params['random_seed'])
-    if torch.cuda.is_available():
-        torch.cuda.set_device(params['cuda_device'])
-        torch.cuda.manual_seed_all(params['random_seed'])
-        enable_benchmark()
-    main(params)
+    need_arg_classes = [Trainer, Generator, Discriminator, Adam, OutputGenerator,
+                        DepthManager, SaverPlugin, SlicedWDistance, InceptionScore, FID,
+                        EfficientLossMonitor, EvalDiscriminator, EEGDataset, WatchSingularValues]
+    main(parse_config(default_params, need_arg_classes))
     print('training finished!')

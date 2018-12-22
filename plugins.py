@@ -11,9 +11,10 @@ from copy import deepcopy
 from trainer import Trainer
 from datetime import timedelta
 from scipy.stats import entropy
+from inception_net import ChronoNet
 from sklearn.utils.extmath import randomized_svd
-from utils import generate_samples, cudize, EPSILON
 from torch_utils import Plugin, LossMonitor, Logger
+from utils import generate_samples, cudize, EPSILON, load_pkl, save_pkl
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -409,7 +410,7 @@ class SlicedWDistance(Plugin):
             all_fakes = torch.cat(all_fakes, dim=0)
             remaining_items = self.max_items
             while remaining_items > 0:
-                all_reals.append(cudize(next(self.trainer.dataiter)['x'][:self.max_items]))
+                all_reals.append(next(self.trainer.dataiter)['x'][:remaining_items])
                 remaining_items -= all_reals[-1].size(0)
             all_reals = torch.cat(all_reals, dim=0)
         swd = self.get_descriptors(all_fakes, all_reals)
@@ -446,35 +447,30 @@ class SlicedWDistance(Plugin):
         return swd
 
 
-# TODO
 class InceptionScore(Plugin):
-    def __init__(self, inception_network):
+    def __init__(self, inception_network, num_samples: int = 16384):
         super().__init__([(1, 'end')])
-        self.inception_model = cudize(inception_network)
-        self.inception_model.eval()
+        self.inception_model = inception_network
+        self.num_samples = num_samples
 
     def end(self, *args):
-        pass
+        inception_score, inception_std = self.inception_score()
+        self.trainer.inception_result = (inception_score, inception_std)
 
-    def inception_score(self, imgs, batch_size=32, splits=1):
-        """Computes the inception score of the generated images imgs
-        imgs -- Torch dataset of (3xHxW) numpy images normalized in the range [-1, 1]
-        batch_size -- batch size for feeding into Inception net
-        splits -- number of splits
-        """
-        N = len(imgs)
-        assert batch_size > 0
-        assert N > batch_size
-        dataloader = torch.utils.data.DataLoader(imgs, batch_size=batch_size)
-        preds = np.zeros((N, self.inception_model.num_classes))
-        for i, batch in enumerate(dataloader):
-            batch = cudize(batch)
-            batch_size_i = batch.size(0)
-            y, _ = self.inception_model(batch)
-            preds[i * batch_size:i * batch_size + batch_size_i] = torch.nn.functional.softmax(y).data.cpu().numpy()
+    def inception_score(self, splits=4):
+        preds = np.zeros((self.num_samples, self.inception_model.num_classes))
+        with torch.no_grad():
+            current_start = 0
+            while current_start < self.num_samples:
+                fake_latents_in = cudize(self.trainer.random_latents_generator())
+                g_, _ = self.trainer.generator(fake_latents_in)
+                y, _ = self.inception_model(g_)
+                if current_start + y.size(0) > self.num_samples:
+                    y = y[:self.num_samples - current_start]
+                preds[current_start:current_start + y.size(0)] = torch.nn.functional.softmax(y).data.cpu().numpy()
         split_scores = []
         for k in range(splits):
-            part = preds[k * (N // splits): (k + 1) * (N // splits), :]
+            part = preds[k * (self.num_samples // splits): (k + 1) * (self.num_samples // splits), :]
             py = np.mean(part, axis=0)
             scores = []
             for i in range(part.shape[0]):
@@ -487,14 +483,43 @@ class InceptionScore(Plugin):
         self.trainer = trainer
 
 
-# TODO
 class FID(Plugin):
-    def __init__(self, inception_network):
+    def __init__(self, inception_network: ChronoNet, real_stats_location='./data/fid.pkl', num_samples=65536):
         super().__init__([(1, 'end')])
         self.inception_network = inception_network
+        self.num_samples = num_samples
+        self.real_stats_location = real_stats_location
+        real_stats = load_pkl(real_stats_location)
+        if real_stats is not None:
+            self.real_mu, self.real_sigma = real_stats
+        else:
+            self.real_mu, self.real_sigma = None, None
+
+    @staticmethod
+    def calc_mu_sigma(tensor):
+        return tensor.mean(dim=0).squeeze(), tensor.std(dim=0).squeeze()
 
     def end(self, *args):
-        pass
+        with torch.no_grad():
+            if self.real_mu is None:
+                remaining_items = self.num_samples
+                reals = []
+                while remaining_items > 0:
+                    reals.append(self.inception_network(cudize(next(self.trainer.dataiter)['x'][:remaining_items]))[
+                                     1].data.cpu())
+                    remaining_items -= reals[-1].size(0)
+                reals = torch.cat(reals, dim=0)
+                self.real_mu, self.real_sigma = self.calc_mu_sigma(reals)
+                save_pkl(self.real_stats_location, (self.real_mu, self.real_sigma))
+            remaining_items = self.num_samples
+            all_fakes = []
+            while remaining_items > 0:
+                fake_latents_in = cudize(self.trainer.random_latents_generator()[:remaining_items])
+                all_fakes.append(self.inception_network(self.trainer.generator(fake_latents_in))[1].data.cpu())
+                remaining_items -= fake_latents_in.size(0)
+            all_fakes = torch.cat(all_fakes, dim=0)
+            fake_mu, fake_sigma = self.calc_mu_sigma(all_fakes)
+        self.trainer.fid_result = self.calculate_frechet_distance(fake_mu, fake_sigma, self.real_mu, self.real_sigma)
 
     def register(self, trainer):
         self.trainer = trainer

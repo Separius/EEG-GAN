@@ -1,5 +1,7 @@
 import os
+import yaml
 import torch
+import random
 import inspect
 import numpy as np
 from pickle import load, dump
@@ -137,3 +139,34 @@ def load_model(model_path, return_all=False):
     if not return_all:
         return state['model']
     return state['model'], state['optimizer'], state['cur_nimg']
+
+
+def parse_config(default_params, need_arg_classes):
+    parser = ArgumentParser()
+    excludes = {'Adam': {'lr', 'amsgrad'}}
+    default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
+    auto_args = create_params(need_arg_classes, excludes, default_overrides)
+    for k in default_params:
+        parser.add_argument('--{}'.format(k), type=partial(generic_arg_parse, hinttype=type(default_params[k])))
+    for cls in auto_args:
+        group = parser.add_argument_group(cls, 'Arguments for initialization of class {}'.format(cls))
+        for k in auto_args[cls]:
+            name = '{}.{}'.format(cls, k)
+            group.add_argument('--{}'.format(name), type=generic_arg_parse)
+            default_params[name] = auto_args[cls][k]
+    parser.set_defaults(**default_params)
+    params = vars(parser.parse_args())
+    if params['config_file']:
+        print('loading config_file')
+        params.update(yaml.load(open(params['config_file'], 'r')))
+    params = get_structured_params(params)
+    if params['cpu_deterministic']:
+        params['num_data_workers'] = 0
+    random.seed(params['random_seed'])
+    np.random.seed(params['random_seed'])
+    torch.manual_seed(params['random_seed'])
+    if torch.cuda.is_available():
+        torch.cuda.set_device(params['cuda_device'])
+        torch.cuda.manual_seed_all(params['random_seed'])
+        enable_benchmark()
+    return params
