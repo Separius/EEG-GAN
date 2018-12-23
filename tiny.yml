@@ -19,8 +19,8 @@ fmap_max: 256
 fmap_min: 16
 equalized: true
 kernel_size: 3
-self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
-random_multiply: true
+self_attention_layers: [3]  # starts from 0 or null (for G it means putting it after ith layer)
+random_multiply: false
 lr_rampup_kimg: 0.0 # used to be 40
 z_distribution: 'normal' # normal, bernoulli, censored
 init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal

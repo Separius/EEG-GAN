@@ -89,7 +89,7 @@ class Generator(nn.Module):
                 self.y_encoder = spectral_norm(self.y_encoder)
         else:
             self.y_encoder = None
-        num_classes = num_classes if embed_classes_size is None else embed_classes_size
+        num_classes = num_classes if (embed_classes_size is None or num_classes == 0) else embed_classes_size
         if split_z:
             latent_size //= R - initial_size + 2  # we also give part of the z to the first layer
             num_classes += latent_size

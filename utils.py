@@ -4,6 +4,7 @@ import torch
 import random
 import inspect
 import numpy as np
+from typing import Dict
 from pickle import load, dump
 from functools import partial
 import torch.nn.functional as F
@@ -110,10 +111,10 @@ def cudize(thing):
     if not has_cuda:
         return thing
     if isinstance(thing, (list, tuple)):
-        return [item.cuda(non_blocking=True) for item in thing]
+        return [item.cuda() for item in thing]
     if isinstance(thing, dict):
-        return {k: v.cuda(non_blocking=True) for k, v in thing.items()}
-    return thing.cuda(non_blocking=True)
+        return {k: v.cuda() for k, v in thing.items()}
+    return thing.cuda()
 
 
 def trainable_params(model):
@@ -162,7 +163,8 @@ def parse_config(default_params, need_arg_classes):
     params = vars(parser.parse_args())
     if params['config_file']:
         print('loading config_file')
-        params.update(yaml.load(open(params['config_file'], 'r')))
+        with open(params['config_file']) as f:
+            params = _update_params(params, yaml.load(f))
     params = get_structured_params(params)
     if params['cpu_deterministic']:
         params['num_data_workers'] = 0
@@ -173,6 +175,16 @@ def parse_config(default_params, need_arg_classes):
         torch.cuda.set_device(params['cuda_device'])
         torch.cuda.manual_seed_all(params['random_seed'])
         enable_benchmark()
+    return params
+
+
+def _update_params(params: Dict, given_conf: Dict):
+    for k, v in given_conf.items():
+        if isinstance(v, dict):
+            for kk, vv in v.items():
+                params['{}.{}'.format(k, kk)] = vv
+        else:
+            params[k] = v
     return params
 
 
