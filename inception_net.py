@@ -87,13 +87,14 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
         network.eval()
-        total_loss = 0
-        for i, x in enumerate(tqdm(val_dataloader)):
-            y_pred, _ = network(cudize(x['x']))
-            y = torch.argmax(x['y'], dim=1)
-            loss = loss_function(y_pred, cudize(y))
-            total_loss += loss.item()
-        new_loss = total_loss / i
-        if best_loss is None or new_loss < best_loss:
-            torch.save(network, params['save_location'])
-            best_loss = new_loss
+        with torch.no_grad():
+            total_loss = 0
+            for i, x in enumerate(tqdm(val_dataloader)):
+                y_pred, _ = network(cudize(x['x']))
+                y = torch.argmax(x['y'], dim=1)
+                loss = loss_function(y_pred, cudize(y))
+                total_loss += loss.item()
+            new_loss = total_loss / i
+            if best_loss is None or new_loss < best_loss:
+                torch.save(network, params['save_location'])
+                best_loss = new_loss
