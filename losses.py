@@ -108,7 +108,8 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real: torch.t
         x_hat = Variable(alpha * real[:, :, :min_size].data + (1.0 - alpha) * g_[:, :, :min_size].data,
                          requires_grad=True)
         if real_label is not None:
-            hat_label = Variable(alpha * real_label.data + (1.0 - alpha) * z_label.data, requires_grad=True)
+            beta = alpha.squeeze(dim=2)
+            hat_label = Variable(beta * real_label.data + (1.0 - beta) * z_label.data, requires_grad=True)
         else:
             hat_label = None
         pred_hat, _, _ = dis(x_hat, hat_label)

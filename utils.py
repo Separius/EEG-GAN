@@ -14,7 +14,7 @@ half_tensor = None
 
 
 def generate_samples(generator, gen_input):
-    return generator(gen_input).data.cpu().numpy()
+    return generator(gen_input)[0].data.cpu().numpy()
 
 
 def save_pkl(file_name, obj):
@@ -23,6 +23,8 @@ def save_pkl(file_name, obj):
 
 
 def load_pkl(file_name):
+    if not os.path.exists(file_name):
+        return None
     with open(file_name, 'rb') as f:
         return load(f)
 
@@ -105,11 +107,13 @@ def cudize(thing):
     if thing is None:
         return None
     has_cuda = torch.cuda.is_available()
+    if not has_cuda:
+        return thing
     if isinstance(thing, (list, tuple)):
-        return [item.cuda(non_blocking=True) if has_cuda else item for item in thing]
+        return [item.cuda(non_blocking=True) for item in thing]
     if isinstance(thing, dict):
         return {k: v.cuda(non_blocking=True) for k, v in thing.items()}
-    return thing.cuda(non_blocking=True) if has_cuda else thing
+    return thing.cuda(non_blocking=True)
 
 
 def trainable_params(model):
@@ -135,7 +139,7 @@ def enable_benchmark():
 
 
 def load_model(model_path, return_all=False):
-    state = torch.load(model_path, map_location='cuda:0' if torch.cuda.is_available() else 'cpu')
+    state = torch.load(model_path, map_location='cpu')
     if not return_all:
         return state['model']
     return state['model'], state['optimizer'], state['cur_nimg']
@@ -170,3 +174,7 @@ def parse_config(default_params, need_arg_classes):
         torch.cuda.manual_seed_all(params['random_seed'])
         enable_benchmark()
     return params
+
+
+def random_onehot(num_classes, num_samples):
+    return np.eye(num_classes, dtype=np.float32)[np.random.choice(num_classes, num_samples)]

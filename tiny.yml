@@ -2,7 +2,7 @@ cpu_deterministic: true
 result_dir: 'results'
 #exp_name: ''
 G_lr: 0.0001
-total_kimg: 100
+total_kimg: 6
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
@@ -20,22 +20,22 @@ fmap_min: 16
 equalized: true
 kernel_size: 3
 self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
-random_multiply: false
+random_multiply: true
 lr_rampup_kimg: 0.0 # used to be 40
 z_distribution: 'normal' # normal, bernoulli, censored
 init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal
 act_alpha: 0.2
 residual: false
 sagan_non_local: true
-use_factorized_attention: false
+use_factorized_attention: true
 average_conditions: true
 one_hot_probability: 0.8
 dataset_freq: 80
-inception_network_address: ''
+inception_network_address: './results/tiny_inception.pth'
 
 Trainer:
   d_training_repeats: 1 # 2 in big-gan
-  tick_kimg_default: 0.5
+  tick_kimg_default: 0.25
 
 Generator:
   to_rgb_mode: 'pggan' # pggan, sagan, sngan
@@ -44,11 +44,11 @@ Generator:
   dropout: 0.2
   do_mode: 'mul' # mul, drop, prop
   spectral: false
-  act_norm: 'pixel' # pixel, batch, layer, None
+  act_norm: 'layer' # pixel, batch, layer, None
   no_tanh: false
   per_channel_noise: false
-  split_z: false
-  embed_classes_size: null # ~num_classes/2
+  split_z: true
+  embed_classes_size: 4 # ~num_classes/2
 
 Discriminator:
   sngan_rgb: false
@@ -63,22 +63,22 @@ DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0
   attention_transition_kimg: 2
-  minibatch_default: 256
-  lod_training_kimg: 4
-  lod_transition_kimg: 4
+  minibatch_default: 128
+  lod_training_kimg: 0.5
+  lod_transition_kimg: 0.25
   tiny_sizes: true
 
 SaverPlugin:
   keep_old_checkpoints: true
-  network_snapshot_ticks: 2
+  network_snapshot_ticks: 3
 
 SlicedWDistance:
-  patches_per_item: 16
+  patches_per_item: 4
   patch_size: 49
-  max_items: 1024
-  number_of_projections: 512
+  max_items: 128
+  number_of_projections: 64
   dir_repeats: 4
-  dirs_per_repeat: 128
+  dirs_per_repeat: 32
 
 OutputGenerator:
   samples_count: 8
@@ -91,9 +91,9 @@ Adam:
   weight_decay: 0
 
 EfficientLossMonitor:
-  monitor_threshold: 10.0
-  monitor_warmup: 50
-  monitor_patience: 5
+  monitor_threshold: 100.0
+  monitor_warmup: 500
+  monitor_patience: 100
 
 EEGDataset:
   validation_ratio: 0.1 # set to 0.0 to disable
@@ -111,8 +111,8 @@ WatchSingularValues:
   output_snapshot_ticks: 5
 
 InceptionScore:
-  num_samples: 1024
+  num_samples: 256
 
 FID:
   real_stats_location: './data/fid_tiny.pkl'
-  num_samples: 1024
+  num_samples: 256

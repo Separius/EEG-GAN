@@ -83,7 +83,7 @@ class SelfAttention(nn.Module):
 
     def forward(self, x):  # BCT
         if self.gamma == 0:
-            return x
+            return x, None
         query = self.query_conv(x)  # BC/8T
         key = self.pooling(self.key_conv(x))  # BC/8T[/2]
         value = self.pooling(self.value_conv(x))  # BC/2T[/2]

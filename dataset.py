@@ -6,7 +6,7 @@ import numpy as np
 from random import shuffle
 from tqdm import tqdm, trange
 from torch.utils.data import Dataset
-from utils import load_pkl, save_pkl, EPSILON
+from utils import load_pkl, save_pkl, EPSILON, random_onehot
 
 DATASET_VERSION = 2
 
@@ -90,7 +90,7 @@ class EEGDataset(Dataset):
             normalized /= normalized.sum(axis=1, keepdims=True)
             res[:, start_index:start_index + num_options] = np.where(
                 np.random.uniform(0, 1, (batch_size, num_options)) > one_hot_probability, normalized,
-                np.eye(num_options)[np.random.choice(num_options, batch_size)])
+                random_onehot(num_options, batch_size))
             start_index += num_options
         return torch.from_numpy(res)
 
@@ -128,10 +128,10 @@ class EEGDataset(Dataset):
                                                                                        model_dataset_depth_offset, mode,
                                                                                        DATASET_VERSION, split))
             if os.path.exists(target_location):
-                print('loading dataset from file')
+                print('loading {} dataset from file'.format(split))
                 given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
             else:
-                print('creating dataset from scratch')
+                print('creating {} dataset from scratch'.format(split))
                 given_data = None
             dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
                           num_channels, per_user_normalization, progression_scale, per_channel_normalization,
@@ -204,8 +204,10 @@ class EEGDataset(Dataset):
         datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
-        return {'x': torch.from_numpy(datapoint.astype(np.float32)),
-                'y': None if self.y is None else torch.from_numpy(self.y[self.data_pointers[item][0]])}
+        x = torch.from_numpy(datapoint.astype(np.float32))
+        if self.y is None:
+            return {'x': x}
+        return {'x': x, 'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
 
     def alpha_fade(self, datapoint):
         if self.alpha == 1:

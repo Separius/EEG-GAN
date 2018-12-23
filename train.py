@@ -9,15 +9,16 @@ from trainer import Trainer
 from torch.optim import Adam
 from functools import partial
 from dataset import EEGDataset
-from inception_net import ChronoNet
 from torch.utils.data import DataLoader
 from network import Generator, Discriminator
 from torch.optim.lr_scheduler import LambdaLR
+from inception_net import ChronoNet, InceptionModule
 from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
+from utils import (cudize, random_latents, trainable_params, random_onehot,
+                   create_result_subdir, num_params, parse_config, load_model)
 from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, InceptionScore, FID,
                      EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
-from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
 
 default_params = dict(
     cpu_deterministic=False,
@@ -85,6 +86,11 @@ def worker_init(x):
 def main(params):
     dataset_params = params['EEGDataset']
     dataset, val_dataset = EEGDataset.from_config(**dataset_params)
+    if params['DepthManager']['tiny_sizes']:
+        dataset.class_options = [2]
+        dataset.y = random_onehot(2, len(dataset))
+        val_dataset.class_options = [2]
+        val_dataset.y = random_onehot(2, len(val_dataset))
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
@@ -159,7 +165,7 @@ def main(params):
         opt_g = None
         opt_d = None
         train_cur_img = 0
-    latent_size = generator.latent_size
+    latent_size = generator.input_latent_size
     generator.train()
     discriminator.train()
     generator = cudize(generator)
@@ -200,9 +206,12 @@ def main(params):
 
     def get_random_latents(bs, given_dataset=None):
         def partial_function():
-            return {'z': random_latents(bs, latent_size, params['z_distribution']),
-                    'y': (dataset if given_dataset is None else given_dataset).generate_class_condition(bs, params[
-                        'one_hot_probability'])}
+            y = (dataset if given_dataset is None else given_dataset).generate_class_condition(bs, params[
+                'one_hot_probability'])
+            z = random_latents(bs, latent_size, params['z_distribution'])
+            if y is None:
+                return {'z': z}
+            return {'z': z, 'y': y}
 
         return partial_function
 
@@ -218,14 +227,15 @@ def main(params):
     trainer.register_plugin(
         OutputGenerator(lambda x: get_random_latents(x)(), result_dir, dataset.seq_len, params['dataset_freq'],
                         dataset.seq_len, **params['OutputGenerator']))
-    if params['validation_ratio'] > 0:
-        trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
+    if dataset_params['validation_ratio'] > 0:
+        trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks'],
+                                                  params['DepthManager']['tiny_sizes']))
     trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
                                             **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
     if params['inception_network_address'] != '':
-        inception_network = torch.load(params['inception_network_address'])
-        inception_network = inception_network.cudize().eval()
+        inception_network = torch.load(params['inception_network_address'], map_location='cpu')
+        inception_network = cudize(inception_network).eval()
         trainer.register_plugin(InceptionScore(inception_network, **params['InceptionScore']))
         trainer.register_plugin(FID(inception_network, **params['FID']))
     if params['Generator']['spectral']:

@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from tqdm import trange
 from torch.optim import Adam
+from tqdm import trange, tqdm
 from dataset import EEGDataset
-from utils import parse_config, cudize
 from torch.utils.data import DataLoader
+from utils import parse_config, cudize, random_onehot, trainable_params
 
 default_params = {
     'config_file': None,
@@ -14,7 +14,8 @@ default_params = {
     'cuda_device': 0,
     'minibatch_size': 32,
     'num_epochs': 20,
-    'save_location': './runs/inception.pth'
+    'save_location': './results/inception.pth',
+    'tiny_sizes': False
 }
 
 
@@ -38,7 +39,6 @@ class InceptionModule(nn.Module):
         return self.residual(x) + self.aggregate(torch.cat([self.p1(x), self.p2(x), self.p3(x)], dim=1))
 
 
-# TODO implement Inception and FID plugins
 class ChronoNet(nn.Module):
     num_block_map = {2 ** (5 + i): i + 1 for i in range(9)}
 
@@ -55,37 +55,45 @@ class ChronoNet(nn.Module):
         return self.linear(h), h
 
 
-params = parse_config(default_params, [EEGDataset, ChronoNet, Adam])
-train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
-train_dataset.model_depth = val_dataset.model_depth = train_dataset.max_dataset_depth
-train_dataset.alpha = val_dataset.alpha = 1.0
+if __name__ == '__main__':
+    params = parse_config(default_params, [EEGDataset, ChronoNet, Adam])
+    train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
+    depth = train_dataset.max_dataset_depth - train_dataset.model_dataset_depth_offset
+    train_dataset.model_depth = val_dataset.model_depth = depth
+    train_dataset.alpha = val_dataset.alpha = 1.0
+    if params['tiny_sizes']:
+        train_dataset.class_options = [2]
+        train_dataset.y = random_onehot(2, len(train_dataset))
+        val_dataset.class_options = [2]
+        val_dataset.y = random_onehot(2, len(val_dataset))
 
-train_dataloader = DataLoader(train_dataset, params['minibatch_size'], shuffle=True, drop_last=True)
-val_dataloader = DataLoader(val_dataset, params['minibatch_size'], shuffle=False, drop_last=False)
+    train_dataloader = DataLoader(train_dataset, params['minibatch_size'], shuffle=True, drop_last=True)
+    val_dataloader = DataLoader(val_dataset, params['minibatch_size'], shuffle=False, drop_last=False)
 
-network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.class_options[0],
-                           **params['ChronoNet']))
-optimizer = Adam(network.params, **params['Adam'])
-loss_function = nn.CrossEntropyLoss()
-best_loss = None
-
-for i in trange(params['num_epochs']):
+    network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.class_options[0],
+                               **params['ChronoNet']))
     network.train()
-    for x, y in train_dataloader:
-        y_pred, _ = network(cudize(x))
-        y = torch.argmax(y, dim=1)
-        loss = loss_function(y_pred, cudize(y))
-        network.zero_grad()
-        loss.backward()
-        optimizer.step()
-    network.eval()
-    total_loss = 0
-    for i, (x, y) in enumerate(val_dataloader):
-        y_pred, _ = network(cudize(x))
-        y = torch.argmax(y, dim=1)
-        loss = loss_function(y_pred, cudize(y))
-        total_loss += loss.item()
-    new_loss = total_loss / i
-    if best_loss is None or new_loss < best_loss:
-        torch.save(network, params['save_location'])
-        best_loss = new_loss
+    optimizer = Adam(trainable_params(network), **params['Adam'])
+    loss_function = nn.CrossEntropyLoss()
+    best_loss = None
+
+    for i in trange(params['num_epochs']):
+        network.train()
+        for x in tqdm(train_dataloader):
+            y_pred, _ = network(cudize(x['x']))
+            y = torch.argmax(x['y'], dim=1)
+            loss = loss_function(y_pred, cudize(y))
+            network.zero_grad()
+            loss.backward()
+            optimizer.step()
+        network.eval()
+        total_loss = 0
+        for i, x in enumerate(tqdm(val_dataloader)):
+            y_pred, _ = network(cudize(x['x']))
+            y = torch.argmax(x['y'], dim=1)
+            loss = loss_function(y_pred, cudize(y))
+            total_loss += loss.item()
+        new_loss = total_loss / i
+        if best_loss is None or new_loss < best_loss:
+            torch.save(network, params['save_location'])
+            best_loss = new_loss

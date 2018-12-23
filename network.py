@@ -24,7 +24,7 @@ class GBlock(nn.Module):
             self.c1_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
             self.c2_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
         else:
-            self.c1_noise_weight, self.c1_noise_weight = None, None
+            self.c1_noise_weight, self.c2_noise_weight = None, None
         if to_rgb_mode == 'pggan':
             to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1,
                                  equalized=equalized, spectral=spectral, init=init)
@@ -81,6 +81,7 @@ class Generator(nn.Module):
 
         if latent_size is None:
             latent_size = nf(0)
+        self.input_latent_size = latent_size
         if embed_classes_size is not None and num_classes != 0:
             self.y_encoder = nn.Linear(num_classes, embed_classes_size)
             self.y_encoder.weight.data.normal_(1 / embed_classes_size, 0.002)
@@ -90,7 +91,7 @@ class Generator(nn.Module):
             self.y_encoder = None
         num_classes = num_classes if embed_classes_size is None else embed_classes_size
         if split_z:
-            latent_size //= R - initial_size + 1  # we also give part of the z to the first layer
+            latent_size //= R - initial_size + 2  # we also give part of the z to the first layer
             num_classes += latent_size
         self.normalize_latents = normalize_latents
         layer_settings = dict(do=dropout, do_mode=do_mode, num_classes=num_classes,
@@ -150,7 +151,7 @@ class Generator(nn.Module):
             y = self.y_encoder(y)
         h = z.unsqueeze(2)
         if self.split_z:
-            h = z[:, :self.latent_size, :]
+            h = h[:, :self.latent_size, :]
         h = self.block0(h, self._cat_z(-1, y, z), self.depth == 0)
         if self.depth == 0:
             return h, {}
@@ -238,7 +239,7 @@ class Discriminator(nn.Module):
                                             spectral=spectral, init=init, sngan_rgb=sngan_rgb, **layer_settings) for i
                                      in range(R - 1, initial_size - 1, -1)] + [last_block])
         if num_classes != 0:
-            self.class_emb = nn.Linear(num_classes, nf(initial_size - 2), False)
+            self.class_emb = nn.Linear(num_classes, nf(0), False)
             if spectral:
                 self.class_emb = spectral_norm(self.class_emb)
         else:
@@ -259,7 +260,7 @@ class Discriminator(nn.Module):
         if isinstance(x, tuple):
             x, y = x
         if isinstance(x, dict):
-            x, y = x['x'], x['y']
+            x, y = x['x'], x.get('y', None)
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
         if self.depth > 0:
@@ -279,8 +280,10 @@ class Discriminator(nn.Module):
                     all_attention_maps[i] = attention_map
         o = self.linear(h).mean(dim=2).squeeze()
         if y is not None and self.class_emb:
+            if len(y.shape) >= 3:
+                raise ValueError()
             emb = self.class_emb(y)
             if self.average_conditions:
                 emb = emb / y.sum(dim=1, keepdim=True)
-            o = o + F.sum(emb * h, axis=1).mean(dim=2)
+            o = o + (emb * h.squeeze()).sum(dim=1)
         return o, h, all_attention_maps

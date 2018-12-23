@@ -11,6 +11,7 @@ from copy import deepcopy
 from trainer import Trainer
 from datetime import timedelta
 from scipy.stats import entropy
+import torch.nn.functional as F
 from inception_net import ChronoNet
 from sklearn.utils.extmath import randomized_svd
 from torch_utils import Plugin, LossMonitor, Logger
@@ -234,10 +235,11 @@ class SaverPlugin(Plugin):
 
 
 class EvalDiscriminator(Plugin):
-    def __init__(self, create_dataloader_fun, output_snapshot_ticks):
+    def __init__(self, create_dataloader_fun, output_snapshot_ticks, is_tiny):
         super().__init__([(1, 'epoch')])
         self.create_dataloader_fun = create_dataloader_fun
         self.output_snapshot_ticks = output_snapshot_ticks
+        self.is_tiny = is_tiny
 
     def register(self, trainer):
         self.trainer = trainer
@@ -252,10 +254,14 @@ class EvalDiscriminator(Plugin):
             return
         values = []
         with torch.no_grad():
+            i = 0
             for data in self.create_dataloader_fun(self.trainer.stats['minibatch_size'], False,
                                                    self.trainer.dataset.model_depth, self.trainer.dataset.alpha):
                 d_real, _, _ = self.trainer.discriminator(cudize(data))
                 values.append(d_real.mean().item())
+                i += 1
+                if i == 3 and self.is_tiny:
+                    break
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
         self.trainer.stats['memorization']['epoch'] = epoch_index
@@ -419,13 +425,19 @@ class SlicedWDistance(Plugin):
         with torch.no_grad():
             remaining_items = self.max_items
             while remaining_items > 0:
-                fake_latents_in = cudize(self.trainer.random_latents_generator()[:remaining_items])
-                all_fakes.append(self.trainer.generator(fake_latents_in).data.cpu())
-                remaining_items -= fake_latents_in.size(0)
+                z = self.trainer.random_latents_generator()
+                z = {k: v[:remaining_items] for k, v in z.items()}
+                fake_latents_in = cudize(z)
+                all_fakes.append(self.trainer.generator(fake_latents_in)[0].data.cpu())
+                if all_fakes[-1].size(2) < self.patch_size:
+                    break
+                remaining_items -= all_fakes[-1].size(0)
             all_fakes = torch.cat(all_fakes, dim=0)
             remaining_items = self.max_items
             while remaining_items > 0:
                 all_reals.append(next(self.trainer.dataiter)['x'][:remaining_items])
+                if all_reals[-1].size(2) < self.patch_size:
+                    break
                 remaining_items -= all_reals[-1].size(0)
             all_reals = torch.cat(all_reals, dim=0)
         swd = self.get_descriptors(all_fakes, all_reals)
@@ -482,7 +494,8 @@ class InceptionScore(Plugin):
                 y, _ = self.inception_model(g_)
                 if current_start + y.size(0) > self.num_samples:
                     y = y[:self.num_samples - current_start]
-                preds[current_start:current_start + y.size(0)] = torch.nn.functional.softmax(y).data.cpu().numpy()
+                preds[current_start:current_start + y.size(0)] = F.softmax(y, dim=1).data.cpu().numpy()
+                current_start += y.size(0)
         split_scores = []
         for k in range(splits):
             part = preds[k * (self.num_samples // splits): (k + 1) * (self.num_samples // splits), :]
@@ -512,7 +525,7 @@ class FID(Plugin):
 
     @staticmethod
     def calc_mu_sigma(tensor):
-        return tensor.mean(dim=0).squeeze(), tensor.std(dim=0).squeeze()
+        return tensor.mean(dim=0).squeeze().data.cpu().numpy(), np.cov(tensor.data.cpu().numpy(), rowvar=False)
 
     def end(self, *args):
         with torch.no_grad():
@@ -529,9 +542,10 @@ class FID(Plugin):
             remaining_items = self.num_samples
             all_fakes = []
             while remaining_items > 0:
-                fake_latents_in = cudize(self.trainer.random_latents_generator()[:remaining_items])
-                all_fakes.append(self.inception_network(self.trainer.generator(fake_latents_in))[1].data.cpu())
-                remaining_items -= fake_latents_in.size(0)
+                fake_latents_in = cudize(
+                    {k: v[:remaining_items] for k, v in self.trainer.random_latents_generator().items()})
+                all_fakes.append(self.inception_network(self.trainer.generator(fake_latents_in)[0])[1].data.cpu())
+                remaining_items -= all_fakes[-1].size(0)
             all_fakes = torch.cat(all_fakes, dim=0)
             fake_mu, fake_sigma = self.calc_mu_sigma(all_fakes)
         self.trainer.fid_result = self.calculate_frechet_distance(fake_mu, fake_sigma, self.real_mu, self.real_sigma)
