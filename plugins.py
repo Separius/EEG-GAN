@@ -426,7 +426,6 @@ class SlicedWDistance(Plugin):
             remaining_items = self.max_items
             while remaining_items > 0:
                 z = self.trainer.random_latents_generator()
-                z = {k: v[:remaining_items] for k, v in z.items()}
                 fake_latents_in = cudize(z)
                 all_fakes.append(self.trainer.generator(fake_latents_in)[0].data.cpu())
                 if all_fakes[-1].size(2) < self.patch_size:
@@ -435,7 +434,7 @@ class SlicedWDistance(Plugin):
             all_fakes = torch.cat(all_fakes, dim=0)
             remaining_items = self.max_items
             while remaining_items > 0:
-                all_reals.append(next(self.trainer.dataiter)['x'][:remaining_items])
+                all_reals.append(next(self.trainer.dataiter)['x'])
                 if all_reals[-1].size(2) < self.patch_size:
                     break
                 remaining_items -= all_reals[-1].size(0)

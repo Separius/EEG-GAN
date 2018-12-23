@@ -200,6 +200,8 @@ def main(params):
         if not is_training:
             ds.model_depth = depth
             ds.alpha = alpha
+            return DataLoader(ds, minibatch_size, shuffle=False, worker_init_fn=worker_init,
+                              num_workers=params['num_data_workers'], pin_memory=False, drop_last=False)
         return DataLoader(ds, minibatch_size, sampler=InfiniteRandomSampler(list(range(len(ds)))),
                           worker_init_fn=worker_init, num_workers=params['num_data_workers'], pin_memory=False,
                           drop_last=True)
