@@ -138,7 +138,7 @@ def main(params):
             return 1.0
 
     if params['ttur']:
-        params['Adam']['betas'] = (0, 0.99)
+        params['Adam']['betas'] = (0, 0.9)
 
     def get_optimizers(g_lr):
         d_lr = g_lr
