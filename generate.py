@@ -35,6 +35,7 @@ default_params = {
 # TODO aggregation graphs (like the eeg paper) in freq domain
 # TODO condition interpolation * Z(*chunks) interpolation
 # TODO FID-IS AuC for truncation trick
+# TODO Extract Saliency maps of discriminator
 
 
 def output_samples(generator_path, num_samples):
