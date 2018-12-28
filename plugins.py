@@ -22,21 +22,26 @@ import matplotlib.pyplot as plt
 
 
 class DepthManager(Plugin):
-    minibatch_override_big = {0: 8192, 1: 4096, 2: 2048 + 1024, 3: 2048, 4: 1024 + 512, 5: 1024, 6: 256, 7: 128 + 64}
-    tick_kimg_override_big = {0: 5, 1: 5, 2: 5, 3: 4, 4: 4, 5: 3, 6: 3, 7: 2}
-    training_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
-    transition_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
+    # minibatch_override_big = {0: 8192, 1: 4096, 2: 2048 + 1024, 3: 2048, 4: 1024 + 512, 5: 1024, 6: 256, 7: 128 + 64}
+    # tick_kimg_override_big = {0: 5, 1: 5, 2: 5, 3: 4, 4: 4, 5: 3, 6: 3, 7: 2}
+    # training_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
+    # transition_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
 
     minibatch_override_tiny = {}
     tick_kimg_override_tiny = {}
     training_kimg_override_tiny = {}
     transition_kimg_override_tiny = {}
 
+    minibatch_override_big = {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
+    tick_kimg_override_big = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1}
+    training_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
+    transition_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
+
     def __init__(self,  # everything starts from 0 or 1
                  create_dataloader_fun, create_rlg, max_depth,
                  tick_kimg_default, has_attention, get_optimizer, default_lr,
                  tiny_sizes: bool = False, reset_optimizer: bool = True, disable_progression=False,
-                 minibatch_default=8192, depth_offset=0,  # starts form 0
+                 minibatch_default=256, depth_offset=0,  # starts form 0
                  attention_transition_kimg=400, lod_training_kimg=400, lod_transition_kimg=400):
         super().__init__([(1, 'iteration')])
         if tiny_sizes:
@@ -270,7 +275,7 @@ class EvalDiscriminator(Plugin):
 class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int,
-                 samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.99):
+                 samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.9):
         super().__init__([(1, 'epoch')])
         self.old_weight = old_weight
         self.sample_fn = sample_fn

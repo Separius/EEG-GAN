@@ -1,7 +1,7 @@
 cpu_deterministic: false
 result_dir: 'results'
 #exp_name: ''
-G_lr: 0.0001
+G_lr: 0.001
 total_kimg: 6000
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
@@ -63,7 +63,7 @@ DepthManager:
   disable_progression: false
   depth_offset: 0  # starts form 0
   attention_transition_kimg: 400
-  minibatch_default: 8192 #used to be 256
+  minibatch_default: 256 #used to be 256
   lod_training_kimg: 400
   lod_transition_kimg: 400
   tiny_sizes: false
@@ -83,7 +83,7 @@ SlicedWDistance:
 OutputGenerator:
   samples_count: 8
   output_snapshot_ticks: 25
-  old_weight: 0.999
+  old_weight: 0.9
 
 Adam:
   betas: !!python/tuple [0.0, 0.99]

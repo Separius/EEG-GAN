@@ -3,9 +3,9 @@ import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
-from utils import cudize, pixel_norm
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
+from utils import cudize, pixel_norm, EPSILON
 
 
 class PixelNorm(nn.Module):
@@ -109,7 +109,7 @@ class MinibatchStddev(nn.Module):
         group_size = min(s[0], self.group_size)
         y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
         y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
-        y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
+        y = torch.sqrt((y ** 2).mean(dim=0) + EPSILON)  # B//G,C,T
         y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
         y = y.repeat((group_size, 1, s[2]))  # B,1,T
         return torch.cat([x, y], dim=1)
@@ -165,7 +165,8 @@ class EqualizedConv1d(nn.Module):
             self.conv.bias.data.zero_()
         act_alpha = act_alpha if act_alpha > 0 else 1
         if init == 'kaiming_normal':
-            torch.nn.init.kaiming_normal_(self.conv.weight, a=act_alpha)
+            # torch.nn.init.kaiming_normal_(self.conv.weight, a=act_alpha) #TODO
+            torch.nn.init.kaiming_normal_(self.conv.weight, a=1)
         elif init == 'xavier_uniform':
             torch.nn.init.xavier_uniform_(self.conv.weight, gain=calculate_gain('leaky_relu', param=act_alpha))
         elif init == 'orthogonal':
