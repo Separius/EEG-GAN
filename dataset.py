@@ -38,7 +38,7 @@ class EEGDataset(Dataset):
             self.data_pointers = given_data[0]['pointers']
             self.datas = [given_data[1]['arr_{}'.format(i)] for i in trange(len(given_data[1].keys()))]
             if self.y is not None:
-                self.y = [self.y[i] for i in self.files]
+                self.y = self.y[self.files]
             return
         if file_ids is None:
             all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
@@ -52,7 +52,7 @@ class EEGDataset(Dataset):
         else:
             files = list(set(files) - set(train_files))
         if self.y is not None:
-            self.y = [self.y[i] for i in files]
+            self.y = self.y[files]
         self.files = files
         sizes = []
         num_points = []

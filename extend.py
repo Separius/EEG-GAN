@@ -36,7 +36,7 @@ D = load_model(
 enable_benchmark()
 G = cudize(G)
 D = cudize(D)
-G.eval() #TODO also use torch.no_grad()
+G.eval()  # TODO also use torch.no_grad()
 D.eval()
 
 generated, scores, z1, z2 = run_static(G, D, pop_size=params['pop_size'], stage=params['g_stage'],

@@ -307,7 +307,7 @@ class OutputGenerator(Plugin):
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         images = []
         for index in range(len(generated)):
-            fig, (axs) = plt.subplots(num_channels, 2)
+            fig, (axs) = plt.subplots(num_channels, 3)
             if num_channels == 1:
                 axs = axs.reshape(1, -1)
             fig.set_figheight(20)
@@ -315,11 +315,12 @@ class OutputGenerator(Plugin):
             for ch in range(num_channels):
                 data = generated[index, ch, :]
                 axs[ch][0].plot(t, data, color=(0.8, 0, 0, 0.5), label='time domain')
-                # axs[ch][1].semilogy(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain')
                 axs[ch][1].plot(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain')
+                axs[ch][2].semilogy(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain(log)')
                 axs[ch][0].set_ylim([-1.1, 1.1])
                 axs[ch][0].legend()
                 axs[ch][1].legend()
+                axs[ch][2].legend()
             fig.suptitle('epoch: {}, sample: {}'.format(epoch, index))
             fig.canvas.draw()
             image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')

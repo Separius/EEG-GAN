@@ -1,4 +1,3 @@
-cpu_deterministic: false
 result_dir: 'results'
 #exp_name: ''
 G_lr: 0.001
@@ -12,7 +11,7 @@ iwass_target: 1.0
 feature_matching_lambda: 0.0
 loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
-ttur: true
+ttur: false
 #config_file: null
 fmap_base: 1024
 fmap_max: 256
@@ -33,7 +32,7 @@ dataset_freq: 80
 inception_network_address: ''
 
 Trainer:
-  d_training_repeats: 1 # 2 in big-gan
+  d_training_repeats: 5 # used to be 1 and 2 in big-gan
   tick_kimg_default: 5.0
 
 Generator:
@@ -47,7 +46,7 @@ Generator:
   no_tanh: false
   per_channel_noise: false
   split_z: false
-  embed_classes_size: null # ~num_classes/2
+  embed_classes_size: null # 32
 
 Discriminator:
   sngan_rgb: false

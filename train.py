@@ -21,7 +21,6 @@ from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDis
                      EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
 
 default_params = dict(
-    cpu_deterministic=False,
     result_dir='results',
     exp_name='',
     lr=0.001,  # generator's learning rate
@@ -35,7 +34,7 @@ default_params = dict(
     feature_matching_lambda=0.0,
     loss_type='wgan_gp',  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
     cuda_device=0,
-    ttur=True,
+    ttur=False,
     config_file=None,
     fmap_base=1024,
     fmap_max=256,
@@ -86,9 +85,7 @@ def main(params):
     dataset_params = params['EEGDataset']
     dataset, val_dataset = EEGDataset.from_config(**dataset_params)
     if params['DepthManager']['tiny_sizes']:
-        dataset.class_options = [2]
         dataset.y = random_onehot(2, len(dataset))
-        val_dataset.class_options = [2]
         val_dataset.y = random_onehot(2, len(val_dataset))
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]

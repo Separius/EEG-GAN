@@ -166,8 +166,6 @@ def parse_config(default_params, need_arg_classes):
         with open(params['config_file']) as f:
             params = _update_params(params, yaml.load(f))
     params = get_structured_params(params)
-    if params['cpu_deterministic']:
-        params['num_data_workers'] = 0
     random.seed(params['random_seed'])
     np.random.seed(params['random_seed'])
     torch.manual_seed(params['random_seed'])
