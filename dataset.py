@@ -8,7 +8,7 @@ from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from utils import load_pkl, save_pkl, EPSILON, random_onehot
 
-DATASET_VERSION = 2
+DATASET_VERSION = 3
 
 
 class EEGDataset(Dataset):
@@ -29,7 +29,7 @@ class EEGDataset(Dataset):
         self.per_channel_normalization = per_channel_normalization
         self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
         self.min_dataset_depth = self.model_dataset_depth_offset
-        self.y, self.class_options = self.read_meta_info(os.path.join(dir_path, 'meta.info'))
+        self.y, file_ids = self.read_meta_info(os.path.join(dir_path, 'meta.npy'))
         self.norms = norms
         if given_data is not None:
             self.sizes = given_data[0]['sizes']
@@ -40,7 +40,10 @@ class EEGDataset(Dataset):
             if self.y is not None:
                 self.y = [self.y[i] for i in self.files]
             return
-        all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        if file_ids is None:
+            all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        else:
+            all_files = [os.path.join(dir_path, '{}_1.txt'.format(f)) for f in file_ids]
         files = len(all_files)
         files = [i for i in range(files)]
         if train_files is None:
@@ -80,38 +83,23 @@ class EEGDataset(Dataset):
         if not per_user_normalization:
             self.normalize_all()
 
-    def generate_class_condition(self, batch_size, one_hot_probability=0.8):
-        if self.y is None:
-            return None
-        res = np.zeros((batch_size, len(self.y[0])), dtype=np.float32)
-        start_index = 0
-        for num_options in self.class_options:
-            normalized = np.random.uniform(EPSILON, 1, (batch_size, num_options))
-            normalized /= normalized.sum(axis=1, keepdims=True)
-            res[:, start_index:start_index + num_options] = np.where(
-                np.random.uniform(0, 1, (batch_size, num_options)) > one_hot_probability, normalized,
-                random_onehot(num_options, batch_size))
-            start_index += num_options
-        return torch.from_numpy(res)
-
     @staticmethod
     def read_meta_info(file_name):
         if not os.path.exists(file_name):
             return None, None
-        # example:
-        # 3 2 2
-        # 0.33 0.33 0.34 1 0 0 1
-        attributes = []
-        num_values = None
-        first_line = True
-        with open(file_name) as f:
-            for line in f:
-                if first_line:
-                    num_values = [int(p) for p in line.split()]
-                    first_line = False
-                    continue
-                attributes.append(np.array([float(p) for p in line.split()], dtype=np.float32))
-        return np.stack(attributes, axis=0), num_values
+        y = np.load(file_name)
+        file_ids = y[:, 0]
+        y = y[:, 1:].astype(np.float32)
+        y[:, 0] = (y[:, 0] - 10.0) / 90.0
+        return y, file_ids
+
+    def generate_class_condition(self, batch_size):
+        if self.y is None:
+            return None
+        res = np.zeros((batch_size, self.y.shape[1]), dtype=np.float32)
+        res[:, 0] = np.random.rand(batch_size)
+        res[:, 1:] = np.random.rand(batch_size, self.y.shape[1] - 1) > 0.5  # TODO
+        return torch.from_numpy(res)
 
     @classmethod
     def from_config(cls, validation_ratio: float, dir_path: str, seq_len: int, stride: float, num_channels: int,

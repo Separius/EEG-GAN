@@ -29,7 +29,6 @@ residual: false
 sagan_non_local: true
 use_factorized_attention: false
 average_conditions: true
-one_hot_probability: 0.8
 dataset_freq: 80
 inception_network_address: ''
 

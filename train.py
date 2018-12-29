@@ -52,7 +52,6 @@ default_params = dict(
     sagan_non_local=True,
     use_factorized_attention=False,
     average_conditions=True,
-    one_hot_probability=0.8,
     dataset_freq=80,
     inception_network_address=''
 )
@@ -209,8 +208,7 @@ def main(params):
 
     def get_random_latents(bs, given_dataset=None):
         def partial_function():
-            y = (dataset if given_dataset is None else given_dataset).generate_class_condition(bs, params[
-                'one_hot_probability'])
+            y = (dataset if given_dataset is None else given_dataset).generate_class_condition(bs)
             z = random_latents(bs, latent_size, params['z_distribution'])
             if y is None:
                 return {'z': z}
