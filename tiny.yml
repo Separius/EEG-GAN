@@ -1,7 +1,7 @@
 result_dir: 'results'
 #exp_name: ''
 G_lr: 0.001
-total_kimg: 10
+total_kimg: 8
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373

@@ -47,6 +47,9 @@ def random_latents(num_latents, latent_size, z_distribution='normal'):
     else:
         raise ValueError()
 
+def mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
 def create_result_subdir(results_dir, experiment_name, dir_pattern='{new_num:03}-{exp_name}'):
     if not os.path.exists(results_dir):

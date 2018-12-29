@@ -4,7 +4,7 @@ from torch.optim import Adam
 from tqdm import trange, tqdm
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
-from utils import parse_config, cudize, trainable_params
+from utils import parse_config, cudize, trainable_params, mkdir
 
 default_params = {
     'config_file': None,
@@ -76,6 +76,7 @@ if __name__ == '__main__':
     depth = train_dataset.max_dataset_depth - train_dataset.model_dataset_depth_offset
     train_dataset.model_depth = val_dataset.model_depth = depth
     train_dataset.alpha = val_dataset.alpha = 1.0
+    mkdir('./results')
 
     train_dataloader = DataLoader(train_dataset, params['minibatch_size'], shuffle=True, drop_last=True)
     val_dataloader = DataLoader(val_dataset, params['minibatch_size'], shuffle=False, drop_last=False)
