@@ -4,18 +4,19 @@ from torch.optim import Adam
 from tqdm import trange, tqdm
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
-from utils import parse_config, cudize, random_onehot, trainable_params
+from utils import parse_config, cudize, trainable_params
 
 default_params = {
     'config_file': None,
-    'cpu_deterministic': True,
     'num_data_workers': 1,
     'random_seed': 1373,
     'cuda_device': 0,
-    'minibatch_size': 32,
+    'minibatch_size': 64,
     'num_epochs': 20,
     'save_location': './results/inception.pth',
-    'tiny_sizes': False
+    'tiny_sizes': False,
+    'age_weight': 1.0,
+    'attr_weight': 1.0
 }
 
 
@@ -55,34 +56,43 @@ class ChronoNet(nn.Module):
         return self.linear(h), h
 
 
+def calc_loss(x):
+    y_pred, _ = network(cudize(x['x']))
+    y = cudize(x['y'])
+    if params['age_weight'] != 0.0:
+        loss_age = loss_function_age(y_pred[:, 0], y[:, 0])
+    else:
+        loss_age = 0.0
+    if params['attr_weight'] != 0.0:
+        loss_attr = loss_function_attrs(y_pred[:, 1:], y[:, 1:]) * num_attrs
+    else:
+        loss_attr = 0.0
+    return loss_attr * params['attr_weight'] + loss_age * params['age_weight']
+
+
 if __name__ == '__main__':
     params = parse_config(default_params, [EEGDataset, ChronoNet, Adam])
     train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
     depth = train_dataset.max_dataset_depth - train_dataset.model_dataset_depth_offset
     train_dataset.model_depth = val_dataset.model_depth = depth
     train_dataset.alpha = val_dataset.alpha = 1.0
-    if params['tiny_sizes']:
-        train_dataset.class_options = [2]
-        train_dataset.y = random_onehot(2, len(train_dataset))
-        val_dataset.class_options = [2]
-        val_dataset.y = random_onehot(2, len(val_dataset))
 
     train_dataloader = DataLoader(train_dataset, params['minibatch_size'], shuffle=True, drop_last=True)
     val_dataloader = DataLoader(val_dataset, params['minibatch_size'], shuffle=False, drop_last=False)
 
-    network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.class_options[0],
+    network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.y.shape[1],
                                **params['ChronoNet']))
+    num_attrs = train_dataset.y.shape[1] - 1
     network.train()
     optimizer = Adam(trainable_params(network), **params['Adam'])
-    loss_function = nn.CrossEntropyLoss()
+    loss_function_age = nn.MSELoss()
+    loss_function_attrs = nn.BCEWithLogitsLoss()
     best_loss = None
 
     for i in trange(params['num_epochs']):
         network.train()
         for x in tqdm(train_dataloader):
-            y_pred, _ = network(cudize(x['x']))
-            y = torch.argmax(x['y'], dim=1)
-            loss = loss_function(y_pred, cudize(y))
+            loss = calc_loss(x)
             network.zero_grad()
             loss.backward()
             optimizer.step()
@@ -90,9 +100,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             total_loss = 0
             for i, x in enumerate(tqdm(val_dataloader)):
-                y_pred, _ = network(cudize(x['x']))
-                y = torch.argmax(x['y'], dim=1)
-                loss = loss_function(y_pred, cudize(y))
+                loss = calc_loss(x)
                 total_loss += loss.item()
             new_loss = total_loss / i
             if best_loss is None or new_loss < best_loss:

@@ -15,8 +15,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from inception_net import ChronoNet, InceptionModule
 from losses import generator_loss, discriminator_loss
 from torch.utils.data.sampler import SubsetRandomSampler
-from utils import (cudize, random_latents, trainable_params, random_onehot,
-                   create_result_subdir, num_params, parse_config, load_model)
+from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
 from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, InceptionScore, FID,
                      EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
 
@@ -84,9 +83,6 @@ def worker_init(x):
 def main(params):
     dataset_params = params['EEGDataset']
     dataset, val_dataset = EEGDataset.from_config(**dataset_params)
-    if params['DepthManager']['tiny_sizes']:
-        dataset.y = random_onehot(2, len(dataset))
-        val_dataset.y = random_onehot(2, len(val_dataset))
     if params['config_file'] and params['exp_name'] == '':
         params['exp_name'] = params['config_file'].split('/')[-1].split('.')[0]
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])

@@ -6,7 +6,7 @@ import numpy as np
 from random import shuffle
 from tqdm import tqdm, trange
 from torch.utils.data import Dataset
-from utils import load_pkl, save_pkl, EPSILON, random_onehot
+from utils import load_pkl, save_pkl
 
 DATASET_VERSION = 3
 

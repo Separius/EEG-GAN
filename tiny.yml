@@ -1,8 +1,7 @@
-cpu_deterministic: true
 result_dir: 'results'
 #exp_name: ''
-G_lr: 0.0001
-total_kimg: 6
+G_lr: 0.001
+total_kimg: 10
 resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
@@ -12,14 +11,14 @@ iwass_target: 1.0
 feature_matching_lambda: 0.0
 loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
-ttur: true
+ttur: false
 #config_file: null
 fmap_base: 128
 fmap_max: 256
 fmap_min: 16
 equalized: true
 kernel_size: 3
-self_attention_layers: [3]  # starts from 0 or null (for G it means putting it after ith layer)
+self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
 random_multiply: false
 lr_rampup_kimg: 0.0 # used to be 40
 z_distribution: 'normal' # normal, bernoulli, censored
@@ -29,12 +28,11 @@ residual: false
 sagan_non_local: true
 use_factorized_attention: true
 average_conditions: true
-one_hot_probability: 0.8
 dataset_freq: 80
 inception_network_address: './results/tiny_inception.pth'
 
 Trainer:
-  d_training_repeats: 1 # 2 in big-gan
+  d_training_repeats: 2 # 2 in big-gan
   tick_kimg_default: 0.25
 
 Generator:
