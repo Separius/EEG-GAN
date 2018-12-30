@@ -2,7 +2,9 @@ minibatch_size: 128
 age_weight: 0.0
 attr_weight: 1.0
 ChronoNet:
-  network_channels: 64
+  network_channels: 32
+  stride: 2
+  num_branches: 3
 Adam:
   lr: 0.001
 EEGDataset:

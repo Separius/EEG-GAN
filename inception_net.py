@@ -20,33 +20,35 @@ default_params = {
 }
 
 
-def get_conv(input_channels, kernel_size):
+def get_conv(input_channels, kernel_size, stride=2):
     return nn.Sequential(
-        nn.Conv1d(input_channels, input_channels, kernel_size=kernel_size, padding=(kernel_size - 1) // 2, stride=2),
-        nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
+        nn.Conv1d(input_channels, input_channels, kernel_size=kernel_size, padding=(kernel_size - 1) // 2,
+                  stride=stride), nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
 
 
 class InceptionModule(nn.Module):
-    def __init__(self, input_channels):
+    k_size = {0: 3, 1: 5, 2: 9, 3: 15}
+
+    def __init__(self, input_channels, stride=2, num_branches=3):
         super().__init__()
-        self.p1 = get_conv(input_channels, 3)
-        self.p2 = get_conv(input_channels, 5)
-        self.p3 = get_conv(input_channels, 9)
-        self.aggregate = nn.Sequential(nn.Conv1d(3 * input_channels, input_channels, kernel_size=1, padding=0),
-                                       nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
-        self.residual = nn.AvgPool1d(kernel_size=2)
+        self.conv = nn.ModuleList([get_conv(input_channels, self.k_size[i], stride) for i in range(num_branches)])
+        self.aggregate = nn.Sequential(
+            nn.Conv1d(len(self.conv) * input_channels, input_channels, kernel_size=1, padding=0), nn.ReLU(inplace=True),
+            nn.BatchNorm1d(input_channels))
+        self.residual = nn.AvgPool1d(kernel_size=stride)
 
     def forward(self, x):
-        return self.residual(x) + self.aggregate(torch.cat([self.p1(x), self.p2(x), self.p3(x)], dim=1))
+        return self.residual(x) + self.aggregate(torch.cat([conv(x) for conv in self.conv], dim=1))
 
 
 class ChronoNet(nn.Module):
     num_block_map = {2 ** (5 + i): i + 1 for i in range(9)}
 
-    def __init__(self, num_channels, seq_len, target_classes, network_channels=64):
+    def __init__(self, num_channels, seq_len, target_classes, network_channels=64, stride=2, num_branches=2):
         super().__init__()
         self.num_classes = target_classes
-        network = [InceptionModule(network_channels) for i in range(self.num_block_map[seq_len])]
+        network = [InceptionModule(network_channels, stride, num_branches) for i in range(self.num_block_map[seq_len])]
+        print('num_blocks', len(network))
         self.network = nn.Sequential(nn.Conv1d(num_channels, network_channels, kernel_size=1), *network,
                                      nn.AdaptiveAvgPool1d(1))
         self.linear = nn.Linear(network_channels, target_classes)
@@ -92,7 +94,7 @@ if __name__ == '__main__':
     loss_function_age = nn.MSELoss()
     loss_function_attrs = nn.BCEWithLogitsLoss()
     best_loss = None
-    epochs_tqdm = tqdm(total=params['num_epochs'], dynamic_ncols=True)
+    epochs_tqdm = tqdm(range(params['num_epochs']), total=params['num_epochs'], dynamic_ncols=True)
     for _ in epochs_tqdm:
         network.train()
         train_tqdm = tqdm(train_dataloader, dynamic_ncols=True)
