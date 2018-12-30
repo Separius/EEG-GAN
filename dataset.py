@@ -14,7 +14,7 @@ DATASET_VERSION = 4
 class EEGDataset(Dataset):
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
                  seq_len: int = 512, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
-                 progression_scale: int = 2, per_channel_normalization: bool = False,
+                 progression_scale: int = 2, per_channel_normalization: bool = False, no_condition: bool = True,
                  model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
         super().__init__()
         self.model_depth = 0
@@ -31,6 +31,7 @@ class EEGDataset(Dataset):
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.y, file_ids = self.read_meta_info(os.path.join(dir_path, 'meta.npy'))
         self.norms = norms
+        self.no_condition = no_condition
         if given_data is not None:
             self.sizes = given_data[0]['sizes']
             self.files = given_data[0]['files']
@@ -94,7 +95,7 @@ class EEGDataset(Dataset):
         return y, file_ids
 
     def generate_class_condition(self, batch_size):
-        if self.y is None:
+        if self.y is None or self.no_condition:
             return None
         res = np.zeros((batch_size, self.y.shape[1]), dtype=np.float32)
         res[:, 0] = np.random.rand(batch_size)
@@ -104,7 +105,7 @@ class EEGDataset(Dataset):
     @classmethod
     def from_config(cls, validation_ratio: float, dir_path: str, seq_len: int, stride: float, num_channels: int,
                     per_user_normalization: bool, progression_scale: int, model_dataset_depth_offset: int,
-                    per_channel_normalization: bool):
+                    per_channel_normalization: bool, no_condition: bool):
         mode = per_user_normalization * 2 + per_channel_normalization * 1
         train_files = None
         train_norms = None
@@ -126,7 +127,7 @@ class EEGDataset(Dataset):
                 given_data = None
             dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
                           num_channels, per_user_normalization, progression_scale, per_channel_normalization,
-                          model_dataset_depth_offset)
+                          no_condition, model_dataset_depth_offset)
             if train_files is None:
                 train_files = dataset.files
                 train_norms = dataset.norms
@@ -196,7 +197,7 @@ class EEGDataset(Dataset):
                                                self.model_depth + self.model_dataset_depth_offset)
         datapoint = self.alpha_fade(datapoint)
         x = torch.from_numpy(datapoint.astype(np.float32))
-        if self.y is None:
+        if self.y is None or self.no_condition:
             return {'x': x}
         return {'x': x, 'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
 

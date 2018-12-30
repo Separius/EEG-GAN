@@ -161,7 +161,6 @@ if __name__ == '__main__':
         train_tqdm = tqdm(train_dataloader, dynamic_ncols=True)
         for i, x in enumerate(train_tqdm):
             loss, _ = calc_loss(x)
-            print(_)
             network.zero_grad()
             loss.backward()
             optimizer.step()

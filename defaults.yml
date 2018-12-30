@@ -103,6 +103,7 @@ EEGDataset:
   progression_scale: 2
   per_channel_normalization: false
   model_dataset_depth_offset: 2
+  no_condition: true
 
 WatchSingularValues:
   one_divided_two: 10.0

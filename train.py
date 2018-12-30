@@ -97,7 +97,7 @@ def main(params):
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
     stats_to_log.extend(['swd.val', 'swd.epoch'])
 
-    num_classes = 0 if dataset.y is None else dataset.y.shape[1]
+    num_classes = 0 if dataset.y is None or dataset.no_condition else dataset.y.shape[1]
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
                                fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
