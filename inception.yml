@@ -1,6 +1,7 @@
 minibatch_size: 256
 age_weight: 0.0
 attr_weight: 1.0
+#single_attr: null
 ChronoNet:
   network_channels: 16
   stride: 4

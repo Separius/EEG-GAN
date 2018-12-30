@@ -16,7 +16,8 @@ default_params = {
     'save_location': './results/inception.pth',
     'tiny_sizes': False,
     'age_weight': 0.0,
-    'attr_weight': 1.0
+    'attr_weight': 1.0,
+    'single_attr': None,
 }
 
 
@@ -67,7 +68,11 @@ def calc_loss(x):
         loss_age = 0.0
     if params['attr_weight'] != 0.0:
         start_index = 1 if params['age_weight'] != 0.0 else 0
-        loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
+        if params['single_attr'] is None:
+            loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
+        else:
+            loss_attr = loss_function_attrs(y_pred[:, start_index + params['single_attr']],
+                                            y[:, 1 + params['single_attr']])
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight']
@@ -87,6 +92,8 @@ if __name__ == '__main__':
     output_size = train_dataset.y.shape[1]
     if params['attr_weight'] == 0.0:
         output_size = 1
+    elif params['single_attr'] is not None:
+        output_size = 2
     if params['age_weight'] == 0.0:
         output_size -= 1
     assert output_size > 0
