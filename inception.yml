@@ -2,6 +2,9 @@ minibatch_size: 256
 age_weight: 0.0
 attr_weight: 1.0
 single_attr: 0
+norm: 'batch'  # batch or null or layer or group or instance
+spectral: false
+weight_norm: false
 ChronoNet:
   network_channels: 8
   stride: 4

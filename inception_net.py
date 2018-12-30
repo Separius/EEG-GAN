@@ -18,13 +18,41 @@ default_params = {
     'age_weight': 0.0,
     'attr_weight': 1.0,
     'single_attr': None,
+    'norm': 'batch',  # batch or None or layer or group or instance
+    'spectral': False,
+    'weight_norm': False,
 }
 
 
+def weight(m):
+    if params['weight_norm']:
+        return nn.utils.weight_norm(m)
+    return m
+
+
+def spectral(m):
+    if params['spectral']:
+        return nn.utils.spectral_norm(m)
+    return m
+
+
+def norm(input_channels):
+    mode = params['norm']
+    if mode == 'batch':
+        return nn.BatchNorm1d(input_channels)
+    elif mode == 'layer':
+        return nn.GroupNorm(1, input_channels)
+    elif mode == 'instance':
+        return nn.GroupNorm(input_channels, input_channels)
+    elif mode == 'group':
+        return nn.GroupNorm(input_channels // 2, input_channels)
+    return nn.Sequential()
+
+
 def get_conv(input_channels, kernel_size, stride):
-    return nn.Sequential(
+    return nn.Sequential(weight(spectral(
         nn.Conv1d(input_channels, input_channels, kernel_size=kernel_size, padding=(kernel_size - 1) // 2,
-                  stride=stride), nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
+                  stride=stride))), nn.ReLU(inplace=True), norm(input_channels))
 
 
 class InceptionModule(nn.Module):
@@ -34,8 +62,8 @@ class InceptionModule(nn.Module):
         super().__init__()
         self.conv = nn.ModuleList([get_conv(input_channels, self.k_size[i], stride) for i in range(num_branches)])
         self.aggregate = nn.Sequential(
-            nn.Conv1d(len(self.conv) * input_channels, input_channels, kernel_size=1, padding=0), nn.ReLU(inplace=True),
-            nn.BatchNorm1d(input_channels))
+            weight(spectral(nn.Conv1d(len(self.conv) * input_channels, input_channels, kernel_size=1, padding=0))),
+            nn.ReLU(inplace=True), norm(input_channels))
         self.residual = nn.AvgPool1d(kernel_size=stride)
 
     def forward(self, x):
@@ -45,14 +73,14 @@ class InceptionModule(nn.Module):
 class ChronoNet(nn.Module):
     num_block_map = {2 ** (8 + i): i + 1 for i in range(9)}
 
-    def __init__(self, num_channels, seq_len, target_classes, network_channels=32, stride=4, num_branches=2):
+    def __init__(self, num_channels, seq_len, target_classes, network_channels=8, stride=4, num_branches=2):
         super().__init__()
         self.num_classes = target_classes
         network = [InceptionModule(network_channels, stride, num_branches) for i in range(self.num_block_map[seq_len])]
         print('num_blocks', len(network))
-        self.network = nn.Sequential(nn.Conv1d(num_channels, network_channels, kernel_size=1), *network,
-                                     nn.AdaptiveAvgPool1d(1))
-        self.linear = nn.Linear(network_channels, target_classes)
+        self.network = nn.Sequential(weight(spectral(nn.Conv1d(num_channels, network_channels, kernel_size=1))),
+                                     *network, nn.AdaptiveAvgPool1d(1))
+        self.linear = weight(spectral(nn.Linear(network_channels, target_classes)))
 
     def forward(self, x):
         h = self.network(x).squeeze()
@@ -71,8 +99,7 @@ def calc_loss(x):
         if params['single_attr'] is None:
             loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
         else:
-            loss_attr = loss_function_attrs(y_pred[:, start_index + params['single_attr']],
-                                            y[:, 1 + params['single_attr']])
+            loss_attr = loss_function_attrs(y_pred[:, start_index], y[:, 1 + params['single_attr']])
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight']
