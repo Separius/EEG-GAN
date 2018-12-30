@@ -3,7 +3,7 @@ age_weight: 0.0
 attr_weight: 1.0
 single_attr: 0
 ChronoNet:
-  network_channels: 16
+  network_channels: 8
   stride: 4
   num_branches: 2
 Adam:

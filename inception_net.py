@@ -94,6 +94,8 @@ if __name__ == '__main__':
         output_size = 1
     elif params['single_attr'] is not None:
         output_size = 2
+        print('majority voting', params['single_attr'], train_dataset.y[:, 1 + params['single_attr']].mean(),
+              val_dataset.y[:, 1 + params['single_attr']].mean())
     if params['age_weight'] == 0.0:
         output_size -= 1
     assert output_size > 0
