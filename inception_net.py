@@ -67,7 +67,7 @@ def calc_loss(x):
         loss_age = 0.0
     if params['attr_weight'] != 0.0:
         start_index = 1 if params['age_weight'] != 0.0 else 0
-        loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, start_index:]) * num_attrs
+        loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight']

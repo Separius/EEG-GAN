@@ -8,7 +8,7 @@ from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from utils import load_pkl, save_pkl
 
-DATASET_VERSION = 3
+DATASET_VERSION = 4
 
 
 class EEGDataset(Dataset):
@@ -111,10 +111,13 @@ class EEGDataset(Dataset):
         datasets = [None, None]
         for index, split in enumerate(('train', 'val')):
             target_location = os.path.join(dir_path,
-                                           '{}%_{}l_{}c_{}p_{}o_{}m_{}v_{}.npz'.format(validation_ratio, seq_len,
-                                                                                       num_channels, progression_scale,
-                                                                                       model_dataset_depth_offset, mode,
-                                                                                       DATASET_VERSION, split))
+                                           '{}%_{}l_{}c_{}p_{}o_{}m_{}s_{}v_{}.npz'.format(validation_ratio, seq_len,
+                                                                                           num_channels,
+                                                                                           progression_scale,
+                                                                                           model_dataset_depth_offset,
+                                                                                           mode,
+                                                                                           stride, DATASET_VERSION,
+                                                                                           split))
             if os.path.exists(target_location):
                 print('loading {} dataset from file'.format(split))
                 given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
