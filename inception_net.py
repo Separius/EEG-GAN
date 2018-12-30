@@ -105,7 +105,7 @@ def calc_loss(x):
         else:
             loss_attr = loss_function_attrs(y_pred[:, start_index], y[:, 1 + params['single_attr']])
             res = accuracy(y_pred[:, start_index], y[:, 1 + params['single_attr']])
-            acc = res.float().mean()
+            acc = res
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight'], acc
@@ -115,7 +115,7 @@ def accuracy(output, target):
     """Computes the accuracy for multiple binary predictions"""
     pred = torch.sigmoid(output) >= 0.5
     truth = target >= 0.5
-    acc = pred.eq(truth).sum() / target.numel()
+    acc = pred.eq(truth).float().mean()
     return acc
 
 
@@ -171,11 +171,14 @@ if __name__ == '__main__':
         network.eval()
         with torch.no_grad():
             total_loss = 0
+            total_acc = 0
             for x in tqdm(val_dataloader, dynamic_ncols=True):
-                loss, accuracy = calc_loss(x)
+                loss, acc = calc_loss(x)
+                total_acc += acc.item()
                 total_loss += loss.item()
             new_loss = total_loss / len(val_dataloader)
-            epochs_tqdm.set_description('validation loss ' + str(new_loss))
+            new_acc = total_acc / len(val_dataloader)
+            epochs_tqdm.set_description('validation loss ' + str(new_loss) + ' %' + str(new_acc))
             if best_loss is None or new_loss < best_loss:
                 torch.save(network, params['save_location'])
                 best_loss = new_loss
