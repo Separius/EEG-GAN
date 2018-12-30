@@ -11,11 +11,11 @@ default_params = {
     'num_data_workers': 1,
     'random_seed': 1373,
     'cuda_device': 0,
-    'minibatch_size': 64,
+    'minibatch_size': 128,
     'num_epochs': 20,
     'save_location': './results/inception.pth',
     'tiny_sizes': False,
-    'age_weight': 1.0,
+    'age_weight': 0.0,
     'attr_weight': 1.0
 }
 
