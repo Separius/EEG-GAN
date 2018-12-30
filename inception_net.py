@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 from torch.optim import Adam
-from tqdm import trange, tqdm
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
-from utils import parse_config, cudize, trainable_params, mkdir
+from utils import parse_config, cudize, trainable_params, mkdir, num_params
 
 default_params = {
     'config_file': None,
@@ -83,15 +83,17 @@ if __name__ == '__main__':
 
     network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.y.shape[1],
                                **params['ChronoNet']))
+    network.train()
     num_attrs = train_dataset.y.shape[1] - 1
     print('num_attrs', num_attrs)
-    network.train()
+    print('num_params', num_params(network))
+    print('train_size', train_dataset.shape)
     optimizer = Adam(trainable_params(network), **params['Adam'])
     loss_function_age = nn.MSELoss()
     loss_function_attrs = nn.BCEWithLogitsLoss()
     best_loss = None
-
-    for i in trange(params['num_epochs']):
+    epochs_tqdm = tqdm(total=params['num_epochs'], dynamic_ncols=True)
+    for _ in epochs_tqdm:
         network.train()
         train_tqdm = tqdm(train_dataloader, dynamic_ncols=True)
         for i, x in enumerate(train_tqdm):
@@ -100,18 +102,17 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             if i % 20 == 0:
-                train_tqdm.set_description(loss.item())
+                train_tqdm.set_description('training loss ' + str(loss.item()))
         train_tqdm.close()
         network.eval()
         with torch.no_grad():
             total_loss = 0
-            val_tqdm = tqdm(val_dataloader, leave=False, dynamic_ncols=True)
-            for i, x in enumerate(val_tqdm):
+            for x in tqdm(val_dataloader, dynamic_ncols=True):
                 loss = calc_loss(x)
                 total_loss += loss.item()
-            new_loss = total_loss / i
-            val_tqdm.set_description(new_loss)
-            val_tqdm.close()
+            new_loss = total_loss / len(val_dataloader)
+            epochs_tqdm.set_description('validation loss ' + str(new_loss))
             if best_loss is None or new_loss < best_loss:
                 torch.save(network, params['save_location'])
                 best_loss = new_loss
+    epochs_tqdm.close()
