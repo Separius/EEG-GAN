@@ -7,3 +7,4 @@ confs/
 *.pkl
 .vscode/
 .mypy_cache/
+!data/tuh1/meta.npy

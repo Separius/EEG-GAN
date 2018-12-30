@@ -149,11 +149,14 @@ def load_model(model_path, return_all=False):
     return state['model'], state['optimizer'], state['cur_nimg']
 
 
-def parse_config(default_params, need_arg_classes):
+def parse_config(default_params, need_arg_classes, exclude_adam=True):
     parser = ArgumentParser()
-    excludes = {'Adam': {'lr', 'amsgrad'}}
-    default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
-    auto_args = create_params(need_arg_classes, excludes, default_overrides)
+    if exclude_adam:
+        excludes = {'Adam': {'lr', 'amsgrad'}}
+        default_overrides = {'Adam': {'betas': (0.0, 0.99)}}
+        auto_args = create_params(need_arg_classes, excludes, default_overrides)
+    else:
+        auto_args = create_params(need_arg_classes)
     for k in default_params:
         parser.add_argument('--{}'.format(k), type=partial(generic_arg_parse, hinttype=type(default_params[k])))
     for cls in auto_args:

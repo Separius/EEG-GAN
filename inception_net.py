@@ -20,20 +20,20 @@ default_params = {
 }
 
 
-def get_conv(input_channels, kernel_size, dropout):
+def get_conv(input_channels, kernel_size):
     return nn.Sequential(
         nn.Conv1d(input_channels, input_channels, kernel_size=kernel_size, padding=(kernel_size - 1) // 2, stride=2),
-        nn.BatchNorm1d(input_channels), nn.ReLU(inplace=True), nn.Dropout(dropout))
+        nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
 
 
 class InceptionModule(nn.Module):
-    def __init__(self, input_channels, dropout):
+    def __init__(self, input_channels):
         super().__init__()
-        self.p1 = get_conv(input_channels, 3, dropout)
-        self.p2 = get_conv(input_channels, 5, dropout)
-        self.p3 = get_conv(input_channels, 9, dropout)
+        self.p1 = get_conv(input_channels, 3)
+        self.p2 = get_conv(input_channels, 5)
+        self.p3 = get_conv(input_channels, 9)
         self.aggregate = nn.Sequential(nn.Conv1d(3 * input_channels, input_channels, kernel_size=1, padding=0),
-                                       nn.BatchNorm1d(input_channels), nn.ReLU(inplace=True))
+                                       nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
         self.residual = nn.AvgPool1d(kernel_size=2)
 
     def forward(self, x):
@@ -43,10 +43,10 @@ class InceptionModule(nn.Module):
 class ChronoNet(nn.Module):
     num_block_map = {2 ** (5 + i): i + 1 for i in range(9)}
 
-    def __init__(self, num_channels, seq_len, target_classes, network_channels=64, dropout=0.2):
+    def __init__(self, num_channels, seq_len, target_classes, network_channels=64):
         super().__init__()
         self.num_classes = target_classes
-        network = [InceptionModule(network_channels, dropout) for i in range(self.num_block_map[seq_len])]
+        network = [InceptionModule(network_channels) for i in range(self.num_block_map[seq_len])]
         self.network = nn.Sequential(nn.Conv1d(num_channels, network_channels, kernel_size=1), *network,
                                      nn.AdaptiveAvgPool1d(1))
         self.linear = nn.Linear(network_channels, target_classes)
@@ -71,7 +71,7 @@ def calc_loss(x):
 
 
 if __name__ == '__main__':
-    params = parse_config(default_params, [EEGDataset, ChronoNet, Adam])
+    params = parse_config(default_params, [EEGDataset, ChronoNet, Adam], False)
     train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
     depth = train_dataset.max_dataset_depth - train_dataset.model_dataset_depth_offset
     train_dataset.model_depth = val_dataset.model_depth = depth
@@ -84,6 +84,7 @@ if __name__ == '__main__':
     network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.y.shape[1],
                                **params['ChronoNet']))
     num_attrs = train_dataset.y.shape[1] - 1
+    print('num_attrs', num_attrs)
     network.train()
     optimizer = Adam(trainable_params(network), **params['Adam'])
     loss_function_age = nn.MSELoss()
@@ -92,18 +93,25 @@ if __name__ == '__main__':
 
     for i in trange(params['num_epochs']):
         network.train()
-        for x in tqdm(train_dataloader):
+        train_tqdm = tqdm(train_dataloader, dynamic_ncols=True)
+        for i, x in enumerate(train_tqdm):
             loss = calc_loss(x)
             network.zero_grad()
             loss.backward()
             optimizer.step()
+            if i % 20 == 0:
+                train_tqdm.set_description(loss.item())
+        train_tqdm.close()
         network.eval()
         with torch.no_grad():
             total_loss = 0
-            for i, x in enumerate(tqdm(val_dataloader)):
+            val_tqdm = tqdm(val_dataloader, leave=False, dynamic_ncols=True)
+            for i, x in enumerate(val_tqdm):
                 loss = calc_loss(x)
                 total_loss += loss.item()
             new_loss = total_loss / i
+            val_tqdm.set_description(new_loss)
+            val_tqdm.close()
             if best_loss is None or new_loss < best_loss:
                 torch.save(network, params['save_location'])
                 best_loss = new_loss
