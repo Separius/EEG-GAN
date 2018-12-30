@@ -104,11 +104,19 @@ def calc_loss(x):
             loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
         else:
             loss_attr = loss_function_attrs(y_pred[:, start_index], y[:, 1 + params['single_attr']])
-            res = torch.sigmoid(y_pred[:, start_index]) > 0.5 == (y[:, 1 + params['single_attr']] == 1.0)
+            res = accuracy(y_pred[:, start_index], y[:, 1 + params['single_attr']])
             acc = res.float().mean()
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight'], acc
+
+
+def accuracy(output, target):
+    """Computes the accuracy for multiple binary predictions"""
+    pred = torch.sigmoid(output) >= 0.5
+    truth = target >= 0.5
+    acc = pred.eq(truth).sum() / target.numel()
+    return acc
 
 
 if __name__ == '__main__':
