@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from torch.optim import Adam
 from dataset import EEGDataset
 from torch.utils.data import DataLoader
 from utils import parse_config, cudize, trainable_params, mkdir, num_params
+from torch.optim import Adam, SGD, ASGD, Adadelta, Adagrad, Adamax, Rprop, RMSprop
 
 default_params = {
     'config_file': None,
@@ -21,6 +21,9 @@ default_params = {
     'norm': 'batch',  # batch or None or layer or group or instance
     'spectral': False,
     'weight_norm': False,
+    'lr': 0.001,
+    'weight_decay': 0.05,
+    'optimizer': 'adam'  # adam or sgd or asgd
 }
 
 
@@ -106,7 +109,7 @@ def calc_loss(x):
 
 
 if __name__ == '__main__':
-    params = parse_config(default_params, [EEGDataset, ChronoNet, Adam], False)
+    params = parse_config(default_params, [EEGDataset, ChronoNet], False)
     train_dataset, val_dataset = EEGDataset.from_config(**params['EEGDataset'])
     depth = train_dataset.max_dataset_depth - train_dataset.model_dataset_depth_offset
     train_dataset.model_depth = val_dataset.model_depth = depth
@@ -134,7 +137,10 @@ if __name__ == '__main__':
     print('output_size', output_size)
     print('num_params', num_params(network))
     print('train_size', train_dataset.shape)
-    optimizer = Adam(trainable_params(network), **params['Adam'])
+    optimizer = {'adam': Adam, 'sgd': SGD, 'asgd': ASGD,
+                 'adadelta': Adadelta, 'adagrad': Adagrad, 'adamax': Adamax,
+                 'rprop': Rprop, 'rmsprop': RMSprop}[params['optimizer'].lower()]
+    optimizer = optimizer(trainable_params(network), lr=params['lr'], weight_decay=params['weight_decay'])
     loss_function_age = nn.MSELoss()
     loss_function_attrs = nn.BCEWithLogitsLoss()
     best_loss = None

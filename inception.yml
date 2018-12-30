@@ -5,13 +5,13 @@ single_attr: 0
 norm: 'batch'  # batch or null or layer or group or instance
 spectral: false
 weight_norm: false
+optimizer: 'adam' # Adam, SGD, ASGD, Adadelta, Adagrad, Adamax, Rprop, RMSprop
+lr: 0.001
+weight_decay: 0.05
 ChronoNet:
   network_channels: 8
   stride: 4
   num_branches: 2
-Adam:
-  lr: 0.001
-  weight_decay: 0.05
 EEGDataset:
   seq_len: 4096
   stride: 0.5
