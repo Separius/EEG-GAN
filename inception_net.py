@@ -93,6 +93,7 @@ class ChronoNet(nn.Module):
 def calc_loss(x):
     y_pred, _ = network(cudize(x['x']))
     y = cudize(x['y'])
+    acc = None
     if params['age_weight'] != 0.0:
         loss_age = loss_function_age(y_pred[:, 0], y[:, 0])
     else:
@@ -103,9 +104,11 @@ def calc_loss(x):
             loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, 1:]) * num_attrs
         else:
             loss_attr = loss_function_attrs(y_pred[:, start_index], y[:, 1 + params['single_attr']])
+            res = torch.sigmoid(y_pred[:, start_index]) > 0.5 == (y[:, 1 + params['single_attr']] == 1.0)
+            acc = res.float().mean()
     else:
         loss_attr = 0.0
-    return loss_attr * params['attr_weight'] + loss_age * params['age_weight']
+    return loss_attr * params['attr_weight'] + loss_age * params['age_weight'], acc
 
 
 if __name__ == '__main__':
@@ -149,7 +152,8 @@ if __name__ == '__main__':
         network.train()
         train_tqdm = tqdm(train_dataloader, dynamic_ncols=True)
         for i, x in enumerate(train_tqdm):
-            loss = calc_loss(x)
+            loss, _ = calc_loss(x)
+            print(_)
             network.zero_grad()
             loss.backward()
             optimizer.step()
@@ -160,7 +164,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             total_loss = 0
             for x in tqdm(val_dataloader, dynamic_ncols=True):
-                loss = calc_loss(x)
+                loss, accuracy = calc_loss(x)
                 total_loss += loss.item()
             new_loss = total_loss / len(val_dataloader)
             epochs_tqdm.set_description('validation loss ' + str(new_loss))

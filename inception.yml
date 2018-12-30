@@ -5,7 +5,7 @@ single_attr: 0
 norm: 'batch'  # batch or null or layer or group or instance
 spectral: false
 weight_norm: false
-optimizer: 'adam' # Adam, SGD, ASGD, Adadelta, Adagrad, Adamax, Rprop, RMSprop
+optimizer: 'adam' # Adam, RMSprop
 lr: 0.001
 weight_decay: 0.05
 ChronoNet:
