@@ -20,7 +20,7 @@ default_params = {
 }
 
 
-def get_conv(input_channels, kernel_size, stride=2):
+def get_conv(input_channels, kernel_size, stride):
     return nn.Sequential(
         nn.Conv1d(input_channels, input_channels, kernel_size=kernel_size, padding=(kernel_size - 1) // 2,
                   stride=stride), nn.ReLU(inplace=True), nn.BatchNorm1d(input_channels))
@@ -29,7 +29,7 @@ def get_conv(input_channels, kernel_size, stride=2):
 class InceptionModule(nn.Module):
     k_size = {0: 3, 1: 5, 2: 9, 3: 15}
 
-    def __init__(self, input_channels, stride=2, num_branches=3):
+    def __init__(self, input_channels, stride, num_branches):
         super().__init__()
         self.conv = nn.ModuleList([get_conv(input_channels, self.k_size[i], stride) for i in range(num_branches)])
         self.aggregate = nn.Sequential(
@@ -42,9 +42,9 @@ class InceptionModule(nn.Module):
 
 
 class ChronoNet(nn.Module):
-    num_block_map = {2 ** (5 + i): i + 1 for i in range(9)}
+    num_block_map = {2 ** (8 + i): i + 1 for i in range(9)}
 
-    def __init__(self, num_channels, seq_len, target_classes, network_channels=64, stride=2, num_branches=2):
+    def __init__(self, num_channels, seq_len, target_classes, network_channels=32, stride=4, num_branches=2):
         super().__init__()
         self.num_classes = target_classes
         network = [InceptionModule(network_channels, stride, num_branches) for i in range(self.num_block_map[seq_len])]
@@ -66,7 +66,8 @@ def calc_loss(x):
     else:
         loss_age = 0.0
     if params['attr_weight'] != 0.0:
-        loss_attr = loss_function_attrs(y_pred[:, 1:], y[:, 1:]) * num_attrs
+        start_index = 1 if params['age_weight'] != 0.0 else 0
+        loss_attr = loss_function_attrs(y_pred[:, start_index:], y[:, start_index:]) * num_attrs
     else:
         loss_attr = 0.0
     return loss_attr * params['attr_weight'] + loss_age * params['age_weight']
@@ -83,11 +84,18 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(train_dataset, params['minibatch_size'], shuffle=True, drop_last=True)
     val_dataloader = DataLoader(val_dataset, params['minibatch_size'], shuffle=False, drop_last=False)
 
-    network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, train_dataset.y.shape[1],
+    output_size = train_dataset.y.shape[1]
+    if params['attr_weight'] == 0.0:
+        output_size = 1
+    if params['age_weight'] == 0.0:
+        output_size -= 1
+    assert output_size > 0
+    network = cudize(ChronoNet(train_dataset.num_channels, train_dataset.seq_len, output_size,
                                **params['ChronoNet']))
     network.train()
     num_attrs = train_dataset.y.shape[1] - 1
     print('num_attrs', num_attrs)
+    print('output_size', output_size)
     print('num_params', num_params(network))
     print('train_size', train_dataset.shape)
     optimizer = Adam(trainable_params(network), **params['Adam'])
