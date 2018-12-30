@@ -11,7 +11,7 @@ default_params = {
     'num_data_workers': 1,
     'random_seed': 1373,
     'cuda_device': 0,
-    'minibatch_size': 128,
+    'minibatch_size': 256,
     'num_epochs': 20,
     'save_location': './results/inception.pth',
     'tiny_sizes': False,
@@ -132,4 +132,5 @@ if __name__ == '__main__':
             if best_loss is None or new_loss < best_loss:
                 torch.save(network, params['save_location'])
                 best_loss = new_loss
+    print('min_val_loss', best_loss)
     epochs_tqdm.close()

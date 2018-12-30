@@ -1,14 +1,14 @@
 minibatch_size: 256
 age_weight: 0.0
 attr_weight: 1.0
-#single_attr: null
+single_attr: 0
 ChronoNet:
   network_channels: 16
   stride: 4
   num_branches: 2
 Adam:
   lr: 0.001
-  weight_decay: 0.01
+  weight_decay: 0.05
 EEGDataset:
   seq_len: 4096
-  stride: 0.125
+  stride: 0.5
