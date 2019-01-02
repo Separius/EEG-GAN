@@ -119,12 +119,15 @@ class EEGDataset(Dataset):
                                                                                            mode,
                                                                                            stride, DATASET_VERSION,
                                                                                            split))
+            given_data = None
             if os.path.exists(target_location):
                 print('loading {} dataset from file'.format(split))
-                given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
+                if split == 'val' and validation_ratio == 0.0:
+                    print('creating {} dataset from scratch'.format(split))
+                else:
+                    given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
             else:
                 print('creating {} dataset from scratch'.format(split))
-                given_data = None
             dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
                           num_channels, per_user_normalization, progression_scale, per_channel_normalization,
                           no_condition, model_dataset_depth_offset)

@@ -4,6 +4,7 @@ import time
 import torch
 import matplotlib
 import numpy as np
+import pandas as pd
 from glob import glob
 from scipy import misc
 from scipy import linalg
@@ -301,26 +302,33 @@ class OutputGenerator(Plugin):
         self.my_g_clone = self.flatten_params(self.trainer.generator)
 
     @staticmethod
-    def get_images(seq_len, frequency, epoch, generated):
+    def running_mean(x, n=8):
+        return pd.Series(x).rolling(window=n).mean().values
+
+    @staticmethod
+    def get_images(seq_len, frequency, epoch, generated, my_range=range):
         num_channels = generated.shape[1]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         images = []
-        for index in range(len(generated)):
-            fig, (axs) = plt.subplots(num_channels, 3)
+        for index in my_range(len(generated)):
+            fig, (axs) = plt.subplots(num_channels, 4)
             if num_channels == 1:
                 axs = axs.reshape(1, -1)
-            fig.set_figheight(20)
-            fig.set_figwidth(20)
+            fig.set_figheight(40)
+            fig.set_figwidth(40)
             for ch in range(num_channels):
                 data = generated[index, ch, :]
                 axs[ch][0].plot(t, data, color=(0.8, 0, 0, 0.5), label='time domain')
                 axs[ch][1].plot(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain')
-                axs[ch][2].semilogy(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain(log)')
+                axs[ch][2].plot(f, OutputGenerator.running_mean(np.abs(np.fft.rfft(data))),
+                                color=(0.8, 0, 0, 0.5), label='freq domain(smooth)')
+                axs[ch][3].semilogy(f, np.abs(np.fft.rfft(data)), color=(0.8, 0, 0, 0.5), label='freq domain(log)')
                 axs[ch][0].set_ylim([-1.1, 1.1])
                 axs[ch][0].legend()
                 axs[ch][1].legend()
                 axs[ch][2].legend()
+                axs[ch][3].legend()
             fig.suptitle('epoch: {}, sample: {}'.format(epoch, index))
             fig.canvas.draw()
             image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')

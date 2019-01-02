@@ -2,7 +2,7 @@ result_dir: 'results'
 #exp_name: ''
 G_lr: 0.001
 total_kimg: 6000
-resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
+#resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
 grad_lambda: 10  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
