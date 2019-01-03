@@ -211,6 +211,31 @@ if __name__ == '__main__':
     generator_smooth = cudize(generator_smooth)
 
     with torch.no_grad():
+        # knn in d domain
+        index = None
+        for i in trange(len(dataset)):
+            # TODO conditional
+            data = discriminator(cudize(dataset[i]['x']).unsqueeze(0))[1].squeeze(2).cpu().numpy()
+            if i == 0:
+                index = faiss.IndexFlatL2(data.shape[1])
+            index.add(data)
+        num_samples = 8 if params['vis'] else params['num_samples']
+        for g, name in gzip():
+            fake = g(cudize(get_random_latents(num_samples)))[0]
+            fake_features = discriminator(fake)[1].squeeze().cpu().numpy()
+            fake = fake.cpu().numpy()
+            D, I = index.search(fake_features, 5)
+            data = np.stack(
+                [np.stack([fake[i]] + [dataset[j]['x'].numpy() for j in I[i]], axis=0) for i in range(len(fake))],
+                axis=0)
+            if params['vis']:
+                images = plot_knn(data)
+                for i, image in enumerate(images):
+                    misc.imsave(dest.format(name + '_5nn_d').replace('.dat', '{}.png'.format(i)), image)
+            else:
+                pickle.dump(data, open(dest.format(name + '_5nn_d').replace('.dat', '.pkl'), 'wb'))
+
+    with torch.no_grad():
         # z1 to z2: gif
         if params['vis']:
             for i in trange(2):
