@@ -29,6 +29,7 @@ default_params = {
     'frequency': 80,
     'max_batch_size': 128,
     'g_loss_threshold': -1.5,
+    'vis': False,
 }
 
 
@@ -211,16 +212,22 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # z1 to z2: gif
-        for i in trange(2):
-            for g, name in gzip:
-                z1_to_z2(g, dest.format(name).replace('.dat', '_{}.gif'.format(i)))
+        if params['vis']:
+            for i in trange(2):
+                for g, name in gzip:
+                    z1_to_z2(g, dest.format(name).replace('.dat', '_{}.gif'.format(i)))
 
         # z1 to z2: one plot
         for g, name in gzip():
-            data = np.stack([z1_to_z2(g, '', num_pics=6, get_out=True) for i in range(8)], axis=0)
-            images = plot_knn(data)
-            for i, image in enumerate(images):
-                misc.imsave(dest.format(name + '_slurp').replace('.dat', '_{}.png'.format(i)), image)
+            if params['vis']:
+                data = np.stack([z1_to_z2(g, '', num_pics=6, get_out=True) for i in range(8)], axis=0)
+                images = plot_knn(data)
+                for i, image in enumerate(images):
+                    misc.imsave(dest.format(name + '_slurp').replace('.dat', '_{}.png'.format(i)), image)
+            else:
+                data = np.stack([z1_to_z2(g, '', num_pics=32, get_out=True) for i in range(params['num_samples'])],
+                                axis=0)
+                pickle.dump(data, open(dest.format(name + '_slurp').replace('.dat', '.pkl'), 'wb'))
 
         # truncation trick
         for thresh in tqdm([1.0, 0.95, 0.9, 0.875]):
@@ -228,38 +235,62 @@ if __name__ == '__main__':
                 samples_gen = output_samples_with_truncation(g, thresh)
                 this_dest = dest.format(name + '_t_' + str(thresh))
                 pickle.dump(samples_gen, open(this_dest.replace('.dat', '.pkl'), 'wb'))
-                save_pics(samples_gen, this_dest)
+                if params['vis']:
+                    save_pics(samples_gen, this_dest)
 
         # basic generation with same z
         samples_gen, samples_smooth = output_samples()
         pickle.dump(samples_gen, open(dest.format('generator').replace('.dat', '.pkl'), 'wb'))
         pickle.dump(samples_smooth, open(dest.format('smooth_generator').replace('.dat', '.pkl'), 'wb'))
-        save_pics(samples_gen, dest.format('generator'))
-        save_pics(samples_smooth, dest.format('smooth_generator'))
+        if params['vis']:
+            save_pics(samples_gen, dest.format('generator'))
+            save_pics(samples_smooth, dest.format('smooth_generator'))
 
         # basic generation based on D value
         if params['loss_type'] == 'hinge' or params['loss_type'].startswith('wgan'):
             for g, name in gzip():
                 samples_gen = output_samples_based_on_d(g)
                 pickle.dump(samples_gen, open(dest.format(name + '_d').replace('.dat', '.pkl'), 'wb'))
-                save_pics(samples_gen, dest.format(name + '_d'))
+                if params['vis']:
+                    save_pics(samples_gen, dest.format(name + '_d'))
 
     d = dataset[0]['x'].shape[0] * dataset[0]['x'].shape[1]
     index = faiss.IndexFlatL2(d)
     for i in trange(len(dataset)):
         index.add(dataset[i]['x'].view(1, -1).numpy())
-    num_samples = 8
+    num_samples = 8 if params['vis'] else params['num_samples']
 
     with torch.no_grad():
         # knn in time domain
         for g, name in gzip():
             fake = generate_samples(g, cudize(get_random_latents(num_samples)))
             D, I = index.search(fake.reshape((fake.shape[0], -1)), 5)
-            images = plot_knn(np.stack(
+            data = np.stack(
                 [np.stack([fake[i]] + [dataset[j]['x'].numpy() for j in I[i]], axis=0) for i in range(len(fake))],
-                axis=0))
-            for i, image in enumerate(images):
-                misc.imsave(dest.format(name + '_5nn_time').replace('.dat', '{}.png'.format(i)), image)
+                axis=0)
+            if params['vis']:
+                images = plot_knn(data)
+                for i, image in enumerate(images):
+                    misc.imsave(dest.format(name + '_5nn_time').replace('.dat', '{}.png'.format(i)), image)
+            else:
+                pickle.dump(data, open(dest.format(name + '_5nn_time').replace('.dat', '.pkl'), 'wb'))
+
+    num_samples = 8 if params['vis'] else params['num_samples']
+    d = dataset[0]['x'].shape[1]
+    index = faiss.IndexFlatL2(d)
+    for i in trange(len(dataset)):
+        index.add(dataset[i]['x'][0:1, :].numpy())
+
+    with torch.no_grad():
+        # knn in time domain for channel 1
+        for g, name in gzip():
+            fake = generate_samples(g, cudize(get_random_latents(num_samples)))
+            D, I = index.search(np.ascontiguousarray(fake[:, 0]), 5)
+            data = np.stack(
+                [np.stack([fake[i, 0]] + [dataset[j]['x'][0].numpy() for j in I[i]], axis=0) for i in range(len(fake))],
+                axis=0)
+            if not params['vis']:
+                pickle.dump(data, open(dest.format(name + '_5nn_time_ch1').replace('.dat', '.pkl'), 'wb'))
 
 
     def freq_features(data):
@@ -279,33 +310,67 @@ if __name__ == '__main__':
         for g, name in gzip():
             fake = generate_samples(g, cudize(get_random_latents(num_samples)))
             D, I = index.search(np.concatenate([freq_features(fake[i]) for i in range(len(fake))]), 5)
-            images = plot_knn(np.stack(
+            data = np.stack(
                 [np.stack([fake[i]] + [dataset[j]['x'].numpy() for j in I[i]], axis=0) for i in range(len(fake))],
-                axis=0))
-            for i, image in enumerate(images):
-                misc.imsave(dest.format(name + '_5nn_freq').replace('.dat', '{}.png'.format(i)), image)
+                axis=0)
+            if params['vis']:
+                images = plot_knn(data)
+                for i, image in enumerate(images):
+                    misc.imsave(dest.format(name + '_5nn_freq').replace('.dat', '{}.png'.format(i)), image)
+            else:
+                pickle.dump(data, open(dest.format(name + '_5nn_freq').replace('.dat', '.pkl'), 'wb'))
 
-    const_z = cudize(get_random_latents(4))
-    fakes = []
-    reals = []
-    depths = []
+
+    def freq_features_ch(data):
+        return np.abs(np.fft.rfft(data[0])).reshape((1, -1)).astype(np.float32)
+
+
+    index = None
+    for i in trange(len(dataset)):
+        data = freq_features_ch(dataset[i]['x'].numpy())
+        if i == 0:
+            index = faiss.IndexFlatL2(data.shape[1])
+        index.add(data)
+
     with torch.no_grad():
-        d = dest.format('generator')
-        for g_address in sorted(glob.glob(d[:d.rfind('-')] + '-*.dat')):
-            generator_state, _, g_cur_img = load_model(g_address, True)
-            generator.load_state_dict(generator_state)
-            depth, alpha = dm.calc_progress(g_cur_img)
-            dataset.alpha = val_dataset.alpha = alpha
-            generator.alpha = discriminator.alpha = generator_smooth.alpha = alpha
-            generator.alpha = alpha
-            dataset.model_depth = val_dataset.model_depth = depth
-            generator.depth = discriminator.depth = generator_smooth.depth = depth
-            generator.depth = depth
-            generator = cudize(generator)
-            fakes.append(generate_samples(generator, const_z))
-            reals.append(np.stack([dataset[i]['x'].numpy() for i in range(4)], axis=0))
-            depths.append(depth + alpha)
-    fakes_over_time = plot_over_time(fakes, depths)
-    imageio.mimsave(dest.format('generator_constant').replace('.dat', '.gif'), fakes_over_time, fps=1)
-    reals_over_time = plot_over_time(reals, depths)
-    imageio.mimsave(dest.format('real_constant').replace('.dat', '.gif'), reals_over_time, fps=1)
+        # knn in freq domain
+        for g, name in gzip():
+            fake = generate_samples(g, cudize(get_random_latents(num_samples)))
+            D, I = index.search(np.concatenate([freq_features_ch(fake[i]) for i in range(len(fake))]), 5)
+            data = np.stack(
+                [np.stack([fake[i][0]] + [dataset[j]['x'][0].numpy() for j in I[i]], axis=0) for i in range(len(fake))],
+                axis=0)
+            if not params['vis']:
+                pickle.dump(data, open(dest.format(name + '_5nn_freq_ch1').replace('.dat', '.pkl'), 'wb'))
+
+    num_samples = 4 if params['vis'] else params['num_samples']
+    const_z = cudize(get_random_latents(num_samples))
+    for g, name in gzip():
+        fakes = []
+        reals = []
+        depths = []
+        with torch.no_grad():
+            d = dest.format(name)
+            for g_address in sorted(glob.glob(d[:d.rfind('-')] + '-*.dat')):
+                generator_state, _, g_cur_img = load_model(g_address, True)
+                g.load_state_dict(generator_state)
+                depth, alpha = dm.calc_progress(g_cur_img)
+                dataset.alpha = val_dataset.alpha = alpha
+                g.alpha = discriminator.alpha = alpha
+                dataset.model_depth = val_dataset.model_depth = depth
+                g.depth = discriminator.depth = depth
+                g = cudize(g)
+                fakes.append(generate_samples(g, const_z))
+                reals.append(np.stack([dataset[i]['x'].numpy() for i in range(num_samples)], axis=0))
+                depths.append(depth + alpha)
+        if params['vis']:
+            fakes_over_time = plot_over_time(fakes, depths)
+            imageio.mimsave(dest.format(name + '_constant').replace('.dat', '.gif'), fakes_over_time, fps=1)
+            if name == 'generator':
+                reals_over_time = plot_over_time(reals, depths)
+                imageio.mimsave(dest.format('real_constant').replace('.dat', '.gif'), reals_over_time, fps=1)
+        else:
+            pickle.dump(fakes, open(dest.format(name + '_constant').replace('.dat', '.pkl'), 'wb'))
+            if name == 'generator':
+                pickle.dump(reals, open(dest.format('real_constant').replace('.dat', '.pkl'), 'wb'))
+                pickle.dump(depths, open(dest.format('meta_info_constant').replace('.dat', '.pkl'), 'wb'))
