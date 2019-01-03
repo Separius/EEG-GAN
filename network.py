@@ -140,7 +140,21 @@ class Generator(nn.Module):
         h = self.upsampler(h)
         return self.blocks[l](h, self._cat_z(l, y, z), False), attention_map
 
-    def forward(self, z, y=None):
+    @staticmethod
+    def split_h(h):
+        # h is B, ch, T
+        b, ch, t = h.size()
+        left, right = h[:b//2], h[b//2:]
+        q = t//2
+        res = torch.empty(b//2, ch, 3*q).to(h)
+        res[:, :, :q] = left[:, :, :q]
+        res[:, :, -q:] = right[:, :, q:]
+        kernel_l = torch.linspace(1, 0, q).view(1, 1, -1).to(h)
+        kernel_r = torch.linspace(0, 1, q).view(1, 1, -1).to(h)
+        res[:, :, q:-q] = left[:, :, q:] * kernel_l + right[:, :, :q] * kernel_r
+        return res
+
+    def forward(self, z, y=None, merge_layer=None):
         if isinstance(z, tuple):
             z, y = z
         if isinstance(z, dict):
@@ -157,6 +171,11 @@ class Generator(nn.Module):
             return h, {}
         all_attention_maps = {}
         for i in range(self.depth - 1):
+            if i == merge_layer:
+                if y is not None:
+                    y = y[:y.size(0)//2]
+                z = z[:z.size(0)//2]
+                h = self.split_h(h)
             h, attention_map = self.do_layer(i, h, y, z)
             if attention_map is not None:
                 all_attention_maps[i] = attention_map
