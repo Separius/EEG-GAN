@@ -1,11 +1,7 @@
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Activation, Dropout
-from tensorflow.keras.layers import Conv2D, AveragePooling2D
-from tensorflow.keras.layers import SeparableConv2D, DepthwiseConv2D
-from tensorflow.keras.layers import BatchNormalization
-from tensorflow.keras.layers import SpatialDropout2D
-from tensorflow.keras.layers import Input, Flatten
-from tensorflow.keras.constraints import max_norm
+from keras import Model
+from keras.layers import (Dense, Activation, Dropout, Conv2D, AveragePooling2D, SeparableConv2D,
+                          DepthwiseConv2D, BatchNormalization, SpatialDropout2D, Input, Flatten)
+from keras.constraints import max_norm
 
 import numpy as np
 from dataset import EEGDataset
