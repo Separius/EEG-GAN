@@ -25,14 +25,17 @@ def running_mean(x, n=6):
 
 
 def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, suptitle=None, mode=None):
+    f_factor = 1.0
     if mode == 'slurp':
         no_freq_domain = False
         freq_domain_on_right = True
         slurp_size = samples.shape[0]
+        f_factor = 2.0
     elif mode == 'progressive':
         no_freq_domain = False
         freq_domain_on_right = True
         prog_size = len(samples)
+        f_factor = 2.0
     elif len(samples) == 6:
         mode = 'knn'
         no_freq_domain = True
@@ -50,10 +53,10 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
     fig = plt.figure(save_location)
     if freq_domain_on_right:
         fig.set_figwidth(19.2)
-        fig.set_figheight(10.8)
+        fig.set_figheight(10.8 * f_factor)
     else:
         fig.set_figwidth(19.2 / 2)
-        fig.set_figheight(10.8 * 2)
+        fig.set_figheight(10.8 * 2 * f_factor)
     for index, sample in enumerate(samples):
         sample = sample.transpose()
         n_rows = sample.shape[1]
@@ -102,7 +105,8 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
             t_ax = fig.add_subplot(slurp_size, 2, 2 * index + 1)
         elif mode == 'progressive':
             t_ax = fig.add_subplot(prog_size, 2, 2 * index + 1)
-        sub_plot(t_ax, sample, get_t(seq_len, frequency), seq_len / frequency, True, 'Time (s)')
+        this_frequency = frequency * seq_len / max_seq_len
+        sub_plot(t_ax, sample, get_t(seq_len, this_frequency), seq_len / this_frequency, True, 'Time (s)')
         if not no_freq_domain:
             sample_f = np.abs(np.fft.rfft(sample, axis=0))
             if freq_smooth_factor is not None and sample_f.shape[0] >= 128:
@@ -123,8 +127,8 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
                 f_ax = fig.add_subplot(slurp_size, 2, 2 * index + 2)
             elif mode == 'progressive':
                 f_ax = fig.add_subplot(prog_size, 2, 2 * index + 2)
-            this_frequency = frequency * seq_len / max_seq_len
-            sub_plot(f_ax, sample_f, np.fft.rfftfreq(seq_len, d=1. / this_frequency), this_frequency / 2, False,
+            f_ax.grid(True, which='both')
+            sub_plot(f_ax, sample_f, np.fft.rfftfreq(seq_len, d=1. / this_frequency), this_frequency / 4, False,
                      'Freq (Hz)')
     plt.tight_layout()
     if suptitle is not None:
@@ -136,41 +140,44 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
         imsave(save_location, image)
 
 
+# base_directory = './013-tuh1_1024/network-snapshot-{}-005952.pkl'
+base_directory = './015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
+save_location_base = './'
 base_directory = './results/015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
 save_location_base = '/home/sepehr/Desktop/'
 
 # input to the plot_eeg is 6 * num_channels * seq_len
-# index = 0
-# plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index], save_location=save_location_base + '5nn_d.png',
-#          suptitle='nearest neighbors based on D(x)')
-# plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
-#          save_location=save_location_base + '5nn_freq.png')
-# plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
-#          save_location=save_location_base + '5nn_time.png')
-# plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
-#          save_location=save_location_base + '5nn_freq_ch1.png')
-# plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
-#          save_location=save_location_base + '5nn_time_ch1.png')
+index = 0
+plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index], save_location=save_location_base + '5nn_d.png',
+         suptitle='nearest neighbors based on D(x)')
+plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
+         save_location=save_location_base + '5nn_freq.png')
+plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
+         save_location=save_location_base + '5nn_time.png')
+plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
+         save_location=save_location_base + '5nn_freq_ch1.png')
+plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
+         save_location=save_location_base + '5nn_time_ch1.png')
 
-# index_one = 0
-# index_two = 1
-# t_values = [0.875, 0.9, 0.95, 1.0]
-# x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
-#              axis=0)
-# x = np.concatenate((x, np.stack(
-#     [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values], axis=0)),
-#                    axis=0)
-# plot_eeg(x, save_location=save_location_base + 'truncation.png')
+index_one = 0
+index_two = 1
+t_values = [0.875, 0.9, 0.95, 1.0]
+x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
+             axis=0)
+x = np.concatenate((x, np.stack(
+    [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values], axis=0)),
+                   axis=0)
+plot_eeg(x, save_location=save_location_base + 'truncation.png')
 
-# index = 0
-# plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
-#          save_location=save_location_base + 'base.png')
-# plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
-#          save_location=save_location_base + 'd_based.png')
+index = 0
+plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
+         save_location=save_location_base + 'base.png')
+plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
+         save_location=save_location_base + 'd_based.png')
 
-# index = 0
-# x = load(base_directory.format('generator_smooth_slurp'))[index, ::4]
-# plot_eeg(x, save_location=save_location_base + 'slurp.png', mode='slurp')
+index = 0
+x = load(base_directory.format('generator_smooth_slurp'))[index, ::4]
+plot_eeg(x, save_location=save_location_base + 'slurp.png', mode='slurp')
 
 index = 0
 x = [d[index] for d in load(base_directory.format('generator_constant'))]

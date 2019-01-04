@@ -73,7 +73,7 @@ class InceptionModule(nn.Module):
         return self.residual(x) + self.aggregate(torch.cat([conv(x) for conv in self.conv], dim=1))
 
 
-class ChronoNet(nn.Module):
+class ChronoNet_old(nn.Module):
     num_block_map = {2 ** (8 + i): i + 1 for i in range(9)}
 
     def __init__(self, num_channels, seq_len, target_classes, network_channels=8, stride=4, num_branches=2):
@@ -83,6 +83,28 @@ class ChronoNet(nn.Module):
         print('num_blocks', len(network))
         self.network = nn.Sequential(weight(spectral(nn.Conv1d(num_channels, network_channels, kernel_size=1))),
                                      *network, nn.AdaptiveAvgPool1d(1))
+        self.linear = weight(spectral(nn.Linear(network_channels, target_classes)))
+
+    def forward(self, x):
+        h = self.network(x).squeeze()
+        return self.linear(h), h
+
+
+class ChronoNet(nn.Module):
+    num_block_map = {2 ** (8 + i): i + 1 for i in range(9)}
+
+    def __init__(self, num_channels, seq_len, target_classes, network_channels=8, stride=4, num_branches=2):
+        super().__init__()
+        self.num_classes = target_classes
+        self.network = nn.Sequential(nn.Conv1d(num_channels, 8, kernel_size=1), get_conv(8, kernel_size=3, stride=1),
+                                     get_conv(8, kernel_size=3, stride=1), nn.MaxPool1d(kernel_size=4),
+                                     get_conv(8, kernel_size=3, stride=1), get_conv(8, kernel_size=3, stride=1),
+                                     nn.MaxPool1d(kernel_size=4), get_conv(8, kernel_size=3, stride=1),
+                                     get_conv(8, kernel_size=3, stride=1), nn.MaxPool1d(kernel_size=2),
+                                     get_conv(8, kernel_size=3, stride=1), get_conv(8, kernel_size=3, stride=1),
+                                     nn.MaxPool1d(kernel_size=2), get_conv(8, kernel_size=3, stride=1),
+                                     get_conv(8, kernel_size=3, stride=1), nn.MaxPool1d(kernel_size=2),
+                                     nn.AdaptiveAvgPool1d(1))
         self.linear = weight(spectral(nn.Linear(network_channels, target_classes)))
 
     def forward(self, x):
