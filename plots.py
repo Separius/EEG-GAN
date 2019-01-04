@@ -24,8 +24,16 @@ def running_mean(x, n=6):
     return np.stack([pd.Series(x[:, i]).rolling(window=n).mean().values for i in range(x.shape[1])], axis=1)
 
 
-def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, suptitle=None):
-    if len(samples) == 6:
+def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, suptitle=None, mode=None):
+    if mode == 'slurp':
+        no_freq_domain = False
+        freq_domain_on_right = True
+        slurp_size = samples.shape[0]
+    elif mode == 'progressive':
+        no_freq_domain = False
+        freq_domain_on_right = True
+        prog_size = len(samples)
+    elif len(samples) == 6:
         mode = 'knn'
         no_freq_domain = True
         freq_domain_on_right = True
@@ -35,14 +43,6 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
         freq_domain_on_right = True
     elif len(samples) == 4:
         mode = 'simple'
-        no_freq_domain = False
-        freq_domain_on_right = True
-    elif len(samples) == 5:
-        mode = 'slurp'
-        no_freq_domain = False
-        freq_domain_on_right = True
-    elif len(samples) == 3:
-        mode = 'progressive'
         no_freq_domain = False
         freq_domain_on_right = True
     else:
@@ -82,32 +82,47 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
 
         if mode == 'knn':
             t_ax = fig.add_subplot(3, 2, index + 1)
+            if index == 0:
+                t_ax.set_title('query')
+            else:
+                t_ax.set_title(str(index) + ' ' + {1: 'st', 2: 'nd', 3: 'rd', 4: 'th', 5: 'th'}[index] + ' neighbor')
         elif mode == 'trunc':
             t_ax = fig.add_subplot(4, 4, 2 * index + 1)
+            if index % 4 == 0:
+                t_ax.set_title('t = 0.875')
+            elif index % 4 == 1:
+                t_ax.set_title('t = 0.9')
+            elif index % 4 == 2:
+                t_ax.set_title('t = 0.95')
+            else:
+                t_ax.set_title('t = 1.0')
         elif mode == 'simple':
             t_ax = fig.add_subplot(4, 2, 2 * index + 1)
         elif mode == 'slurp':
-            t_ax = fig.add_subplot(5, 2, 2 * index + 1)
+            t_ax = fig.add_subplot(slurp_size, 2, 2 * index + 1)
         elif mode == 'progressive':
-            t_ax = fig.add_subplot(3, 2, 2 * index + 1)
-        else:
-            t_ax = fig.gca() if no_freq_domain else (
-                fig.add_subplot(1, 2, 1) if freq_domain_on_right else fig.add_subplot(2, 1, 1))
+            t_ax = fig.add_subplot(prog_size, 2, 2 * index + 1)
         sub_plot(t_ax, sample, get_t(seq_len, frequency), seq_len / frequency, True, 'Time (s)')
         if not no_freq_domain:
             sample_f = np.abs(np.fft.rfft(sample, axis=0))
-            if freq_smooth_factor is not None and sample_f.shape[0] >= 32:
+            if freq_smooth_factor is not None and sample_f.shape[0] >= 128:
                 sample_f = running_mean(sample_f, freq_smooth_factor)
             if mode == 'trunc':
                 f_ax = fig.add_subplot(4, 4, 2 * index + 2)
+                if index % 4 == 0:
+                    f_ax.set_title('t = 0.875')
+                elif index % 4 == 1:
+                    f_ax.set_title('t = 0.9')
+                elif index % 4 == 2:
+                    f_ax.set_title('t = 0.95')
+                else:
+                    f_ax.set_title('t = 1.0')
             elif mode == 'simple':
                 f_ax = fig.add_subplot(4, 2, 2 * index + 2)
             elif mode == 'slurp':
-                f_ax = fig.add_subplot(5, 2, 2 * index + 2)
+                f_ax = fig.add_subplot(slurp_size, 2, 2 * index + 2)
             elif mode == 'progressive':
-                f_ax = fig.add_subplot(3, 2, 2 * index + 2)
-            else:
-                f_ax = fig.add_subplot(1, 2, 2) if freq_domain_on_right else fig.add_subplot(2, 1, 2)
+                f_ax = fig.add_subplot(prog_size, 2, 2 * index + 2)
             this_frequency = frequency * seq_len / max_seq_len
             sub_plot(f_ax, sample_f, np.fft.rfftfreq(seq_len, d=1. / this_frequency), this_frequency / 2, False,
                      'Freq (Hz)')
@@ -122,37 +137,42 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
 
 
 base_directory = './results/015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
-index = 0
-plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index], save_location='/home/sepehr/Desktop/5nn_d.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
-         save_location='/home/sepehr/Desktop/5nn_freq.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
-         save_location='/home/sepehr/Desktop/5nn_time.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
-         save_location='/home/sepehr/Desktop/5nn_freq_ch1.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
-         save_location='/home/sepehr/Desktop/5nn_time_ch1.png')
+save_location_base = '/home/sepehr/Desktop/'
 
-index_one = 0
-index_two = 1
-t_values = [0.875, 0.9, 0.95, 1.0]
-x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
-             axis=0)
-x = np.concatenate((x, np.stack(
-    [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values], axis=0)),
-                   axis=0)
-plot_eeg(x, save_location='/home/sepehr/Desktop/truncation.png')
+# input to the plot_eeg is 6 * num_channels * seq_len
+# index = 0
+# plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index], save_location=save_location_base + '5nn_d.png',
+#          suptitle='nearest neighbors based on D(x)')
+# plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
+#          save_location=save_location_base + '5nn_freq.png')
+# plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
+#          save_location=save_location_base + '5nn_time.png')
+# plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
+#          save_location=save_location_base + '5nn_freq_ch1.png')
+# plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
+#          save_location=save_location_base + '5nn_time_ch1.png')
 
-index = 0
-plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
-         save_location='/home/sepehr/Desktop/base.png')
-plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
-         save_location='/home/sepehr/Desktop/d_based.png')
+# index_one = 0
+# index_two = 1
+# t_values = [0.875, 0.9, 0.95, 1.0]
+# x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
+#              axis=0)
+# x = np.concatenate((x, np.stack(
+#     [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values], axis=0)),
+#                    axis=0)
+# plot_eeg(x, save_location=save_location_base + 'truncation.png')
 
-index = 0
-plot_eeg(load(base_directory.format('generator_smooth_slurp'))[index, ::7],
-         save_location='/home/sepehr/Desktop/slurp.png')
+# index = 0
+# plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
+#          save_location=save_location_base + 'base.png')
+# plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
+#          save_location=save_location_base + 'd_based.png')
+
+# index = 0
+# x = load(base_directory.format('generator_smooth_slurp'))[index, ::4]
+# plot_eeg(x, save_location=save_location_base + 'slurp.png', mode='slurp')
 
 index = 0
 x = [d[index] for d in load(base_directory.format('generator_constant'))]
-plot_eeg([x[0], x[10], x[20]], save_location='/home/sepehr/Desktop/progressive.png')
+plot_eeg([x[0], x[5], x[10], x[15], x[20], x[25]], save_location=save_location_base + 'progressive.png',
+         mode='progressive')
