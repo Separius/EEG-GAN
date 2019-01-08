@@ -1,5 +1,4 @@
 import os
-import math
 import glob
 import torch
 import numpy as np
@@ -7,16 +6,19 @@ from random import shuffle
 from scipy.io import loadmat
 from tqdm import tqdm, trange
 from torch.utils.data import Dataset
-from utils import load_pkl, save_pkl
+from utils import load_pkl, save_pkl, downsample_signal, upsample_signal
 
-DATASET_VERSION = 4
+DATASET_VERSION = 5
 
 
 # 5(1/6),15(0.5),30(1),60(2),120(4), 240(8),480(16),720(24),1800(60),3000(100),6000(200) # 30 seconds
 class EEGDataset(Dataset):
+    progression_scale_up = [3, 2, 2, 2, 2, 2, 3, 5, 5, 2]
+    progression_scale_down = [1, 1, 1, 1, 1, 1, 2, 2, 3, 1]
+
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
                  seq_len: int = 1024, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
-                 progression_scale: int = 2, per_channel_normalization: bool = False, no_condition: bool = True,
+                 per_channel_normalization: bool = False, no_condition: bool = True,
                  model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
         super().__init__()
         self.model_depth = 0
@@ -24,12 +26,11 @@ class EEGDataset(Dataset):
         self.model_dataset_depth_offset = model_dataset_depth_offset
         self.dir_path = dir_path
         self.seq_len = seq_len
-        self.progression_scale = progression_scale
         self.stride = int(seq_len * stride)
         self.num_channels = num_channels
         self.per_user_normalization = per_user_normalization
         self.per_channel_normalization = per_channel_normalization
-        self.max_dataset_depth = int(math.log(self.seq_len, self.progression_scale))
+        self.max_dataset_depth = len(self.progression_scale_up)
         self.min_dataset_depth = self.model_dataset_depth_offset
         self.y, file_ids = self.read_meta_info(os.path.join(dir_path, 'meta.npy'))
         self.norms = norms
@@ -119,26 +120,23 @@ class EEGDataset(Dataset):
             return None
         res = np.zeros((batch_size, self.y.shape[1]), dtype=np.float32)
         res[:, 0] = np.random.rand(batch_size)
-        res[:, 1:] = np.random.rand(batch_size, self.y.shape[1] - 1) > 0.5  # TODO
+        res[:, 1:] = np.random.rand(batch_size, self.y.shape[1] - 1) > 0.5
         return torch.from_numpy(res)
 
     @classmethod
     def from_config(cls, validation_ratio: float, dir_path: str, seq_len: int, stride: float, num_channels: int,
-                    per_user_normalization: bool, progression_scale: int, model_dataset_depth_offset: int,
-                    per_channel_normalization: bool, no_condition: bool):
+                    per_user_normalization: bool, model_dataset_depth_offset: int, per_channel_normalization: bool,
+                    no_condition: bool):
         mode = per_user_normalization * 2 + per_channel_normalization * 1
         train_files = None
         train_norms = None
         datasets = [None, None]
         for index, split in enumerate(('train', 'val')):
             target_location = os.path.join(dir_path,
-                                           '{}%_{}l_{}c_{}p_{}o_{}m_{}s_{}v_{}.npz'.format(validation_ratio, seq_len,
-                                                                                           num_channels,
-                                                                                           progression_scale,
-                                                                                           model_dataset_depth_offset,
-                                                                                           mode,
-                                                                                           stride, DATASET_VERSION,
-                                                                                           split))
+                                           '{}%_{}l_{}c_{}o_{}m_{}s_{}v_{}.npz'.format(validation_ratio, seq_len,
+                                                                                       num_channels,
+                                                                                       model_dataset_depth_offset, mode,
+                                                                                       stride, DATASET_VERSION, split))
             given_data = None
             if os.path.exists(target_location):
                 print('loading {} dataset from file'.format(split))
@@ -149,8 +147,8 @@ class EEGDataset(Dataset):
             else:
                 print('creating {} dataset from scratch'.format(split))
             dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
-                          num_channels, per_user_normalization, progression_scale, per_channel_normalization,
-                          no_condition, model_dataset_depth_offset)
+                          num_channels, per_user_normalization, per_channel_normalization, no_condition,
+                          model_dataset_depth_offset)
             if train_files is None:
                 train_files = dataset.files
                 train_norms = dataset.norms
@@ -199,35 +197,37 @@ class EEGDataset(Dataset):
     def __len__(self):
         return len(self.data_pointers)
 
-    def get_datapoint_version(self, datapoint, datapoint_depth, target_depth):
-        if datapoint_depth == target_depth:
-            return datapoint
-        return self.create_datapoint_from_depth(datapoint, datapoint_depth, target_depth)
-
-    def create_datapoint_from_depth(self, datapoint, datapoint_depth, target_depth):
-        datapoint = datapoint.astype(np.float32)
-        depth_diff = (datapoint_depth - target_depth)
-        return datapoint[:, ::(self.progression_scale ** depth_diff)]
-
     def load_file(self, item):
         i, k = self.data_pointers[item]
         res = self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
         return res
 
+    def resample_data(self, data, index, forward=True):
+        up_scale = self.progression_scale_up[index]
+        down_scale = self.progression_scale_down[index]
+        t = upsample_signal(data, up_scale if forward else down_scale)
+        return downsample_signal(t, down_scale if forward else up_scale)
+
     def __getitem__(self, item):
-        datapoint = self.load_file(item)
-        datapoint = self.get_datapoint_version(datapoint, self.max_dataset_depth,
-                                               self.model_depth + self.model_dataset_depth_offset)
-        datapoint = self.alpha_fade(datapoint)
-        x = torch.from_numpy(datapoint.astype(np.float32))
+        with torch.no_grad():
+            datapoint = torch.from_numpy(self.load_file(item).astype(np.float32)).unsqueeze(0)
+            target_depth = self.model_depth + self.model_dataset_depth_offset
+            if self.max_dataset_depth != target_depth:
+                datapoint = self.create_datapoint_from_depth(datapoint, target_depth)
+        x = self.alpha_fade(datapoint).squeeze(0)
         if self.y is None or self.no_condition:
             return {'x': x}
         return {'x': x, 'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
 
+    def create_datapoint_from_depth(self, datapoint, target_depth):
+        depth_diff = (self.max_dataset_depth - target_depth)
+        for index in reversed(list(range(len(self.progression_scale_up)))[-depth_diff:]):
+            datapoint = self.resample_data(datapoint, index, False)
+        return datapoint
+
     def alpha_fade(self, datapoint):
         if self.alpha == 1:
             return datapoint
-        c, t = datapoint.shape
-        t = datapoint.reshape(c, t // self.progression_scale, self.progression_scale).mean(axis=2).repeat(
-            self.progression_scale, axis=1)
+        t = self.resample_data(datapoint, self.model_depth, False)
+        t = self.resample_data(t, self.model_depth, True)
         return datapoint + (t - datapoint) * (1 - self.alpha)

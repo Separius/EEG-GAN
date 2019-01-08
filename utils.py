@@ -196,3 +196,11 @@ def _update_params(params: Dict, given_conf: Dict):
 
 def random_onehot(num_classes, num_samples):
     return np.eye(num_classes, dtype=np.float32)[np.random.choice(num_classes, num_samples)]
+
+
+def upsample_signal(signal, upsample_factor):
+    return F.interpolate(signal, scale_factor=upsample_factor, mode='linear', align_corners=False)
+
+
+def downsample_signal(signal, downsample_factor):
+    return F.avg_pool1d(signal, downsample_factor, downsample_factor, 0, False, True)
