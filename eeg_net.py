@@ -80,7 +80,8 @@ def EEGNet(nb_classes=2, Chans=5, Samples=1024 * 4, dropoutRate=0.25, kernLength
     input1 = Input(shape=(1, Chans, Samples))
 
     ##################################################################
-    block1 = Conv2D(F1, (1, kernLength), padding='same', use_bias=False)(input1)
+    block1 = Conv2D(F1, (1, kernLength), padding='same',
+                    use_bias=False, input_shape=(1, Chans, Samples))(input1)
     block1 = BatchNormalization(axis=1)(block1)
 
     block1 = DepthwiseConv2D((Chans, 1), use_bias=False, depth_multiplier=D, depthwise_constraint=max_norm(1.))(block1)
@@ -119,12 +120,13 @@ if __name__ == '__main__':
     train_dataset.model_depth = val_dataset.model_depth = depth
     train_dataset.alpha = val_dataset.alpha = 1.0
     model = EEGNet()
-    model.compile('adam', loss='binary_crossentropy')
-    train_dataloader = DataLoader(train_dataset, params['batch_size'], shuffle=True, drop_last=True)
-    val_dataloader = DataLoader(val_dataset, params['batch_size'], shuffle=False, drop_last=False)
-    train_set_x = np.stack([train_dataset[i]['x'].numpy()[None, ...] for i in range(len(train_dataset))], axis=0)
-    train_set_y = np.stack([train_dataset[i]['y'].numpy()[0:1] for i in range(len(train_dataset))], axis=0)
-    val_set_x = np.stack([val_dataset[i]['x'].numpy()[None, ...] for i in range(len(val_dataset))], axis=0)
-    val_set_y = np.stack([val_dataset[i]['y'].numpy()[0:1] for i in range(len(val_dataset))], axis=0)
-    model.fit(x=train_set_x, y=train_set_y, batch_size=params['batch_size'],
-              epochs=params['num_epochs'], validation_data=(val_set_x, val_set_y))
+    model.summary()
+    # model.compile('adam', loss='binary_crossentropy')
+    # train_dataloader = DataLoader(train_dataset, params['batch_size'], shuffle=True, drop_last=True)
+    # val_dataloader = DataLoader(val_dataset, params['batch_size'], shuffle=False, drop_last=False)
+    # train_set_x = np.stack([train_dataset[i]['x'].numpy()[None, ...] for i in range(len(train_dataset))], axis=0)
+    # train_set_y = np.stack([train_dataset[i]['y'].numpy()[0:1] for i in range(len(train_dataset))], axis=0)
+    # val_set_x = np.stack([val_dataset[i]['x'].numpy()[None, ...] for i in range(len(val_dataset))], axis=0)
+    # val_set_y = np.stack([val_dataset[i]['y'].numpy()[0:1] for i in range(len(val_dataset))], axis=0)
+    # model.fit(x=train_set_x, y=train_set_y, batch_size=params['batch_size'],
+    #           epochs=params['num_epochs'], validation_data=(val_set_x, val_set_y))

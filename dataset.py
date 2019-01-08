@@ -4,6 +4,7 @@ import glob
 import torch
 import numpy as np
 from random import shuffle
+from scipy.io import loadmat
 from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from utils import load_pkl, save_pkl
@@ -11,9 +12,10 @@ from utils import load_pkl, save_pkl
 DATASET_VERSION = 4
 
 
+# 5(1/6),15(0.5),30(1),60(2),120(4), 240(8),480(16),720(24),1800(60),3000(100),6000(200) # 30 seconds
 class EEGDataset(Dataset):
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
-                 seq_len: int = 512, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
+                 seq_len: int = 1024, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
                  progression_scale: int = 2, per_channel_normalization: bool = False, no_condition: bool = True,
                  model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
         super().__init__()
@@ -43,8 +45,16 @@ class EEGDataset(Dataset):
             return
         if file_ids is None:
             all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+            is_matlab = len(all_files) == 0
+            if is_matlab:
+                all_files = glob.glob(os.path.join(dir_path, '*.mat'))
+                num_channels = 17
         else:
             all_files = [os.path.join(dir_path, '{}_1.txt'.format(f)) for f in file_ids]
+            is_matlab = len(all_files) > 0 and not os.path.exists(all_files[0])
+            if is_matlab:
+                all_files = [os.path.join(dir_path, '{}.mat'.format(f)) for f in file_ids]
+                num_channels = 17
         files = len(all_files)
         files = [i for i in range(files)]
         if train_files is None:
@@ -60,19 +70,29 @@ class EEGDataset(Dataset):
         self.datas = []
         for i in tqdm(files):
             is_ok = True
-            for j in range(num_channels):
-                with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
-                    tmp = list(map(float, f.read().split()))
-                    if j == 0:
-                        size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
-                        if size <= 0:
-                            is_ok = False
-                            break
-                        sizes.append(size)
-                        num_points.append((sizes[-1] - 1) * self.stride + seq_len)
-                        self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
-                    tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
-                    self.datas[-1][j, :] = tmp
+            if is_matlab:
+                tmp = loadmat(all_files[i])
+                size = int(np.ceil((tmp.shape[1] - seq_len + 1) / self.stride))
+                if size <= 0:
+                    is_ok = False
+                else:
+                    sizes.append(size)
+                    num_points.append((sizes[-1] - 1) * self.stride + seq_len)
+                    self.datas.append(tmp[:num_channels, :num_points[-1]])
+            else:
+                for j in range(num_channels):
+                    with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
+                        tmp = list(map(float, f.read().split()))
+                        if j == 0:
+                            size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
+                            if size <= 0:
+                                is_ok = False
+                                break
+                            sizes.append(size)
+                            num_points.append((sizes[-1] - 1) * self.stride + seq_len)
+                            self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
+                        tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
+                        self.datas[-1][j, :] = tmp
             if is_ok and per_user_normalization:
                 self.datas[-1], is_ok = self.normalize(self.datas[-1], self.per_channel_normalization)
                 if not is_ok:
