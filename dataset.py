@@ -1,61 +1,68 @@
-import os
 import glob
-import torch
-import numpy as np
+import os
+from collections import OrderedDict
 from random import shuffle
+from typing import List, Optional, Callable
+
+import numpy as np
+import torch
 from scipy.io import loadmat
-from tqdm import tqdm, trange
 from torch.utils.data import Dataset
-from utils import load_pkl, save_pkl, downsample_signal, upsample_signal
+from tqdm import tqdm, trange
 
-DATASET_VERSION = 5
+from utils import load_pkl, save_pkl, downsample_signal, upsample_signal, resample_signal
+
+DATASET_VERSION = 6
 
 
-# 5(1/6),15(0.5),30(1),60(2),120(4), 240(8),480(16),720(24),1800(60),3000(100),6000(200) # 30 seconds
+# real_freq: 0.0625(4 samples) -> 0.125 -> 0.25 -> 0.5 -> 2 -> 4 -> 8 -> 12 -> 16 -> 20 -> 30 -> 50 -> 100(6400 samples)
+# real_freq: 0.0625(4 samples) -> 0.5(32 samples) -> 2 -> 4 -> 8 -> 12 -> 16 -> 20 -> 30 -> 50 -> 100(6400 samples)
+# min_layer_real_freq: 0.5(32 samples) -> 4 -> 8 -> 12 -> 30 -> 50 -> 100(6400 samples)
+# ideal_real_freq: (0.5 -> 2)( -> 4)( -> 8)( -> 12)( -> 16)( -> 20)( -> 30)( -> 50)( -> 100)
 class EEGDataset(Dataset):
-    progression_scale_up = [3, 2, 2, 2, 2, 2, 3, 5, 5, 2]
-    progression_scale_down = [1, 1, 1, 1, 1, 1, 2, 2, 3, 1]
+    # for 200(sampling)
+    # progression_scale_up = [4, 2, 2, 3, 4, 5, 3, 5, 2]
+    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3, 1]
 
+    # for 60(sampling)
+    progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
+    progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
+
+    # global_cond and local_cond will get a pytorch tensor of shape (num_channels, current_seq_len)
+    # and outputs (ch or (ch, new_seq_len based on current_seq_len or just a constant length))
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
-                 seq_len: int = 1024, stride: float = 0.25, num_channels: int = 5, per_user_normalization: bool = True,
-                 per_channel_normalization: bool = False, no_condition: bool = True,
-                 model_dataset_depth_offset: int = 2):  # start from progression_scale^2 instead of progression_scale^0
+                 data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
+                 start_seq_len: int = 32, stride: float = 0.25, num_channels: int = 5,
+                 per_user_normalization: bool = True, per_channel_normalization: bool = False,
+                 global_cond: Optional[List[Callable]] = None, temporal_cond: Optional[List[Callable]] = None):
         super().__init__()
         self.model_depth = 0
         self.alpha = 1.0
-        self.model_dataset_depth_offset = model_dataset_depth_offset
         self.dir_path = dir_path
+        seq_len = start_seq_len * end_sampling_freq / start_sampling_freq
+        assert seq_len == int(seq_len), 'seq_len must be an int'
+        seq_len = int(seq_len)
         self.seq_len = seq_len
+        self.start_seq_len = start_seq_len
         self.stride = int(seq_len * stride)
-        self.num_channels = num_channels
         self.per_user_normalization = per_user_normalization
         self.per_channel_normalization = per_channel_normalization
         self.max_dataset_depth = len(self.progression_scale_up)
-        self.min_dataset_depth = self.model_dataset_depth_offset
-        self.y, file_ids = self.read_meta_info(os.path.join(dir_path, 'meta.npy'))
         self.norms = norms
-        self.no_condition = no_condition
+        self.global_cond = global_cond
+        self.temporal_cond = temporal_cond
+        self.num_channels = num_channels
         if given_data is not None:
             self.sizes = given_data[0]['sizes']
             self.files = given_data[0]['files']
             self.norms = given_data[0]['norms']
             self.data_pointers = given_data[0]['pointers']
             self.datas = [given_data[1]['arr_{}'.format(i)] for i in trange(len(given_data[1].keys()))]
-            if self.y is not None:
-                self.y = self.y[self.files]
             return
-        if file_ids is None:
-            all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
-            is_matlab = len(all_files) == 0
-            if is_matlab:
-                all_files = glob.glob(os.path.join(dir_path, '*.mat'))
-                num_channels = 17
-        else:
-            all_files = [os.path.join(dir_path, '{}_1.txt'.format(f)) for f in file_ids]
-            is_matlab = len(all_files) > 0 and not os.path.exists(all_files[0])
-            if is_matlab:
-                all_files = [os.path.join(dir_path, '{}.mat'.format(f)) for f in file_ids]
-                num_channels = 17
+        all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))
+        is_matlab = len(all_files) == 0
+        if is_matlab:
+            all_files = glob.glob(os.path.join(dir_path, '*.mat'))
         files = len(all_files)
         files = [i for i in range(files)]
         if train_files is None:
@@ -63,8 +70,6 @@ class EEGDataset(Dataset):
             files = files[:int(len(all_files) * (1.0 - validation_ratio))]
         else:
             files = list(set(files) - set(train_files))
-        if self.y is not None:
-            self.y = self.y[files]
         self.files = files
         sizes = []
         num_points = []
@@ -72,7 +77,8 @@ class EEGDataset(Dataset):
         for i in tqdm(files):
             is_ok = True
             if is_matlab:
-                tmp = loadmat(all_files[i])
+                tmp = loadmat(all_files[i])['eeg_signal']
+                tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
                 size = int(np.ceil((tmp.shape[1] - seq_len + 1) / self.stride))
                 if size <= 0:
                     is_ok = False
@@ -84,6 +90,8 @@ class EEGDataset(Dataset):
                 for j in range(num_channels):
                     with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
                         tmp = list(map(float, f.read().split()))
+                        tmp = np.array(tmp, dtype=np.float32)
+                        tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
                         if j == 0:
                             size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
                             if size <= 0:
@@ -92,7 +100,7 @@ class EEGDataset(Dataset):
                             sizes.append(size)
                             num_points.append((sizes[-1] - 1) * self.stride + seq_len)
                             self.datas.append(np.zeros((num_channels, num_points[-1]), dtype=np.float32))
-                        tmp = np.array(tmp, dtype=np.float32)[:num_points[-1]]
+                        tmp = tmp[:num_points[-1]]
                         self.datas[-1][j, :] = tmp
             if is_ok and per_user_normalization:
                 self.datas[-1], is_ok = self.normalize(self.datas[-1], self.per_channel_normalization)
@@ -105,38 +113,25 @@ class EEGDataset(Dataset):
         if not per_user_normalization:
             self.normalize_all()
 
-    @staticmethod
-    def read_meta_info(file_name):
-        if not os.path.exists(file_name):
-            return None, None
-        y = np.load(file_name)
-        file_ids = y[:, 0]
-        y = y[:, 1:].astype(np.float32)
-        y[:, 0] = (y[:, 0] - 10.0) / 90.0
-        return y, file_ids
-
-    def generate_class_condition(self, batch_size):
-        if self.y is None or self.no_condition:
-            return None
-        res = np.zeros((batch_size, self.y.shape[1]), dtype=np.float32)
-        res[:, 0] = np.random.rand(batch_size)
-        res[:, 1:] = np.random.rand(batch_size, self.y.shape[1] - 1) > 0.5
-        return torch.from_numpy(res)
-
     @classmethod
-    def from_config(cls, validation_ratio: float, dir_path: str, seq_len: int, stride: float, num_channels: int,
-                    per_user_normalization: bool, model_dataset_depth_offset: int, per_channel_normalization: bool,
-                    no_condition: bool):
+    def from_config(cls, validation_ratio: float, dir_path: str,
+                    data_sampling_freq: float, start_sampling_freq: float, end_sampling_freq: float,
+                    start_seq_len: int, stride: float, num_channels: int,
+                    per_user_normalization: bool, per_channel_normalization: bool,
+                    global_cond: Optional[List[Callable]], temporal_cond: Optional[List[Callable]]):
         mode = per_user_normalization * 2 + per_channel_normalization * 1
         train_files = None
         train_norms = None
         datasets = [None, None]
         for index, split in enumerate(('train', 'val')):
-            target_location = os.path.join(dir_path,
-                                           '{}%_{}l_{}c_{}o_{}m_{}s_{}v_{}.npz'.format(validation_ratio, seq_len,
-                                                                                       num_channels,
-                                                                                       model_dataset_depth_offset, mode,
-                                                                                       stride, DATASET_VERSION, split))
+            target_location = os.path.join(dir_path, '{}%_{}c_{}m_{}s_{}v_{}ss_{}es_{}l_{}.npz'.format(validation_ratio,
+                                                                                                       num_channels,
+                                                                                                       mode, stride,
+                                                                                                       DATASET_VERSION,
+                                                                                                       start_sampling_freq,
+                                                                                                       end_sampling_freq,
+                                                                                                       start_seq_len,
+                                                                                                       split))
             given_data = None
             if os.path.exists(target_location):
                 print('loading {} dataset from file'.format(split))
@@ -146,9 +141,9 @@ class EEGDataset(Dataset):
                     given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
             else:
                 print('creating {} dataset from scratch'.format(split))
-            dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, seq_len, stride,
-                          num_channels, per_user_normalization, per_channel_normalization, no_condition,
-                          model_dataset_depth_offset)
+            dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, data_sampling_freq,
+                          start_sampling_freq, end_sampling_freq, start_seq_len, stride, num_channels,
+                          per_user_normalization, per_channel_normalization, global_cond, temporal_cond)
             if train_files is None:
                 train_files = dataset.files
                 train_norms = dataset.norms
@@ -211,13 +206,19 @@ class EEGDataset(Dataset):
     def __getitem__(self, item):
         with torch.no_grad():
             datapoint = torch.from_numpy(self.load_file(item).astype(np.float32)).unsqueeze(0)
-            target_depth = self.model_depth + self.model_dataset_depth_offset
+            target_depth = self.model_depth
             if self.max_dataset_depth != target_depth:
                 datapoint = self.create_datapoint_from_depth(datapoint, target_depth)
         x = self.alpha_fade(datapoint).squeeze(0)
-        if self.y is None or self.no_condition:
-            return {'x': x}
-        return {'x': x, 'y': torch.from_numpy(self.y[self.data_pointers[item][0]])}
+        res = OrderedDict()
+        res['x'] = x
+        if self.global_cond is not None:
+            for i, global_cond_function in enumerate(self.global_cond):
+                res['global_{}'.format(i)] = global_cond_function(x)
+        if self.temporal_cond is not None:
+            for i, temporal_cond_function in enumerate(self.temporal_cond):
+                res['temporal_{}'.format(i)] = temporal_cond_function(x)
+        return res
 
     def create_datapoint_from_depth(self, datapoint, target_depth):
         depth_diff = (self.max_dataset_depth - target_depth)
@@ -231,3 +232,8 @@ class EEGDataset(Dataset):
         t = self.resample_data(datapoint, self.model_depth, False)
         t = self.resample_data(t, self.model_depth, True)
         return datapoint + (t - datapoint) * (1 - self.alpha)
+
+
+if __name__ == '__main__':
+    a = EEGDataset(None, None, None, dir_path='./data/prepared_sample')
+    # TODO global and local conds

@@ -95,7 +95,7 @@ def main(params):
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     if dataset_params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
-    stats_to_log.extend(['swd.val', 'swd.epoch'])
+    # stats_to_log.extend(['swd.val', 'swd.epoch'])
 
     num_classes = 0 if dataset.y is None or dataset.no_condition else dataset.y.shape[1]
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
@@ -104,10 +104,12 @@ def main(params):
                                fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
                                residual=params['residual'], equalized=params['equalized'],
                                sagan_non_local=params['sagan_non_local'],
+                               initial_kernel_size=dataset.initial_kernel_size,
                                average_conditions=params['average_conditions'],
                                factorized_attention=params['use_factorized_attention'],
                                self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
-                               num_classes=num_classes, progression_scale=dataset.progression_scale)
+                               num_classes=num_classes, progression_scale_up=dataset.progression_scale_up,
+                               progression_scale_down=dataset.progression_scale_down)
     for n in ('Generator', 'Discriminator'):
         p = params[n]
         if p['spectral']:
@@ -224,8 +226,8 @@ def main(params):
     if dataset_params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks'],
                                                   params['DepthManager']['tiny_sizes']))
-    trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
-                                            **params['SlicedWDistance']))
+    # trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
+    #                                         **params['SlicedWDistance']))
     trainer.register_plugin(AbsoluteTimeMonitor())
     if params['inception_network_address'] != '':
         inception_network = torch.load(params['inception_network_address'], map_location='cpu')

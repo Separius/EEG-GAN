@@ -102,7 +102,7 @@ EEGDataset:
   per_user_normalization: true
   progression_scale: 2
   per_channel_normalization: false
-  model_dataset_depth_offset: 2
+  model_dataset_depth_offset: 0
   no_condition: true
 
 WatchSingularValues:

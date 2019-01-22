@@ -62,19 +62,20 @@ class GBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
-                 self_attention_layers, progression_scale, num_classes, init, z_distribution, act_alpha, residual,
-                 sagan_non_local, factorized_attention, average_conditions, to_rgb_mode: str = 'pggan',
-                 latent_size: int = 256, normalize_latents: bool = True, dropout: float = 0.2, do_mode: str = 'mul',
-                 spectral: bool = False, act_norm: Optional[str] = 'pixel', no_tanh: bool = False,
-                 per_channel_noise=False, split_z=False, embed_classes_size: Optional[int] = None):
+    def __init__(self, initial_kernel_size, dataset_shape, initial_size, fmap_base, fmap_max, fmap_min, kernel_size,
+                 equalized, self_attention_layers, progression_scale_up, progression_scale_down, num_classes, init,
+                 z_distribution, act_alpha, residual, sagan_non_local, factorized_attention, average_conditions,
+                 to_rgb_mode: str = 'pggan', latent_size: int = 256, normalize_latents: bool = True,
+                 dropout: float = 0.2, do_mode: str = 'mul', spectral: bool = False, act_norm: Optional[str] = 'pixel',
+                 no_tanh: bool = False, per_channel_noise=False, split_z=False,
+                 embed_classes_size: Optional[int] = None):
         # NOTE in pggan, no_tanh is True
         # NOTE in the pggan, dropout is 0.0
         super().__init__()
-        resolution = dataset_shape[-1]
         num_channels = dataset_shape[1]
-        R = int(math.log(resolution, progression_scale))
-        assert resolution == progression_scale ** R and resolution >= progression_scale ** initial_size
+        R = len(progression_scale_up) + initial_size
+        self.progression_scale_up = progression_scale_up
+        self.progression_scale_down = progression_scale_down
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -96,7 +97,6 @@ class Generator(nn.Module):
         self.normalize_latents = normalize_latents
         layer_settings = dict(do=dropout, do_mode=do_mode, num_classes=num_classes,
                               act_norm=act_norm, act_alpha=act_alpha, average_conditions=average_conditions)
-        initial_kernel_size = progression_scale ** initial_size
         self.block0 = GBlock(latent_size, nf(1), num_channels, ksize=kernel_size, equalized=equalized,
                              initial_kernel_size=initial_kernel_size, is_residual=residual, spectral=spectral,
                              no_tanh=no_tanh, to_rgb_mode=to_rgb_mode, init=init, per_channel_noise=per_channel_noise,
@@ -117,9 +117,6 @@ class Generator(nn.Module):
         self.split_z = split_z
         self.latent_size = latent_size
         self.max_depth = len(self.blocks)
-        self.progression_scale = progression_scale
-        self.upsampler = partial(F.interpolate, size=None, mode='linear',
-                                 align_corners=True, scale_factor=progression_scale)
         self.z_distribution = z_distribution
 
     def set_gamma(self, new_gamma):
@@ -144,9 +141,9 @@ class Generator(nn.Module):
     def split_h(h):
         # h is B, ch, T
         b, ch, t = h.size()
-        left, right = h[:b//2], h[b//2:]
-        q = t//2
-        res = torch.empty(b//2, ch, 3*q).to(h)
+        left, right = h[:b // 2], h[b // 2:]
+        q = t // 2
+        res = torch.empty(b // 2, ch, 3 * q).to(h)
         res[:, :, :q] = left[:, :, :q]
         res[:, :, -q:] = right[:, :, q:]
         kernel_l = torch.linspace(1, 0, q).view(1, 1, -1).to(h)
@@ -173,8 +170,8 @@ class Generator(nn.Module):
         for i in range(self.depth - 1):
             if i == merge_layer:
                 if y is not None:
-                    y = y[:y.size(0)//2]
-                z = z[:z.size(0)//2]
+                    y = y[:y.size(0) // 2]
+                z = z[:z.size(0) // 2]
                 h = self.split_h(h)
             h, attention_map = self.do_layer(i, h, y, z)
             if attention_map is not None:

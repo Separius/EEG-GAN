@@ -7,6 +7,7 @@ import numpy as np
 from typing import Dict
 from pickle import load, dump
 from functools import partial
+from fractions import Fraction
 import torch.nn.functional as F
 from argparse import ArgumentParser
 
@@ -204,3 +205,23 @@ def upsample_signal(signal, upsample_factor):
 
 def downsample_signal(signal, downsample_factor):
     return F.avg_pool1d(signal, downsample_factor, downsample_factor, 0, False, True)
+
+
+def resample_signal(signal, signal_freq, desired_freq):
+    if isinstance(signal, np.ndarray):
+        new_signal = torch.from_numpy(signal)
+    else:
+        new_signal = signal
+    orig_dim = new_signal.dim()
+    if orig_dim == 2:
+        new_signal = new_signal[None]
+    if orig_dim == 1:
+        new_signal = new_signal[None, None]
+    ratio = Fraction(desired_freq / signal_freq)
+    if ratio.numerator != 1:
+        new_signal = upsample_signal(new_signal, ratio.numerator)
+    if ratio.denominator != 1:
+        new_signal = downsample_signal(new_signal, ratio.numerator)
+    if orig_dim == 2:
+        return new_signal[0].numpy()
+    return new_signal[0, 0].numpy()
