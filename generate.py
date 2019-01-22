@@ -1,18 +1,20 @@
-import os
-import math
 import glob
-import torch
-import faiss
+import math
+import os
 import pickle
+
+import faiss
 import imageio
+import matplotlib
 import numpy as np
+import torch
 from scipy import misc
 from tqdm import trange, tqdm
+
 from dataset import EEGDataset
 from network import Generator, Discriminator
 from plugins import OutputGenerator, DepthManager
 from utils import cudize, random_latents, generate_samples, load_model, parse_config
-import matplotlib
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

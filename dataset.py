@@ -2,7 +2,6 @@ import glob
 import os
 from collections import OrderedDict
 from random import shuffle
-from typing import List, Optional, Callable
 
 import numpy as np
 import torch
@@ -30,11 +29,13 @@ class EEGDataset(Dataset):
 
     # global_cond and local_cond will get a pytorch tensor of shape (num_channels, current_seq_len)
     # and outputs (ch or (ch, new_seq_len based on current_seq_len or just a constant length))
+    global_cond = None
+    temporal_cond = None
+
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
                  data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
                  start_seq_len: int = 32, stride: float = 0.25, num_channels: int = 5,
-                 per_user_normalization: bool = True, per_channel_normalization: bool = False,
-                 global_cond: Optional[List[Callable]] = None, temporal_cond: Optional[List[Callable]] = None):
+                 per_user_normalization: bool = True, per_channel_normalization: bool = False):
         super().__init__()
         self.model_depth = 0
         self.alpha = 1.0
@@ -49,8 +50,6 @@ class EEGDataset(Dataset):
         self.per_channel_normalization = per_channel_normalization
         self.max_dataset_depth = len(self.progression_scale_up)
         self.norms = norms
-        self.global_cond = global_cond
-        self.temporal_cond = temporal_cond
         self.num_channels = num_channels
         if given_data is not None:
             self.sizes = given_data[0]['sizes']
@@ -117,8 +116,7 @@ class EEGDataset(Dataset):
     def from_config(cls, validation_ratio: float, dir_path: str,
                     data_sampling_freq: float, start_sampling_freq: float, end_sampling_freq: float,
                     start_seq_len: int, stride: float, num_channels: int,
-                    per_user_normalization: bool, per_channel_normalization: bool,
-                    global_cond: Optional[List[Callable]], temporal_cond: Optional[List[Callable]]):
+                    per_user_normalization: bool, per_channel_normalization: bool):
         mode = per_user_normalization * 2 + per_channel_normalization * 1
         train_files = None
         train_norms = None
@@ -143,7 +141,7 @@ class EEGDataset(Dataset):
                 print('creating {} dataset from scratch'.format(split))
             dataset = cls(train_files, train_norms, given_data, validation_ratio, dir_path, data_sampling_freq,
                           start_sampling_freq, end_sampling_freq, start_seq_len, stride, num_channels,
-                          per_user_normalization, per_channel_normalization, global_cond, temporal_cond)
+                          per_user_normalization, per_channel_normalization)
             if train_files is None:
                 train_files = dataset.files
                 train_norms = dataset.norms
@@ -236,4 +234,3 @@ class EEGDataset(Dataset):
 
 if __name__ == '__main__':
     a = EEGDataset(None, None, None, dir_path='./data/prepared_sample')
-    # TODO global and local conds

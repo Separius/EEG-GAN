@@ -207,7 +207,7 @@ def downsample_signal(signal, downsample_factor):
     return F.avg_pool1d(signal, downsample_factor, downsample_factor, 0, False, True)
 
 
-def resample_signal(signal, signal_freq, desired_freq):
+def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
     if isinstance(signal, np.ndarray):
         new_signal = torch.from_numpy(signal)
     else:
@@ -217,11 +217,20 @@ def resample_signal(signal, signal_freq, desired_freq):
         new_signal = new_signal[None]
     if orig_dim == 1:
         new_signal = new_signal[None, None]
-    ratio = Fraction(desired_freq / signal_freq)
+    if isinstance(desired_freq, float):
+        if desired_freq == int(desired_freq) and signal_freq == int(signal_freq):
+            desired_freq = int(desired_freq)
+            signal_freq = int(signal_freq)
+        else:
+            desired_freq = desired_freq / signal_freq
+            signal_freq = None
+    ratio = Fraction(desired_freq, signal_freq)
     if ratio.numerator != 1:
         new_signal = upsample_signal(new_signal, ratio.numerator)
     if ratio.denominator != 1:
-        new_signal = downsample_signal(new_signal, ratio.numerator)
-    if orig_dim == 2:
-        return new_signal[0].numpy()
-    return new_signal[0, 0].numpy()
+        new_signal = downsample_signal(new_signal, ratio.denominator)
+    if not pytorch:
+        if orig_dim == 2:
+            return new_signal[0].numpy()
+        return new_signal[0, 0].numpy()
+    return new_signal

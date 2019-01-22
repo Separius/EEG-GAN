@@ -1,11 +1,13 @@
 import math
-import torch
+
 import numpy as np
-from torch import nn
+import torch
 import torch.nn.functional as F
+from torch import nn
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
-from utils import cudize, pixel_norm, EPSILON
+
+from utils import cudize, pixel_norm, resample_signal
 
 
 class PixelNorm(nn.Module):
@@ -23,42 +25,18 @@ class ScaledTanh(nn.Tanh):
 
 
 class GDropLayer(nn.Module):
-    """
-    # Generalized dropout layer. Supports arbitrary subsets of axes and different
-    # modes. Mainly used to inject multiplicative Gaussian noise in the network.
-    """
-
-    def __init__(self, mode='mul', strength=0.2, axes=(0, 1), normalize=False):
+    def __init__(self, strength=0.2, axes=(0, 1)):
         super().__init__()
-        self.mode = mode.lower()
-        assert self.mode in {'mul', 'drop', 'prop'}, 'Invalid GDropLayer mode' % mode
         self.strength = strength
         self.axes = [axes] if isinstance(axes, int) else list(axes)
-        self.normalize = normalize
 
     def forward(self, x, deterministic=False):
         if deterministic or not self.strength:
             return x
-
         rnd_shape = [s if axis in self.axes else 1 for axis, s in enumerate(x.size())]
-        if self.mode == 'drop':
-            p = 1 - self.strength
-            rnd = np.random.binomial(1, p=p, size=rnd_shape) / p
-        elif self.mode == 'mul':
-            rnd = (1 + self.strength) ** np.random.normal(size=rnd_shape)
-        else:
-            coef = self.strength * x.size(1) ** 0.5
-            rnd = np.random.normal(size=rnd_shape) * coef + 1
-
-        if self.normalize:
-            rnd = rnd / np.linalg.norm(rnd, keepdims=True)
-        rnd = cudize(torch.autograd.Variable(torch.from_numpy(rnd).type(x.data.type())))
+        rnd = (1 + self.strength) ** np.random.normal(size=rnd_shape)
+        rnd = cudize(torch.from_numpy(rnd).type(x.data.type()))
         return x * rnd
-
-    def __repr__(self):
-        param_str = '(mode = %s, strength = %s, axes = %s, normalize = %s)' % (
-            self.mode, self.strength, self.axes, self.normalize)
-        return self.__class__.__name__ + param_str
 
 
 class SelfAttention(nn.Module):
@@ -115,49 +93,25 @@ class MinibatchStddev(nn.Module):
         return torch.cat([x, y], dim=1)
 
 
-class ConditionalGeneralNorm(nn.Module):
-    def __init__(self, norm_class, num_features, num_classes, average, spectral):
+class ConditionalBatchNorm(nn.Module):
+    def __init__(self, num_features, num_classes, spectral):
         super().__init__()
-        if num_classes == 0:
-            self.normalizer = norm_class(num_features)
-            self.embed = None
-        else:
-            self.num_features = num_features
-            self.normalizer = norm_class(num_features, affine=False)
-            self.embed = nn.Linear(num_classes, num_features * 2, False)
-            self.embed.weight.data[:num_features, :].normal_(1, 0.02)
-            self.embed.weight.data[num_features:, :].zero_()
-            if spectral:
-                self.embed = spectral_norm(self.embed)
-            self.average = average
+        self.num_features = num_features
+        self.normalizer = nn.BatchNorm1d(num_features, affine=False)
+        self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False, act_alpha=-1,
+                                 spectral=spectral, bias=False)
 
-    def forward(self, x, y=None):
+    def forward(self, x, y):  # y is B, num_classes, Ty and x is B, num_features, Tx
         out = self.normalizer(x)
-        if self.embed is None or y is None:
-            return out
-        embed = self.embed(y)
-        if self.average:
-            embed = embed / y.sum(dim=1, keepdim=True)
+        embed = self.embed(y)  # B, num_features*2, Ty
+        embed = resample_signal(embed, embed.shape[2], x.shape[2], pytorch=True)
         gamma, beta = embed.chunk(2, dim=1)
-        return gamma.view(-1, self.num_features, 1) * out + beta.view(-1, self.num_features, 1)
-
-
-class ConditionalBatchNorm(ConditionalGeneralNorm):
-    def __init__(self, *args, **kwargs):
-        super().__init__(nn.BatchNorm1d, *args, **kwargs)
-
-
-class ConditionalLayerNorm(ConditionalGeneralNorm):
-    def __init__(self, *args, **kwargs):
-        def norm_class(*args, **kwargs):
-            return nn.GroupNorm(1, *args, **kwargs)
-
-        super().__init__(norm_class, *args, **kwargs)
+        return gamma * out + beta
 
 
 class EqualizedConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding=0,
-                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0, bias=True):
+                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0.0, bias=True):
         super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, padding=padding, bias=bias)
@@ -183,18 +137,15 @@ class EqualizedConv1d(nn.Module):
 
 
 class GeneralConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0, do=0,
-                 do_mode='mul', num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True,
-                 average_conditions=True):
+    def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0.0, do=0,
+                 num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
                                equalized=equalized, init=init, act_alpha=act_alpha, bias=bias)
         norm = None
-        if act_norm == 'layer':
-            norm = ConditionalLayerNorm(out_channels, num_classes, average_conditions, spectral)
-        elif act_norm == 'batch':
-            norm = ConditionalBatchNorm(out_channels, num_classes, average_conditions, spectral)
+        if act_norm == 'batch':
+            norm = ConditionalBatchNorm(out_channels, num_classes, spectral)
         self.conv = conv
         self.norm = norm
         self.net = []
@@ -206,7 +157,7 @@ class GeneralConv(nn.Module):
         if act_norm == 'pixel':
             self.net.append(PixelNorm())
         if do != 0:
-            self.net.append(GDropLayer(strength=do, mode=do_mode))
+            self.net.append(GDropLayer(strength=do))
         self.net = nn.Sequential(*self.net)
 
     def forward(self, x, y=None, z=None, *args, **kwargs):
@@ -216,7 +167,3 @@ class GeneralConv(nn.Module):
         if self.norm:
             c = self.norm(c, y)
         return self.net(c)
-
-    def __repr__(self):
-        param_str = '(conv = {}, norm = {})'.format(self.conv.conv, self.norm)
-        return self.__class__.__name__ + param_str

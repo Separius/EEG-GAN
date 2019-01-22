@@ -1,5 +1,0 @@
-minibatch_size: 256
-EEGDataset:
-  seq_len: 4096
-  stride: 0.5
-  no_condition: false
