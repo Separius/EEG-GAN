@@ -1,21 +1,20 @@
 import glob
 import os
-from collections import OrderedDict
 from random import shuffle
 
 import numpy as np
 import torch
+from scipy import signal
+from scipy.integrate import simps
 from scipy.io import loadmat
 from torch.utils.data import Dataset
 from tqdm import tqdm, trange
 
-from utils import load_pkl, save_pkl, downsample_signal, upsample_signal, resample_signal
+from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents, EPSILON
 
 DATASET_VERSION = 6
 
 
-# real_freq: 0.0625(4 samples) -> 0.125 -> 0.25 -> 0.5 -> 2 -> 4 -> 8 -> 12 -> 16 -> 20 -> 30 -> 50 -> 100(6400 samples)
-# real_freq: 0.0625(4 samples) -> 0.5(32 samples) -> 2 -> 4 -> 8 -> 12 -> 16 -> 20 -> 30 -> 50 -> 100(6400 samples)
 # min_layer_real_freq: 0.5(32 samples) -> 4 -> 8 -> 12 -> 30 -> 50 -> 100(6400 samples)
 # ideal_real_freq: (0.5 -> 2)( -> 4)( -> 8)( -> 12)( -> 16)( -> 20)( -> 30)( -> 50)( -> 100)
 class EEGDataset(Dataset):
@@ -27,12 +26,9 @@ class EEGDataset(Dataset):
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
-    # global_cond and local_cond will get a pytorch tensor of shape (num_channels, current_seq_len)
-    # and outputs (ch or (ch, new_seq_len based on current_seq_len or just a constant length))
-    global_cond = None
-    temporal_cond = None
+    # TODO ignore bad channels from the full_channel_db
 
-    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
+    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.0, dir_path: str = './data/tuh1',
                  data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
                  start_seq_len: int = 32, stride: float = 0.25, num_channels: int = 5,
                  per_user_normalization: bool = True, per_channel_normalization: bool = False):
@@ -40,6 +36,7 @@ class EEGDataset(Dataset):
         self.model_depth = 0
         self.alpha = 1.0
         self.dir_path = dir_path
+        self.end_sampling_freq = end_sampling_freq
         seq_len = start_seq_len * end_sampling_freq / start_sampling_freq
         assert seq_len == int(seq_len), 'seq_len must be an int'
         seq_len = int(seq_len)
@@ -122,14 +119,9 @@ class EEGDataset(Dataset):
         train_norms = None
         datasets = [None, None]
         for index, split in enumerate(('train', 'val')):
-            target_location = os.path.join(dir_path, '{}%_{}c_{}m_{}s_{}v_{}ss_{}es_{}l_{}.npz'.format(validation_ratio,
-                                                                                                       num_channels,
-                                                                                                       mode, stride,
-                                                                                                       DATASET_VERSION,
-                                                                                                       start_sampling_freq,
-                                                                                                       end_sampling_freq,
-                                                                                                       start_seq_len,
-                                                                                                       split))
+            target_location = os.path.join(dir_path, '{}%_{}c_{}m_{}s_{}v_{}ss_{}es_{}l_{}.npz'
+                                           .format(validation_ratio, num_channels, mode, stride, DATASET_VERSION,
+                                                   start_sampling_freq, end_sampling_freq, start_seq_len, split))
             given_data = None
             if os.path.exists(target_location):
                 print('loading {} dataset from file'.format(split))
@@ -195,11 +187,12 @@ class EEGDataset(Dataset):
         res = self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
         return res
 
-    def resample_data(self, data, index, forward=True):
-        up_scale = self.progression_scale_up[index]
-        down_scale = self.progression_scale_down[index]
-        t = upsample_signal(data, up_scale if forward else down_scale)
-        return downsample_signal(t, down_scale if forward else up_scale)
+    def resample_data(self, data, index, forward=True, alpha_fade=False):
+        up_scale = self.progression_scale_up[index - (1 if alpha_fade else 0)]
+        down_scale = self.progression_scale_down[index - (1 if alpha_fade else 0)]
+        if forward:
+            return resample_signal(data, down_scale, up_scale, True)
+        return resample_signal(data, up_scale, down_scale, True)
 
     def __getitem__(self, item):
         with torch.no_grad():
@@ -207,16 +200,7 @@ class EEGDataset(Dataset):
             target_depth = self.model_depth
             if self.max_dataset_depth != target_depth:
                 datapoint = self.create_datapoint_from_depth(datapoint, target_depth)
-        x = self.alpha_fade(datapoint).squeeze(0)
-        res = OrderedDict()
-        res['x'] = x
-        if self.global_cond is not None:
-            for i, global_cond_function in enumerate(self.global_cond):
-                res['global_{}'.format(i)] = global_cond_function(x)
-        if self.temporal_cond is not None:
-            for i, temporal_cond_function in enumerate(self.temporal_cond):
-                res['temporal_{}'.format(i)] = temporal_cond_function(x)
-        return res
+        return self.alpha_fade(datapoint).squeeze(0)
 
     def create_datapoint_from_depth(self, datapoint, target_depth):
         depth_diff = (self.max_dataset_depth - target_depth)
@@ -227,10 +211,66 @@ class EEGDataset(Dataset):
     def alpha_fade(self, datapoint):
         if self.alpha == 1:
             return datapoint
-        t = self.resample_data(datapoint, self.model_depth, False)
-        t = self.resample_data(t, self.model_depth, True)
+        t = self.resample_data(datapoint, self.model_depth, False, alpha_fade=True)
+        t = self.resample_data(t, self.model_depth, True, alpha_fade=True)
         return datapoint + (t - datapoint) * (1 - self.alpha)
+
+
+def band_power(batch, sampling_freq, bands):
+    window_size = 2 / bands[0]  # in seconds
+    window = sampling_freq * window_size
+    freqs, psd = signal.welch(batch, sampling_freq, nperseg=window)
+    freq_res = freqs[1] - freqs[0]
+    total_power = simps(psd, dx=freq_res)
+    res = []
+    for b_start, b_end in zip(bands, bands[1:]):
+        idx_band = np.logical_and(freqs >= b_start, freqs <= b_end)
+        res.append(simps(psd[..., idx_band], dx=freq_res) / total_power)
+    return np.concatenate(res, axis=1)
+
+
+def pearson_correlation_coefficient(batch, pairs):
+    normalized = batch - batch.mean(dim=2, keepdim=True)
+    squared = torch.sqrt((normalized * normalized).sum(dim=2))
+    res = []
+    for pair in pairs:
+        x = normalized[:, pair[0], :]
+        y = normalized[:, pair[1], :]
+        res.append((x * y).sum(dim=1) / (squared[:, pair[0]] * squared[:, pair[1]] + EPSILON))
+    return torch.stack(res, dim=1)
+
+
+def get_collate_real(max_sampling_freq, max_len, bands, pairs):
+    def collate_real(batch):
+        res = {}
+        if len(bands) > 1:
+            res['temporal_1'] = band_power(batch, int(batch.shape[2] * max_sampling_freq / max_len), bands)
+        res['x'] = cudize(batch)
+        if len(pairs) != 0:
+            res['global_1'] = pearson_correlation_coefficient(res['x'], pairs)
+        return res
+
+    return collate_real
+
+
+def get_collate_fake(latent_size, z_distribution, collate_real):
+
+    def collate_fake(batch):
+        res = collate_real(batch)
+        res['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
+        del res['x']
+        return res
+
+    return collate_fake
 
 
 if __name__ == '__main__':
     a = EEGDataset(None, None, None, dir_path='./data/prepared_sample')
+    a.model_depth = 0
+    a.alpha = 1.0
+    print(a[0]['x'].shape)
+    for i in range(a.max_dataset_depth - 1):
+        a.model_depth = i + 1
+        for alpha in (0.0, 0.5, 1.0):
+            a.alpha = alpha
+            print(i, alpha, a[0]['x'].shape)

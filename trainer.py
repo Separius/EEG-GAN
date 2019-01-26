@@ -78,7 +78,7 @@ class Trainer(object):
     def train(self):
         if self.lr_scheduler_g is not None:
             self.lr_scheduler_g.step(self.cur_nimg / self.d_training_repeats)
-        fake_latents_in = cudize(self.random_latents_generator())
+        fake_latents_in = cudize(next(self.random_latents_generator))
         for i in range(self.d_training_repeats):
             if self.lr_scheduler_d is not None:
                 self.lr_scheduler_d.step(self.cur_nimg)
@@ -88,7 +88,7 @@ class Trainer(object):
                                  real_images_expr.get('y', None), fake_latents_in.get('y', None))
             d_loss.backward()
             self.optimizer_d.step()
-            fake_latents_in = cudize(self.random_latents_generator())
+            fake_latents_in = cudize(next(self.random_latents_generator))
         g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr['x'], fake_latents_in['z'],
                              real_images_expr.get('y', None), fake_latents_in.get('y', None))
         g_loss.backward()

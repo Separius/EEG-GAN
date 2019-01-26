@@ -5,7 +5,7 @@ total_kimg: 6000
 #resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
-grad_lambda: 10  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
+grad_lambda: 10.0  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
 iwass_drift_epsilon: 0.001
 iwass_target: 1.0
 feature_matching_lambda: 0.0
@@ -27,9 +27,9 @@ act_alpha: 0.2
 residual: false
 sagan_non_local: true
 use_factorized_attention: false
-average_conditions: true
-dataset_freq: 80
-inception_network_address: ''
+calc_swd: false
+bands: [0.5, 4, 8, 12, 30] #, 100]
+correlation_pairs: []
 
 Trainer:
   d_training_repeats: 5 # used to be 1 and 2 in big-gan
@@ -40,18 +40,16 @@ Generator:
   latent_size: 256
   normalize_latents: true
   dropout: 0.2
-  do_mode: 'mul' # mul, drop, prop
   spectral: false
   act_norm: 'pixel' # pixel, batch, layer, None
   no_tanh: false
   per_channel_noise: false
   split_z: false
-  embed_classes_size: null # 32
+  embed_classes_size: 64
 
 Discriminator:
   sngan_rgb: false
   dropout: 0.2
-  do_mode: 'mul' # mul, drop, prop
   spectral: false
   act_norm: null # pixel, batch, layer, None
   group_size: 4
@@ -108,10 +106,3 @@ EEGDataset:
 WatchSingularValues:
   one_divided_two: 10.0
   output_snapshot_ticks: 20
-
-InceptionScore:
-  num_samples: 16384
-
-FID:
-  real_stats_location: './data/fid.pkl'
-  num_samples: 65536

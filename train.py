@@ -1,23 +1,24 @@
 import os
-import time
-import yaml
-import torch
 import signal
 import subprocess
-import numpy as np
-from trainer import Trainer
-from torch.optim import Adam
+import time
 from functools import partial
-from dataset import EEGDataset
-from torch.utils.data import DataLoader
-from network import Generator, Discriminator
+
+import numpy as np
+import torch
+import yaml
+from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
-from inception_net import ChronoNet, InceptionModule
-from losses import generator_loss, discriminator_loss
+from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
-from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
-from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, InceptionScore, FID,
+
+from dataset import EEGDataset, get_collate_real, get_collate_fake
+from losses import generator_loss, discriminator_loss
+from network import Generator, Discriminator
+from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, CheckCond,
                      EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
+from trainer import Trainer
+from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
 
 default_params = dict(
     result_dir='results',
@@ -49,9 +50,9 @@ default_params = dict(
     residual=False,
     sagan_non_local=True,
     use_factorized_attention=False,
-    average_conditions=True,
-    dataset_freq=80,
-    inception_network_address=''
+    calc_swd=False,
+    correlation_pairs=[],  # [[0, 1], [1, 2], [2, 3]], #global condition
+    bands=[0.5, 4, 8, 12, 30]  # , 100] #temporal condition
 )
 
 
@@ -88,6 +89,8 @@ def main(params):
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss']
+    total_temporal_conds = ((len(params['bands']) - 1) * dataset.num_channels) if len(params['bands']) > 1 else 0
+    global_conds = len(params['correlation_pairs'])
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
     if len(params['self_attention_layers']) != 0:
@@ -95,21 +98,23 @@ def main(params):
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     if dataset_params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
-    # stats_to_log.extend(['swd.val', 'swd.epoch'])
+    if params['calc_swd']:
+        stats_to_log.extend(['swd.val', 'swd.epoch'])
+    if global_conds > 0:
+        stats_to_log.extend(['cond.global_distance'])
+    if total_temporal_conds > 0:
+        stats_to_log.extend(['cond.temporal_distance'])
 
-    num_classes = 0 if dataset.y is None or dataset.no_condition else dataset.y.shape[1]
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
-    shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
-                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
-                               fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
-                               residual=params['residual'], equalized=params['equalized'],
+    shared_model_params = dict(initial_kernel_size=dataset.initial_kernel_size, num_channels=dataset.num_channels,
+                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
+                               kernel_size=params['kernel_size'], equalized=params['equalized'],
+                               self_attention_layers=params['self_attention_layers'],
+                               progression_scale_up=dataset.progression_scale_up,
+                               progression_scale_down=dataset.progression_scale_down, init=params['init'],
+                               act_alpha=params['act_alpha'], residual=params['residual'],
                                sagan_non_local=params['sagan_non_local'],
-                               initial_kernel_size=dataset.initial_kernel_size,
-                               average_conditions=params['average_conditions'],
-                               factorized_attention=params['use_factorized_attention'],
-                               self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
-                               num_classes=num_classes, progression_scale_up=dataset.progression_scale_up,
-                               progression_scale_down=dataset.progression_scale_down)
+                               factorized_attention=params['use_factorized_attention'])
     for n in ('Generator', 'Discriminator'):
         p = params[n]
         if p['spectral']:
@@ -121,8 +126,11 @@ def main(params):
         logger.log('Warning, you have set the residual to false and disabled the progression')
     if params['Discriminator']['act_norm'] is not None:
         logger.log('Warning, you are using an activation normalization in discriminator')
-    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
-    discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
+    temporal_conds = {'temporal_1': total_temporal_conds} if len(params['bands']) > 1 else {}
+    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'],
+                          num_conds=global_conds + total_temporal_conds, **params['Generator'])
+    discriminator = Discriminator(**shared_model_params, global_conds=global_conds, temporal_conds=temporal_conds,
+                                  **params['Discriminator'])
 
     def rampup(cur_nimg):
         if cur_nimg < params['lr_rampup_kimg'] * 1000:
@@ -189,27 +197,27 @@ def main(params):
 
     mb_def = params['DepthManager']['minibatch_default']
 
-    def get_dataloader(minibatch_size, is_training=True, depth=0, alpha=1):
+    collate_real = get_collate_real(dataset.end_sampling_freq, dataset.seq_len,
+                                    params['bands'], params['correlation_pairs'])
+    collate_fake = get_collate_fake(latent_size, params['z_distribution'], collate_real)
+
+    def get_dataloader(minibatch_size, is_training=True, depth=0, alpha=1, is_real=True):
         ds = dataset if is_training else val_dataset
+        shared_dataloader_params = {'dataset': ds, 'batch_size': minibatch_size, 'drop_last': True,
+                                    'worker_init_fn': worker_init, 'num_workers': params['num_data_workers'],
+                                    'collate_fn': collate_real if is_real else collate_fake}
         if not is_training:
             ds.model_depth = depth
             ds.alpha = alpha
             # NOTE you must drop last in order to be compatible with D.stats layer
-            return DataLoader(ds, minibatch_size, shuffle=True, worker_init_fn=worker_init,
-                              num_workers=params['num_data_workers'], pin_memory=False, drop_last=True)
-        return DataLoader(ds, minibatch_size, sampler=InfiniteRandomSampler(list(range(len(ds)))),
-                          worker_init_fn=worker_init, num_workers=params['num_data_workers'], pin_memory=False,
-                          drop_last=True)
+            return DataLoader(**shared_dataloader_params, shuffle=True)
+        return DataLoader(**shared_dataloader_params, sampler=InfiniteRandomSampler(list(range(len(ds)))))
 
-    def get_random_latents(bs, given_dataset=None):
-        def partial_function():
-            y = (dataset if given_dataset is None else given_dataset).generate_class_condition(bs)
-            z = random_latents(bs, latent_size, params['z_distribution'])
-            if y is None:
-                return {'z': z}
-            return {'z': z, 'y': y}
-
-        return partial_function
+    def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
+        if global_conds + total_temporal_conds > 0:
+            return get_dataloader(minibatch_size, is_training, depth, alpha, False)
+        while True:
+            yield {'z': random_latents(minibatch_size, latent_size, params['z_distribution'])}
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])
@@ -221,19 +229,19 @@ def main(params):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: get_random_latents(x)(), result_dir, dataset.seq_len, params['dataset_freq'],
+        OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len, params['dataset_freq'],
                         dataset.seq_len, **params['OutputGenerator']))
     if dataset_params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks'],
                                                   params['DepthManager']['tiny_sizes']))
-    # trainer.register_plugin(SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
-    #                                         **params['SlicedWDistance']))
+    if params['calc_swd']:
+        trainer.register_plugin(
+            SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
+                            **params['SlicedWDistance']))
+    if total_temporal_conds + global_conds > 0:
+        trainer.register_plugin(CheckCond(get_random_latents, dataset.end_sampling_freq, dataset.seq_len,
+                                          params['bands'], params['correlation_pairs']))
     trainer.register_plugin(AbsoluteTimeMonitor())
-    if params['inception_network_address'] != '':
-        inception_network = torch.load(params['inception_network_address'], map_location='cpu')
-        inception_network = cudize(inception_network).eval()
-        trainer.register_plugin(InceptionScore(inception_network, **params['InceptionScore']))
-        trainer.register_plugin(FID(inception_network, **params['FID']))
     if params['Generator']['spectral']:
         trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))
     if params['Discriminator']['spectral']:
@@ -241,9 +249,6 @@ def main(params):
     trainer.register_plugin(logger)
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])
-    if params['inception_network_address'] != '':
-        print('inception_stats', trainer.inception_result[0], trainer.inception_result[1])
-        print('fid_stats', trainer.fid_result)
     del trainer
 
 

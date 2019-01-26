@@ -1,22 +1,21 @@
-import os
 import gc
+import os
 import time
-import torch
+from copy import deepcopy
+from datetime import timedelta
+from glob import glob
+
 import matplotlib
 import numpy as np
 import pandas as pd
-from glob import glob
+import torch
 from scipy import misc
-from scipy import linalg
-from copy import deepcopy
-from trainer import Trainer
-from datetime import timedelta
-from scipy.stats import entropy
-import torch.nn.functional as F
-from inception_net import ChronoNet
 from sklearn.utils.extmath import randomized_svd
+
+from dataset import band_power, pearson_correlation_coefficient
 from torch_utils import Plugin, LossMonitor, Logger
-from utils import generate_samples, cudize, EPSILON, load_pkl, save_pkl
+from trainer import Trainer
+from utils import generate_samples, cudize, EPSILON
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -341,7 +340,7 @@ class OutputGenerator(Plugin):
         for p, avg_p in zip(self.trainer.generator.parameters(), self.my_g_clone):
             avg_p.mul_(self.old_weight).add_((1.0 - self.old_weight) * p.data)
         if epoch_index % self.output_snapshot_ticks == 0:
-            z = self.sample_fn(self.samples_count)
+            z = next(self.sample_fn(self.samples_count))
             gen_input = cudize(z)
             original_param = self.flatten_params(self.trainer.generator)
             self.load_params(self.my_g_clone, self.trainer.generator)
@@ -439,7 +438,7 @@ class SlicedWDistance(Plugin):
         with torch.no_grad():
             remaining_items = self.max_items
             while remaining_items > 0:
-                z = self.trainer.random_latents_generator()
+                z = next(self.trainer.random_latents_generator)
                 fake_latents_in = cudize(z)
                 all_fakes.append(self.trainer.generator(fake_latents_in)[0].data.cpu())
                 if all_fakes[-1].size(2) < self.patch_size:
@@ -487,132 +486,46 @@ class SlicedWDistance(Plugin):
         return swd
 
 
-class InceptionScore(Plugin):
-    def __init__(self, inception_network, num_samples: int = 16384):
-        super().__init__([(1, 'end')])
-        self.inception_model = inception_network
-        self.num_samples = num_samples
-
-    def end(self, *args):
-        inception_score, inception_std = self.inception_score()
-        self.trainer.inception_result = (inception_score, inception_std)
-
-    def inception_score(self, splits=4):
-        preds = np.zeros((self.num_samples, self.inception_model.num_classes))
-        with torch.no_grad():
-            current_start = 0
-            while current_start < self.num_samples:
-                fake_latents_in = cudize(self.trainer.random_latents_generator())
-                g_, _ = self.trainer.generator(fake_latents_in)
-                y, _ = self.inception_model(g_)
-                if current_start + y.size(0) > self.num_samples:
-                    y = y[:self.num_samples - current_start]
-                preds[current_start:current_start + y.size(0)] = F.softmax(y, dim=1).data.cpu().numpy()
-                current_start += y.size(0)
-        split_scores = []
-        for k in range(splits):
-            part = preds[k * (self.num_samples // splits): (k + 1) * (self.num_samples // splits), :]
-            py = np.mean(part, axis=0)
-            scores = []
-            for i in range(part.shape[0]):
-                pyx = part[i, :]
-                scores.append(entropy(pyx, py))
-            split_scores.append(np.exp(np.mean(scores)))
-        return np.mean(split_scores), np.std(split_scores)
+class CheckCond(Plugin):
+    def __init__(self, get_random_latents, max_sampling_freq, max_len, bands, pairs):
+        super().__init__([(1, 'epoch')])
+        self.get_random_latents = get_random_latents
+        self.max_sampling_freq = max_sampling_freq
+        self.max_len = max_len
+        self.bands = bands
+        self.pairs = pairs
+        self.has_global_cond = len(pairs) > 0
+        self.has_temporal_cond = len(bands) > 1
+        self.loss = torch.nn.MSELoss(reduction='mean')
 
     def register(self, trainer):
         self.trainer = trainer
+        log_epoch_fields = ['{val:.2f}', '{epoch:.2f}']
+        if self.has_global_cond:
+            log_epoch_fields.append('{global_distance:.3f}')
+        if self.has_temporal_cond > 0:
+            log_epoch_fields.append('{temporal_distance:.3f}')
+        self.trainer.stats['cond'] = {'log_name': 'cond', 'log_epoch_fields': log_epoch_fields}
+        if self.has_global_cond:
+            self.trainer.stats['cond']['global_distance'] = float('nan')
+        if self.has_temporal_cond > 0:
+            self.trainer.stats['cond']['temporal_distance'] = float('nan')
 
-
-class FID(Plugin):
-    def __init__(self, inception_network: ChronoNet, real_stats_location='./data/fid.pkl', num_samples=65536):
-        super().__init__([(1, 'end')])
-        self.inception_network = inception_network
-        self.num_samples = num_samples
-        self.real_stats_location = real_stats_location
-        real_stats = load_pkl(real_stats_location)
-        if real_stats is not None:
-            self.real_mu, self.real_sigma = real_stats
-        else:
-            self.real_mu, self.real_sigma = None, None
-
-    @staticmethod
-    def calc_mu_sigma(tensor):
-        return tensor.mean(dim=0).squeeze().data.cpu().numpy(), np.cov(tensor.data.cpu().numpy(), rowvar=False)
-
-    def end(self, *args):
+    def epoch(self, epoch_index):
         with torch.no_grad():
-            if self.real_mu is None:
-                remaining_items = self.num_samples
-                reals = []
-                while remaining_items > 0:
-                    reals.append(self.inception_network(cudize(next(self.trainer.dataiter)['x'][:remaining_items]))[
-                                     1].data.cpu())
-                    remaining_items -= reals[-1].size(0)
-                reals = torch.cat(reals, dim=0)
-                self.real_mu, self.real_sigma = self.calc_mu_sigma(reals)
-                save_pkl(self.real_stats_location, (self.real_mu, self.real_sigma))
-            remaining_items = self.num_samples
-            all_fakes = []
-            while remaining_items > 0:
-                fake_latents_in = cudize(
-                    {k: v[:remaining_items] for k, v in self.trainer.random_latents_generator().items()})
-                all_fakes.append(self.inception_network(self.trainer.generator(fake_latents_in)[0])[1].data.cpu())
-                remaining_items -= all_fakes[-1].size(0)
-            all_fakes = torch.cat(all_fakes, dim=0)
-            fake_mu, fake_sigma = self.calc_mu_sigma(all_fakes)
-        self.trainer.fid_result = self.calculate_frechet_distance(fake_mu, fake_sigma, self.real_mu, self.real_sigma)
-
-    def register(self, trainer):
-        self.trainer = trainer
-
-    @staticmethod
-    def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
-        """Numpy implementation of the Frechet Distance.
-        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
-        and X_2 ~ N(mu_2, C_2) is
-                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-
-        Stable version by Dougal J. Sutherland.
-        Params:
-        -- mu1 : Numpy array containing the activations of the pool_3 layer of the
-                 inception net ( like returned by the function 'get_predictions')
-                 for generated samples.
-        -- mu2   : The sample mean over activations of the pool_3 layer, precalcualted
-                   on an representive data set.
-        -- sigma1: The covariance matrix over activations of the pool_3 layer for
-                   generated samples.
-        -- sigma2: The covariance matrix over activations of the pool_3 layer,
-                   precalcualted on an representive data set.
-        Returns:
-        --   : The Frechet Distance.
-        """
-
-        mu1 = np.atleast_1d(mu1)
-        mu2 = np.atleast_1d(mu2)
-
-        sigma1 = np.atleast_2d(sigma1)
-        sigma2 = np.atleast_2d(sigma2)
-
-        assert mu1.shape == mu2.shape, "Training and test mean vectors have different lengths"
-        assert sigma1.shape == sigma2.shape, "Training and test covariances have different dimensions"
-
-        diff = mu1 - mu2
-
-        # product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-        if not np.isfinite(covmean).all():
-            print("fid calculation produces singular product; adding %s to diagonal of cov estimates" % eps)
-            offset = np.eye(sigma1.shape[0]) * eps
-            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
-
-        # numerical error might give slight imaginary component
-        if np.iscomplexobj(covmean):
-            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3):
-                m = np.max(np.abs(covmean.imag))
-                raise ValueError("Imaginary component {}".format(m))
-            covmean = covmean.real
-
-        tr_covmean = np.trace(covmean)
-
-        return diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * tr_covmean
+            z = next(self.trainer.random_latents_generator)
+            if self.has_temporal_cond:
+                expected_temporal_cond = z['temporal_1'].data.cpu()
+            fake_latents_in = cudize(z)
+            if self.has_global_cond:
+                expected_global_cond = z['global_1']
+            generated = self.trainer.generator(fake_latents_in)[0].data
+            if self.has_global_cond:
+                generated_global_cond = pearson_correlation_coefficient(generated, self.pairs)
+                self.trainer.stats['cond']['global_distance'] = self.loss(expected_global_cond, generated_global_cond)
+            if self.has_temporal_cond:
+                generated = generated.cpu()
+                generated_temporal_cond = band_power(generated,
+                                                     int(generated.shape[2] * self.max_sampling_freq / self.max_len),
+                                                     self.bands)
+                self.trainer.stats['cond']['temporal_distance'] = self.loss(expected_temporal_cond, generated_temporal_cond)
