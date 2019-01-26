@@ -8,6 +8,7 @@ from scipy import signal
 from scipy.integrate import simps
 from scipy.io import loadmat
 from torch.utils.data import Dataset
+from torch.utils.data.dataloader import default_collate
 from tqdm import tqdm, trange
 
 from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents, EPSILON
@@ -41,7 +42,7 @@ class EEGDataset(Dataset):
         assert seq_len == int(seq_len), 'seq_len must be an int'
         seq_len = int(seq_len)
         self.seq_len = seq_len
-        self.start_seq_len = start_seq_len
+        self.initial_kernel_size = start_seq_len
         self.stride = int(seq_len * stride)
         self.per_user_normalization = per_user_normalization
         self.per_channel_normalization = per_channel_normalization
@@ -242,6 +243,7 @@ def pearson_correlation_coefficient(batch, pairs):
 
 def get_collate_real(max_sampling_freq, max_len, bands, pairs):
     def collate_real(batch):
+        batch = default_collate(batch)
         res = {}
         if len(bands) > 1:
             res['temporal_1'] = band_power(batch, int(batch.shape[2] * max_sampling_freq / max_len), bands)

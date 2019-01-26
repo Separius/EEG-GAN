@@ -215,7 +215,7 @@ def main(params):
 
     def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
         if global_conds + total_temporal_conds > 0:
-            return get_dataloader(minibatch_size, is_training, depth, alpha, False)
+            return iter(get_dataloader(minibatch_size, is_training, depth, alpha, False))
         while True:
             yield {'z': random_latents(minibatch_size, latent_size, params['z_distribution'])}
 
@@ -229,7 +229,7 @@ def main(params):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len, params['dataset_freq'],
+        OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len, dataset.end_sampling_freq,
                         dataset.seq_len, **params['OutputGenerator']))
     if dataset_params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks'],
@@ -253,8 +253,7 @@ def main(params):
 
 
 if __name__ == "__main__":
-    need_arg_classes = [Trainer, Generator, Discriminator, Adam, OutputGenerator,
-                        DepthManager, SaverPlugin, SlicedWDistance, InceptionScore, FID,
-                        EfficientLossMonitor, EvalDiscriminator, EEGDataset, WatchSingularValues]
+    need_arg_classes = [Trainer, Generator, Discriminator, Adam, OutputGenerator, DepthManager, SaverPlugin,
+                        SlicedWDistance, EfficientLossMonitor, EvalDiscriminator, EEGDataset, WatchSingularValues]
     main(parse_config(default_params, need_arg_classes))
     print('training finished!')
