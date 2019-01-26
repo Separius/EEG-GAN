@@ -1,11 +1,14 @@
+total_kimg: 8
+fmap_base: 128
+fmap_max: 256
+fmap_min: 16
 result_dir: 'results'
 #exp_name: ''
 G_lr: 0.001
-total_kimg: 8
-resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
+#resume_network: ''  # 001-test/network-snapshot-{}-000025.dat
 num_data_workers: 0
 random_seed: 1373
-grad_lambda: 10  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
+grad_lambda: 10.0  # must set it to zero to disable gp loss (even for non wgan(10.0) based losses)
 iwass_drift_epsilon: 0.001
 iwass_target: 1.0
 feature_matching_lambda: 0.0
@@ -13,9 +16,6 @@ loss_type: 'wgan_gp'  # wgan_gp, hinge, wgan_theirs, rsgan, rasgan, rahinge
 cuda_device: 0
 ttur: false
 #config_file: null
-fmap_base: 128
-fmap_max: 256
-fmap_min: 16
 equalized: true
 kernel_size: 3
 self_attention_layers: []  # starts from 0 or null (for G it means putting it after ith layer)
@@ -26,10 +26,10 @@ init: 'kaiming_normal' # kaiming_normal, xavier_uniform, orthogonal
 act_alpha: 0.2
 residual: false
 sagan_non_local: true
-use_factorized_attention: true
-average_conditions: true
-dataset_freq: 80
-inception_network_address: './results/tiny_inception.pth'
+use_factorized_attention: false
+calc_swd: false
+bands: [0.5, 4, 8, 12, 30] #, 100]
+correlation_pairs: []
 
 Trainer:
   d_training_repeats: 2 # 2 in big-gan
@@ -40,18 +40,16 @@ Generator:
   latent_size: 256
   normalize_latents: true
   dropout: 0.2
-  do_mode: 'mul' # mul, drop, prop
   spectral: false
-  act_norm: 'layer' # pixel, batch, layer, None
+  act_norm: 'pixel' # pixel, batch, layer, None
   no_tanh: false
   per_channel_noise: false
-  split_z: true
-  embed_classes_size: 4 # ~num_classes/2
+  split_z: false
+  embed_classes_size: 64
 
 Discriminator:
   sngan_rgb: false
   dropout: 0.2
-  do_mode: 'mul' # mul, drop, prop
   spectral: false
   act_norm: null # pixel, batch, layer, None
   group_size: 4
@@ -68,20 +66,20 @@ DepthManager:
 
 SaverPlugin:
   keep_old_checkpoints: true
-  network_snapshot_ticks: 3
+  network_snapshot_ticks: 50
 
 SlicedWDistance:
-  patches_per_item: 4
+  patches_per_item: 16
   patch_size: 49
-  max_items: 128
-  number_of_projections: 64
+  max_items: 1024
+  number_of_projections: 512
   dir_repeats: 4
-  dirs_per_repeat: 32
+  dirs_per_repeat: 128
 
 OutputGenerator:
   samples_count: 8
   output_snapshot_ticks: 2
-  old_weight: 0.999
+  old_weight: 0.99
 
 Adam:
   betas: !!python/tuple [0.0, 0.99]
@@ -94,23 +92,17 @@ EfficientLossMonitor:
   monitor_patience: 100
 
 EEGDataset:
-  validation_ratio: 0.1 # set to 0.0 to disable
+  validation_ratio: 0.0 # set to 0.0 to disable
   dir_path: './data/tuh1'
-  seq_len: 512
+  data_sampling_freq: 80
+  start_sampling_freq: 1.0
+  end_sampling_freq: 60.0
+  start_seq_len: 32
   stride: 0.25
   num_channels: 5
   per_user_normalization: true
-  progression_scale: 2
   per_channel_normalization: false
-  model_dataset_depth_offset: 2
 
 WatchSingularValues:
   one_divided_two: 10.0
-  output_snapshot_ticks: 5
-
-InceptionScore:
-  num_samples: 256
-
-FID:
-  real_stats_location: './data/fid_tiny.pkl'
-  num_samples: 256
+  output_snapshot_ticks: 20

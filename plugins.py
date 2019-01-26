@@ -528,4 +528,5 @@ class CheckCond(Plugin):
                 generated_temporal_cond = band_power(generated,
                                                      int(generated.shape[2] * self.max_sampling_freq / self.max_len),
                                                      self.bands)
-                self.trainer.stats['cond']['temporal_distance'] = self.loss(expected_temporal_cond, generated_temporal_cond)
+                self.trainer.stats['cond']['temporal_distance'] = self.loss(expected_temporal_cond,
+                                                                            generated_temporal_cond)

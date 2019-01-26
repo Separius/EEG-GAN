@@ -140,11 +140,8 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
         imsave(save_location, image)
 
 
-# base_directory = './013-tuh1_1024/network-snapshot-{}-005952.pkl'
 base_directory = './015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
 save_location_base = './'
-base_directory = './results/015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
-save_location_base = '/home/sepehr/Desktop/'
 
 # input to the plot_eeg is 6 * num_channels * seq_len
 index = 0

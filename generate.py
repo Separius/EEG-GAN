@@ -35,6 +35,8 @@ default_params = {
 }
 
 
+# TODO rewrite with the new condition code
+# TODO move the graph generation code to the Plugin
 # TODO Extract saliency maps of discriminator
 # TODO visualize attention map of G and D
 # TODO condition interpolation * Z(*chunks) interpolation

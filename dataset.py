@@ -254,7 +254,6 @@ def get_collate_real(max_sampling_freq, max_len, bands, pairs):
 
 
 def get_collate_fake(latent_size, z_distribution, collate_real):
-
     def collate_fake(batch):
         res = collate_real(batch)
         res['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
