@@ -32,7 +32,8 @@ class DepthManager(Plugin):
     training_kimg_override_tiny = {}
     transition_kimg_override_tiny = {}
 
-    minibatch_override_big = {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
+    # minibatch_override_big = {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
+    minibatch_override_big = {2: 128, 3: 128, 4: 32, 5: 32, 6: 32, 7: 32, 8: 16, 9: 16}
     tick_kimg_override_big = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1}
     training_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
     transition_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}

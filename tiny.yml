@@ -28,7 +28,7 @@ residual: false
 sagan_non_local: true
 use_factorized_attention: false
 calc_swd: false
-bands: [0.5, 4, 8, 12, 30] #, 100]
+bands: [] #[0.5, 4, 8, 12, 30] #, 100]
 correlation_pairs: []
 
 Trainer:

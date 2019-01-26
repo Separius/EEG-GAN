@@ -27,8 +27,6 @@ class EEGDataset(Dataset):
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
-    # TODO ignore bad channels from the full_channel_db
-
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.0, dir_path: str = './data/tuh1',
                  data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
                  start_seq_len: int = 32, stride: float = 0.25, num_channels: int = 5,
@@ -74,9 +72,12 @@ class EEGDataset(Dataset):
         for i in tqdm(files):
             is_ok = True
             if is_matlab:
-                tmp = loadmat(all_files[i])['eeg_signal']
-                tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
-                size = int(np.ceil((tmp.shape[1] - seq_len + 1) / self.stride))
+                try:
+                    tmp = loadmat(all_files[i])['eeg_signal']
+                    tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
+                    size = int(np.ceil((tmp.shape[1] - seq_len + 1) / self.stride))
+                except:
+                    size = 0
                 if size <= 0:
                     is_ok = False
                 else:
@@ -218,8 +219,15 @@ class EEGDataset(Dataset):
 
 
 def band_power(batch, sampling_freq, bands):
-    window_size = 2 / bands[0]  # in seconds
+    # TODO make it much better
+    # window_size = 2 / bands[0]  # in seconds (this is the right way)
+    window_size = 1
     window = sampling_freq * window_size
+    new_shape = (batch.shape[0], batch.shape[1], 32, batch.shape[2] // 32)
+    if isinstance(batch, np.ndarray):
+        batch = batch.reshape(*new_shape)
+    else:
+        batch = batch.view(*new_shape)
     freqs, psd = signal.welch(batch, sampling_freq, nperseg=window)
     freq_res = freqs[1] - freqs[0]
     total_power = simps(psd, dx=freq_res)
@@ -258,7 +266,7 @@ def get_collate_real(max_sampling_freq, max_len, bands, pairs):
 def get_collate_fake(latent_size, z_distribution, collate_real):
     def collate_fake(batch):
         res = collate_real(batch)
-        res['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
+        res['z'] = random_latents(res['x'].size(0), latent_size, z_distribution)
         del res['x']
         return res
 
@@ -269,9 +277,9 @@ if __name__ == '__main__':
     a = EEGDataset(None, None, None, dir_path='./data/prepared_sample')
     a.model_depth = 0
     a.alpha = 1.0
-    print(a[0]['x'].shape)
+    print(a[0].shape)
     for i in range(a.max_dataset_depth - 1):
         a.model_depth = i + 1
         for alpha in (0.0, 0.5, 1.0):
             a.alpha = alpha
-            print(i, alpha, a[0]['x'].shape)
+            print(i, alpha, a[0].shape)

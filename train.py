@@ -213,11 +213,14 @@ def main(params):
             return DataLoader(**shared_dataloader_params, shuffle=True)
         return DataLoader(**shared_dataloader_params, sampler=InfiniteRandomSampler(list(range(len(ds)))))
 
-    def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
-        if global_conds + total_temporal_conds > 0:
+    # NOTE you can not put the if inside your function (a function should either return or yield)
+    if global_conds + total_temporal_conds > 0:
+        def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
             return iter(get_dataloader(minibatch_size, is_training, depth, alpha, False))
-        while True:
-            yield {'z': random_latents(minibatch_size, latent_size, params['z_distribution'])}
+    else:
+        def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
+            while True:
+                yield {'z': random_latents(minibatch_size, latent_size, params['z_distribution'])}
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])
