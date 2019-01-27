@@ -107,7 +107,7 @@ class EEGDataset(Dataset):
                         del sizes[-1]
                         del num_points[-1]
                     else:
-                        f.create_dataset('array_{}'.format(j), data=this_data)
+                        f.create_dataset('array_{}'.format(j), data=this_data, compression='lzf', dtype=np.float32)
                         j += 1
         self.datas = h5py.File(target_location, 'r')
         self.sizes = sizes

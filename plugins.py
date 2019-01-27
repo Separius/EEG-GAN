@@ -33,10 +33,16 @@ class DepthManager(Plugin):
     transition_kimg_override_tiny = {}
 
     # minibatch_override_big = {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
-    minibatch_override_big = {2: 128, 3: 128, 4: 32, 5: 32, 6: 32, 7: 32, 8: 16, 9: 16}
-    tick_kimg_override_big = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1}
-    training_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
-    transition_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
+    # minibatch_override_big = {2: 128, 3: 128, 4: 32, 5: 32, 6: 32, 7: 32, 8: 16, 9: 16}
+    minibatch_override_big = {0: 256, 1: 256, 2: 128, 3: 128, 4: 48, 5: 32,
+                              6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8}
+
+    #tick_kimg_override_big = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1}
+    tick_kimg_override_big = {}
+    #training_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
+    training_kimg_override_big = {}
+    #transition_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
+    transition_kimg_override_big = {}
 
     def __init__(self,  # everything starts from 0 or 1
                  create_dataloader_fun, create_rlg, max_depth,
