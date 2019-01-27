@@ -100,7 +100,9 @@ EEGDataset:
   start_seq_len: 32
   stride: 0.25
   num_channels: 17
+  number_of_files: 1500
   per_channel_normalization: false
+  per_user_normalization: false
 
 WatchSingularValues:
   one_divided_two: 10.0
