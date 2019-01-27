@@ -52,7 +52,7 @@ default_params = dict(
     use_factorized_attention=False,
     calc_swd=False,
     correlation_pairs=[],  # [[0, 1], [1, 2], [2, 3]], #global condition
-    bands=[0.5, 4, 8, 12, 30]  # , 100] #temporal condition
+    bands=[] # [0.5, 4, 8, 12, 30]  # , 100] #temporal condition
 )
 
 
@@ -220,7 +220,7 @@ def main(params):
     else:
         def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
             while True:
-                yield {'z': random_latents(minibatch_size, latent_size, params['z_distribution'])}
+                yield {'z': cudize(random_latents(minibatch_size, latent_size, params['z_distribution']))}
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])

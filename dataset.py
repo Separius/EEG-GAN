@@ -235,7 +235,7 @@ def band_power(batch, sampling_freq, bands):
     for b_start, b_end in zip(bands, bands[1:]):
         idx_band = np.logical_and(freqs >= b_start, freqs <= b_end)
         res.append(simps(psd[..., idx_band], dx=freq_res) / total_power)
-    return np.concatenate(res, axis=1)
+    return np.concatenate(res, axis=1).astype(np.float32)
 
 
 def pearson_correlation_coefficient(batch, pairs):
@@ -254,7 +254,8 @@ def get_collate_real(max_sampling_freq, max_len, bands, pairs):
         batch = default_collate(batch)
         res = {}
         if len(bands) > 1:
-            res['temporal_1'] = band_power(batch, int(batch.shape[2] * max_sampling_freq / max_len), bands)
+            res['temporal_1'] = cudize(
+                torch.from_numpy(band_power(batch, int(batch.shape[2] * max_sampling_freq / max_len), bands)))
         res['x'] = cudize(batch)
         if len(pairs) != 0:
             res['global_1'] = pearson_correlation_coefficient(res['x'], pairs)
