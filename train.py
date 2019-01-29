@@ -52,7 +52,7 @@ default_params = dict(
     use_factorized_attention=False,
     calc_swd=False,
     correlation_pairs=[],  # [[0, 1], [1, 2], [2, 3]], #global condition
-    bands=[] # [0.5, 4, 8, 12, 30]  # , 100] #temporal condition
+    bands=[]  # [0.5, 4, 8, 12, 30]  # , 100] #temporal condition
 )
 
 
@@ -235,8 +235,7 @@ def main(params):
         OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len, dataset.end_sampling_freq,
                         dataset.seq_len, **params['OutputGenerator']))
     if dataset_params['validation_ratio'] > 0:
-        trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks'],
-                                                  params['DepthManager']['tiny_sizes']))
+        trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
     if params['calc_swd']:
         trainer.register_plugin(
             SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],

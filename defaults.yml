@@ -60,9 +60,8 @@ DepthManager:
   depth_offset: 0  # starts form 0
   attention_transition_kimg: 400
   minibatch_default: 256
-  lod_training_kimg: 2 # 400
-  lod_transition_kimg: 2 # 400
-  tiny_sizes: false
+  lod_training_kimg: 400
+  lod_transition_kimg: 400
 
 SaverPlugin:
   keep_old_checkpoints: true

@@ -22,45 +22,20 @@ import matplotlib.pyplot as plt
 
 
 class DepthManager(Plugin):
-    # minibatch_override_big = {0: 8192, 1: 4096, 2: 2048 + 1024, 3: 2048, 4: 1024 + 512, 5: 1024, 6: 256, 7: 128 + 64}
-    # tick_kimg_override_big = {0: 5, 1: 5, 2: 5, 3: 4, 4: 4, 5: 3, 6: 3, 7: 2}
-    # training_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
-    # transition_kimg_override_big = {0: 200, 1: 200, 2: 200, 3: 300, 4: 400, 5: 400, 6: 400, 7: 400}
+    minibatch_override = {0: 256, 1: 256, 2: 128, 3: 128, 4: 48, 5: 32,
+                          6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8}
 
-    minibatch_override_tiny = {}
-    tick_kimg_override_tiny = {}
-    training_kimg_override_tiny = {}
-    transition_kimg_override_tiny = {}
-
-    # minibatch_override_big = {4: 128, 5: 128, 6: 128, 7: 64, 8: 64, 9: 32, 10: 32, 11: 16, 12: 16}
-    # minibatch_override_big = {2: 128, 3: 128, 4: 32, 5: 32, 6: 32, 7: 32, 8: 16, 9: 16}
-    minibatch_override_big = {0: 256, 1: 256, 2: 128, 3: 128, 4: 48, 5: 32,
-                              6: 32, 7: 32, 8: 16, 9: 16, 10: 8, 11: 8}
-
-    #tick_kimg_override_big = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1}
-    tick_kimg_override_big = {}
-    #training_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
-    training_kimg_override_big = {}
-    #transition_kimg_override_big = {1: 200, 2: 200, 3: 200, 4: 200}
-    transition_kimg_override_big = {}
+    tick_kimg_override = {4: 4, 5: 4, 6: 4, 7: 3, 8: 3, 9: 2, 10: 2, 11: 1}
+    training_kimg_override = {1: 200, 2: 200, 3: 200, 4: 200}
+    transition_kimg_override = {1: 200, 2: 200, 3: 200, 4: 200}
 
     def __init__(self,  # everything starts from 0 or 1
                  create_dataloader_fun, create_rlg, max_depth,
                  tick_kimg_default, has_attention, get_optimizer, default_lr,
-                 tiny_sizes: bool = False, reset_optimizer: bool = True, disable_progression=False,
+                 reset_optimizer: bool = True, disable_progression=False,
                  minibatch_default=256, depth_offset=0,  # starts form 0
                  attention_transition_kimg=400, lod_training_kimg=400, lod_transition_kimg=400):
         super().__init__([(1, 'iteration')])
-        if tiny_sizes:
-            self.minibatch_override = self.minibatch_override_tiny
-            self.tick_kimg_override = self.tick_kimg_override_tiny
-            self.training_kimg_override = self.training_kimg_override_tiny
-            self.transition_kimg_override = self.transition_kimg_override_tiny
-        else:
-            self.minibatch_override = self.minibatch_override_big
-            self.tick_kimg_override = self.tick_kimg_override_big
-            self.training_kimg_override = self.training_kimg_override_big
-            self.transition_kimg_override = self.transition_kimg_override_big
         self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
         self.tick_kimg_default = tick_kimg_default
@@ -247,11 +222,10 @@ class SaverPlugin(Plugin):
 
 
 class EvalDiscriminator(Plugin):
-    def __init__(self, create_dataloader_fun, output_snapshot_ticks, is_tiny):
+    def __init__(self, create_dataloader_fun, output_snapshot_ticks):
         super().__init__([(1, 'epoch')])
         self.create_dataloader_fun = create_dataloader_fun
         self.output_snapshot_ticks = output_snapshot_ticks
-        self.is_tiny = is_tiny
 
     def register(self, trainer):
         self.trainer = trainer
@@ -272,8 +246,6 @@ class EvalDiscriminator(Plugin):
                 d_real, _, _ = self.trainer.discriminator(cudize(data))
                 values.append(d_real.mean().item())
                 i += 1
-                if i == 3 and self.is_tiny:
-                    break
         values = np.array(values).mean()
         self.trainer.stats['memorization']['val'] = values
         self.trainer.stats['memorization']['epoch'] = epoch_index

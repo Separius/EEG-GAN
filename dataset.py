@@ -19,13 +19,23 @@ DATASET_VERSION = 6
 # min_layer_real_freq: 0.5(32 samples) -> 4 -> 8 -> 12 -> 30 -> 50 -> 100(6400 samples)
 # ideal_real_freq: (0.5 -> 2)( -> 4)( -> 8)( -> 12)( -> 16)( -> 20)( -> 30)( -> 50)( -> 100)
 class EEGDataset(Dataset):
-    # for 200(sampling)
+    # for 200(sampling), starting from 1 hz(sampling) [32 samples]
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3, 5, 2]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3, 1]
 
-    # for 60(sampling)
+    # for 200(sampling), starting from 0.25 hz(sampling) [8 samples]
+    # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3, 5, 2]
+    # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2, 3, 1]
+
+    # for 60(sampling), starting from 1 hz(sampling)
     # progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     # progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
+
+    # for 60(sampling), starting from 0.25 hz(sampling) [8 samples]
+    # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3]
+    # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2]
+
+    picked_channels = None
 
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.0, dir_path: str = './data/tuh1',
                  data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
@@ -46,7 +56,7 @@ class EEGDataset(Dataset):
         self.per_channel_normalization = per_channel_normalization
         self.max_dataset_depth = len(self.progression_scale_up)
         self.norms = norms
-        self.num_channels = num_channels
+        self.num_channels = num_channels if self.picked_channels is None else len(self.picked_channels)
         if given_data is not None:
             self.sizes = given_data[0]['sizes']
             self.files = given_data[0]['files']
@@ -83,14 +93,18 @@ class EEGDataset(Dataset):
                 else:
                     sizes.append(size)
                     num_points.append((sizes[-1] - 1) * self.stride + seq_len)
-                    self.datas.append(tmp[:num_channels, :num_points[-1]])
+                    if self.picked_channels is None:
+                        self.datas.append(tmp[:num_channels, :num_points[-1]])
+                    else:
+                        self.datas.append(tmp[self.picked_channels, :num_points[-1]])
             else:
-                for j in range(num_channels):
+                for_range = range(num_channels) if self.picked_channels is None else self.picked_channels
+                for kk, j in enumerate(range(num_channels)):
                     with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
                         tmp = list(map(float, f.read().split()))
                         tmp = np.array(tmp, dtype=np.float32)
                         tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
-                        if j == 0:
+                        if kk == 0:
                             size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
                             if size <= 0:
                                 is_ok = False
