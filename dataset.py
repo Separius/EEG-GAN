@@ -20,22 +20,25 @@ DATASET_VERSION = 6
 # ideal_real_freq: (0.5 -> 2)( -> 4)( -> 8)( -> 12)( -> 16)( -> 20)( -> 30)( -> 50)( -> 100)
 class EEGDataset(Dataset):
     # for 200(sampling), starting from 1 hz(sampling) [32 samples]
-    progression_scale_up = [4, 2, 2, 3, 4, 5, 3, 5, 2]
-    progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3, 1]
+    # progression_scale_up = [4, 2, 2, 3, 4, 5, 3, 5, 2]
+    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3, 1]
 
     # for 200(sampling), starting from 0.25 hz(sampling) [8 samples]
     # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3, 5, 2]
     # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2, 3, 1]
 
     # for 60(sampling), starting from 1 hz(sampling)
-    # progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
-    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
+    progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
+    progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
     # for 60(sampling), starting from 0.25 hz(sampling) [8 samples]
     # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3]
     # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2]
 
     picked_channels = None
+    # picked_channels = [3, 5, 9, 15, 16]
+    # picked_channels = [3, 5, 9, 12, 13, 14, 15, 16]
+    # picked_channels = [3, 5, 8, 9, 10, 13, 15, 16]
 
     def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.0, dir_path: str = './data/tuh1',
                  data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,

@@ -29,7 +29,7 @@ sagan_non_local: true
 use_factorized_attention: false
 calc_swd: false
 bands: [] # [0.5, 4, 8, 12, 30] #, 100]
-correlation_pairs: []
+correlation_pairs: [[1,2]]
 
 Trainer:
   d_training_repeats: 5 # used to be 1 and 2 in big-gan
@@ -45,7 +45,7 @@ Generator:
   no_tanh: false
   per_channel_noise: false
   split_z: false
-  embed_classes_size: 64
+  embed_classes_size: 2
 
 Discriminator:
   sngan_rgb: false
@@ -92,16 +92,16 @@ EfficientLossMonitor:
 
 EEGDataset:
   validation_ratio: 0.0 # set to 0.0 to disable
-  dir_path: './data/prepared_eegs_mat'
-  data_sampling_freq: 220.0
+  dir_path: './data/tuh1'
+  data_sampling_freq: 80.0
   start_sampling_freq: 1.0
-  end_sampling_freq: 200.0
+  end_sampling_freq: 60.0
   start_seq_len: 32
   stride: 0.25
-  num_channels: 17
+  num_channels: 5
   number_of_files: 1500
   per_channel_normalization: false
-  per_user_normalization: false
+  per_user_normalization: true
 
 WatchSingularValues:
   one_divided_two: 10.0
