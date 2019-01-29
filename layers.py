@@ -142,7 +142,8 @@ class GeneralConv(nn.Module):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized, init=init, act_alpha=act_alpha, bias=bias)
+                               equalized=equalized, init=init, act_alpha=act_alpha,
+                               bias=bias if act_norm != 'batch' else False)
         norm = None
         if act_norm == 'batch':
             norm = ConditionalBatchNorm(out_channels, num_classes, spectral)
