@@ -162,7 +162,8 @@ class Generator(nn.Module):
             h = h[:, :self.latent_size, :]
         h = self.block0(h, self._cat_z(-1, y, z), self.depth == 0)
         if self.depth == 0:
-            return h, {}
+            saved_inputs['x'] = h
+            return saved_inputs, {}
         all_attention_maps = {}
         for i in range(self.depth - 1):
             h, attention_map = self.do_layer(i, h, y, z)
@@ -172,7 +173,8 @@ class Generator(nn.Module):
                             True)
         ult = self.blocks[self.depth - 1](h, self._cat_z(self.depth - 1, y, z), True)
         if self.alpha == 1.0:
-            return ult, all_attention_maps
+            saved_inputs['x'] = ult
+            return saved_inputs, all_attention_maps
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
         saved_inputs['x'] = preult_rgb * (1.0 - self.alpha) + ult * self.alpha
         return saved_inputs, all_attention_maps

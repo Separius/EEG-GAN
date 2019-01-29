@@ -216,7 +216,7 @@ class EEGDataset(Dataset):
             target_depth = self.model_depth
             if self.max_dataset_depth != target_depth:
                 datapoint = self.create_datapoint_from_depth(datapoint, target_depth)
-        return self.alpha_fade(datapoint).squeeze(0)
+        return {'x': self.alpha_fade(datapoint).squeeze(0)}
 
     def create_datapoint_from_depth(self, datapoint, target_depth):
         depth_diff = (self.max_dataset_depth - target_depth)
@@ -265,24 +265,23 @@ def pearson_correlation_coefficient(batch, pairs):
 def get_collate_real(max_sampling_freq, max_len, bands, pairs):
     def collate_real(batch):
         batch = default_collate(batch)
-        res = {}
         if len(bands) > 1:
-            res['temporal_1'] = cudize(
-                torch.from_numpy(band_power(batch, int(batch.shape[2] * max_sampling_freq / max_len), bands)))
-        res['x'] = cudize(batch)
+            batch['temporal_1'] = cudize(
+                torch.from_numpy(band_power(batch['x'], int(batch['x'].shape[2] * max_sampling_freq / max_len), bands)))
+        batch = cudize(batch)
         if len(pairs) != 0:
-            res['global_1'] = pearson_correlation_coefficient(res['x'], pairs)
-        return res
+            batch['global_1'] = pearson_correlation_coefficient(batch['x'], pairs)
+        return batch
 
     return collate_real
 
 
 def get_collate_fake(latent_size, z_distribution, collate_real):
     def collate_fake(batch):
-        res = collate_real(batch)
-        res['z'] = random_latents(res['x'].size(0), latent_size, z_distribution)
-        del res['x']
-        return res
+        batch = collate_real(batch)
+        batch['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
+        del batch['x']
+        return batch
 
     return collate_fake
 
