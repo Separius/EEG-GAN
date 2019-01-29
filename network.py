@@ -130,28 +130,29 @@ class Generator(nn.Module):
         h = resample_signal(h, self.progression_scale_down[l], self.progression_scale_up[l], True)
         return self.blocks[l](h, self._cat_z(l, y, z), False), attention_map
 
-    def forward(self, z, y=None):
+    def forward(self, z):
         if isinstance(z, dict):
             z, y = z['z'], z
+        else:
+            y = None
         if y is not None:
+            saved_inputs = y
             concatenated_y = []
             max_t = 1
             for k, v in y.items():
-                if k == 'z':
-                    continue
-                if v.dim() == 3:
+                if k.startswith('temporal_'):
                     max_t = max(max_t, v.shape[2])
             for k, v in y.items():
-                if k == 'z':
-                    continue
-                if v.dim() == 2:
+                if k.startswith('global_'):
                     concatenated_y.append(v.unsqueeze(-1).expand(-1, -1, max_t))
-                else:
+                elif k.startswith('temporal_'):
                     concatenated_y.append(resample_signal(v, v.shape[2], max_t, pytorch=True))
             if len(concatenated_y) > 0:
                 y = torch.cat(concatenated_y, dim=1)
             else:
                 y = None
+        else:
+            saved_inputs = {'z': z}
         if self.normalize_latents:
             z = pixel_norm(z)
         if y is not None and self.y_encoder is not None:
@@ -173,7 +174,8 @@ class Generator(nn.Module):
         if self.alpha == 1.0:
             return ult, all_attention_maps
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
-        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha, all_attention_maps
+        saved_inputs['x'] = preult_rgb * (1.0 - self.alpha) + ult * self.alpha
+        return saved_inputs, all_attention_maps
 
 
 class DBlock(nn.Module):
@@ -274,9 +276,11 @@ class Discriminator(nn.Module):
         for self_attention_layer in self.self_attention.values():
             self_attention_layer.gamma = new_gamma
 
-    def forward(self, x, y=None):
+    def forward(self, x):
         if isinstance(x, dict):
             x, y = x['x'], x
+        else:
+            y = None
         layer_to_conds = {}
         if y is not None:
             for k, v in y.items():

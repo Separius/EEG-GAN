@@ -16,7 +16,7 @@ half_tensor = None
 
 
 def generate_samples(generator, gen_input):
-    return generator(gen_input)[0].data.cpu().numpy()
+    return generator(gen_input)[0]['x'].data.cpu().numpy()
 
 
 def save_pkl(file_name, obj):
@@ -193,10 +193,6 @@ def _update_params(params: Dict, given_conf: Dict):
         else:
             params[k] = v
     return params
-
-
-def random_onehot(num_classes, num_samples):
-    return np.eye(num_classes, dtype=np.float32)[np.random.choice(num_classes, num_samples)]
 
 
 def upsample_signal(signal, upsample_factor):

@@ -233,7 +233,6 @@ class EEGDataset(Dataset):
 
 
 def band_power(batch, sampling_freq, bands):
-    # TODO make it much better
     # window_size = 2 / bands[0]  # in seconds (this is the right way)
     window_size = 1
     window = sampling_freq * window_size

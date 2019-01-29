@@ -84,13 +84,11 @@ class Trainer(object):
                 self.lr_scheduler_d.step(self.cur_nimg)
             real_images_expr = cudize(next(self.dataiter))
             self.cur_nimg += real_images_expr['x'].size(0)
-            d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr['x'], fake_latents_in['z'],
-                                 real_images_expr.get('y', None), fake_latents_in.get('y', None))
+            d_loss = self.d_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
             d_loss.backward()
             self.optimizer_d.step()
             fake_latents_in = cudize(next(self.random_latents_generator))
-        g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr['x'], fake_latents_in['z'],
-                             real_images_expr.get('y', None), fake_latents_in.get('y', None))
+        g_loss = self.g_loss(self.discriminator, self.generator, real_images_expr, fake_latents_in)
         g_loss.backward()
         self.optimizer_g.step()
         self.iterations += 1

@@ -251,15 +251,15 @@ class EvalDiscriminator(Plugin):
         self.trainer.stats['memorization']['epoch'] = epoch_index
 
 
+# TODO
 class OutputGenerator(Plugin):
 
-    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq, res_len: int,
+    def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq: float,
                  samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.9):
         super().__init__([(1, 'epoch')])
         self.old_weight = old_weight
         self.sample_fn = sample_fn
         self.samples_count = samples_count
-        self.res_len = res_len
         self.checkpoints_dir = checkpoints_dir
         self.seq_len = seq_len
         self.max_freq = max_freq
@@ -284,8 +284,9 @@ class OutputGenerator(Plugin):
         return pd.Series(x).rolling(window=n).mean().values
 
     @staticmethod
-    def get_images(seq_len, frequency, epoch, generated, my_range=range):
+    def get_images(frequency, epoch, generated, my_range=range):
         num_channels = generated.shape[1]
+        seq_len = generated.shape[2]
         t = np.linspace(0, seq_len / frequency, seq_len)
         f = np.fft.rfftfreq(seq_len, d=1. / frequency)
         images = []
@@ -330,8 +331,7 @@ class OutputGenerator(Plugin):
             out = generate_samples(self.trainer.generator, gen_input)
             self.load_params(original_param, self.trainer.generator)
             frequency = self.max_freq * out.shape[2] / self.seq_len
-            res_len = min(self.res_len, out.shape[2])
-            images = self.get_images(res_len, frequency, epoch_index, out[:, :, :res_len])
+            images = self.get_images(frequency, epoch_index, out)
             for i, image in enumerate(images):
                 misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
@@ -419,7 +419,7 @@ class SlicedWDistance(Plugin):
             while remaining_items > 0:
                 z = next(self.trainer.random_latents_generator)
                 fake_latents_in = cudize(z)
-                all_fakes.append(self.trainer.generator(fake_latents_in)[0].data.cpu())
+                all_fakes.append(self.trainer.generator(fake_latents_in)[0]['x'].data.cpu())
                 if all_fakes[-1].size(2) < self.patch_size:
                     break
                 remaining_items -= all_fakes[-1].size(0)
@@ -467,6 +467,7 @@ class SlicedWDistance(Plugin):
 
 class CheckCond(Plugin):
     def __init__(self, get_random_latents, max_sampling_freq, max_len, bands, pairs):
+        # NOTE you must change this for new conditions
         super().__init__([(1, 'epoch')])
         self.get_random_latents = get_random_latents
         self.max_sampling_freq = max_sampling_freq
@@ -498,7 +499,7 @@ class CheckCond(Plugin):
             fake_latents_in = cudize(z)
             if self.has_global_cond:
                 expected_global_cond = z['global_1']
-            generated = self.trainer.generator(fake_latents_in)[0].data
+            generated = self.trainer.generator(fake_latents_in)[0]['x'].data
             if self.has_global_cond:
                 generated_global_cond = pearson_correlation_coefficient(generated, self.pairs)
                 self.trainer.stats['cond']['global_distance'] = self.loss(expected_global_cond, generated_global_cond)

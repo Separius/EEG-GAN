@@ -224,16 +224,16 @@ def main(params):
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])
-    trainer.register_plugin(
-        DepthManager(get_dataloader, get_random_latents, max_depth, params['Trainer']['tick_kimg_default'],
-                     len(params['self_attention_layers']) != 0, get_optimizers, params['lr'],
-                     **params['DepthManager']))
+    dm = DepthManager(get_dataloader, get_random_latents, max_depth, params['Trainer']['tick_kimg_default'],
+                      len(params['self_attention_layers']) != 0, get_optimizers, params['lr'],
+                      **params['DepthManager'])
+    trainer.register_plugin(dm)
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
     trainer.register_plugin(SaverPlugin(result_dir, **params['SaverPlugin']))
     trainer.register_plugin(
-        OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len, dataset.end_sampling_freq,
-                        dataset.seq_len, **params['OutputGenerator']))
+        OutputGenerator(lambda x: get_random_latents(x), result_dir, dataset.seq_len,
+                        dataset.end_sampling_freq, **params['OutputGenerator']))
     if dataset_params['validation_ratio'] > 0:
         trainer.register_plugin(EvalDiscriminator(get_dataloader, params['SaverPlugin']['network_snapshot_ticks']))
     if params['calc_swd']:
@@ -249,6 +249,13 @@ def main(params):
     if params['Discriminator']['spectral']:
         trainer.register_plugin(WatchSingularValues(discriminator, **params['WatchSingularValues']))
     trainer.register_plugin(logger)
+    params['EEGDataset']['progression_scale_up'] = dataset.progression_scale_up
+    params['EEGDataset']['progression_scale_down'] = dataset.progression_scale_down
+    params['EEGDataset']['picked_channels'] = dataset.picked_channels
+    params['DepthManager']['minibatch_override'] = dm.minibatch_override
+    params['DepthManager']['tick_kimg_override'] = dm.tick_kimg_override
+    params['DepthManager']['training_kimg_override'] = dm.training_kimg_override
+    params['DepthManager']['transition_kimg_override'] = dm.transition_kimg_override
     yaml.dump(params, open(os.path.join(result_dir, 'conf.yml'), 'w'))
     trainer.run(params['total_kimg'])
     del trainer
