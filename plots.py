@@ -139,44 +139,46 @@ def plot_eeg(samples, frequency=80, freq_smooth_factor=6, save_location=None, su
     if save_location is not None:
         imsave(save_location, image)
 
+if __name__ == '__main__':
+    base_directory = './015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
+    save_location_base = './'
 
-base_directory = './015-tuh1_1024_normlatent/network-snapshot-{}-005952.pkl'
-save_location_base = './'
+    # input to the plot_eeg is 6 * num_channels * seq_len
+    index = 0
+    plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index],
+             save_location=save_location_base + '5nn_d.png',
+             suptitle='nearest neighbors based on D(x)')
+    plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
+             save_location=save_location_base + '5nn_freq.png')
+    plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
+             save_location=save_location_base + '5nn_time.png')
+    plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
+             save_location=save_location_base + '5nn_freq_ch1.png')
+    plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
+             save_location=save_location_base + '5nn_time_ch1.png')
 
-# input to the plot_eeg is 6 * num_channels * seq_len
-index = 0
-plot_eeg(load(base_directory.format('generator_smooth_5nn_d'))[index], save_location=save_location_base + '5nn_d.png',
-         suptitle='nearest neighbors based on D(x)')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_freq'))[index],
-         save_location=save_location_base + '5nn_freq.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_time'))[index],
-         save_location=save_location_base + '5nn_time.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_freq_ch1'))[index, :, None, :],
-         save_location=save_location_base + '5nn_freq_ch1.png')
-plot_eeg(load(base_directory.format('generator_smooth_5nn_time_ch1'))[index, :, None, :],
-         save_location=save_location_base + '5nn_time_ch1.png')
+    index_one = 0
+    index_two = 1
+    t_values = [0.875, 0.9, 0.95, 1.0]
+    x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
+                 axis=0)
+    x = np.concatenate((x, np.stack(
+        [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values],
+        axis=0)),
+                       axis=0)
+    plot_eeg(x, save_location=save_location_base + 'truncation.png')
 
-index_one = 0
-index_two = 1
-t_values = [0.875, 0.9, 0.95, 1.0]
-x = np.stack([load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_one] for t_value in t_values],
-             axis=0)
-x = np.concatenate((x, np.stack(
-    [load(base_directory.format('generator_smooth_t_' + str(t_value)))[index_two] for t_value in t_values], axis=0)),
-                   axis=0)
-plot_eeg(x, save_location=save_location_base + 'truncation.png')
+    index = 0
+    plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
+             save_location=save_location_base + 'base.png')
+    plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
+             save_location=save_location_base + 'd_based.png')
 
-index = 0
-plot_eeg(load(base_directory.format('smooth_generator'))[index:4 + index],
-         save_location=save_location_base + 'base.png')
-plot_eeg(load(base_directory.format('generator_smooth_d'))[index:4 + index],
-         save_location=save_location_base + 'd_based.png')
+    index = 0
+    x = load(base_directory.format('generator_smooth_slurp'))[index, ::4]
+    plot_eeg(x, save_location=save_location_base + 'slurp.png', mode='slurp')
 
-index = 0
-x = load(base_directory.format('generator_smooth_slurp'))[index, ::4]
-plot_eeg(x, save_location=save_location_base + 'slurp.png', mode='slurp')
-
-index = 0
-x = [d[index] for d in load(base_directory.format('generator_constant'))]
-plot_eeg([x[0], x[5], x[10], x[15], x[20], x[25]], save_location=save_location_base + 'progressive.png',
-         mode='progressive')
+    index = 0
+    x = [d[index] for d in load(base_directory.format('generator_constant'))]
+    plot_eeg([x[0], x[5], x[10], x[15], x[20], x[25]], save_location=save_location_base + 'progressive.png',
+             mode='progressive')

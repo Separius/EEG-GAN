@@ -43,11 +43,8 @@ default_params = {
 # TODO FID-IS AuC for truncation trick
 
 def get_random_latents(bs):
-    y = dataset.generate_class_condition(bs)
     z = random_latents(bs, generator.latent_size, generator.z_distribution)
-    if y is None:
-        return {'z': z}
-    return {'z': z, 'y': y}
+    return {'z': z}
 
 
 def output_samples():
@@ -183,19 +180,24 @@ if __name__ == '__main__':
     params = parse_config(default_params, [EEGDataset, Generator, Discriminator, DepthManager], False)
     dataset_params = params['EEGDataset']
     dataset, val_dataset = EEGDataset.from_config(**dataset_params)
-    num_classes = 0 if dataset.y is None or dataset.no_condition else dataset.y.shape[1]
-    shared_model_params = dict(dataset_shape=dataset.shape, initial_size=dataset.model_dataset_depth_offset,
-                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], init=params['init'],
-                               fmap_min=params['fmap_min'], kernel_size=params['kernel_size'],
-                               residual=params['residual'], equalized=params['equalized'],
+    shared_model_params = dict(initial_kernel_size=dataset.initial_kernel_size, num_channels=dataset.num_channels,
+                               fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
+                               kernel_size=params['kernel_size'], equalized=params['equalized'],
+                               self_attention_layers=params['self_attention_layers'],
+                               progression_scale_up=dataset.progression_scale_up,
+                               progression_scale_down=dataset.progression_scale_down, init=params['init'],
+                               act_alpha=params['act_alpha'], residual=params['residual'],
                                sagan_non_local=params['sagan_non_local'],
-                               average_conditions=params['average_conditions'],
-                               factorized_attention=params['use_factorized_attention'],
-                               self_attention_layers=params['self_attention_layers'], act_alpha=params['act_alpha'],
-                               num_classes=num_classes, progression_scale=dataset.progression_scale)
-    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
-    generator_smooth = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
-    discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
+                               factorized_attention=params['use_factorized_attention'])
+    total_temporal_conds = ((len(params['bands']) - 1) * dataset.num_channels) if len(params['bands']) > 1 else 0
+    global_conds = len(params['correlation_pairs'])
+    temporal_conds = {'temporal_1': total_temporal_conds} if len(params['bands']) > 1 else {}
+    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'],
+                          num_conds=global_conds + total_temporal_conds, **params['Generator'])
+    generator_smooth = Generator(**shared_model_params, z_distribution=params['z_distribution'],
+                                 num_conds=global_conds + total_temporal_conds, **params['Generator'])
+    discriminator = Discriminator(**shared_model_params, global_conds=global_conds, temporal_conds=temporal_conds,
+                                  **params['Discriminator'])
     dest = os.path.join(params['result_dir'], params['resume_network'])
     generator_state, _, g_cur_img = load_model(dest.format('generator'), True)
     discriminator_state, _, d_cur_img = load_model(dest.format('discriminator'), True)

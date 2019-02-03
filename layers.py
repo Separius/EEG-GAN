@@ -98,8 +98,8 @@ class ConditionalBatchNorm(nn.Module):
         super().__init__()
         self.num_features = num_features
         self.normalizer = nn.BatchNorm1d(num_features, affine=False)
-        self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False, act_alpha=-1,
-                                 spectral=spectral, bias=False)
+        self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False,
+                                 act_alpha=-1, spectral=spectral, bias=False)
 
     def forward(self, x, y):  # y is B, num_classes, Ty and x is B, num_features, Tx
         out = self.normalizer(x)
