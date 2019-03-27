@@ -64,19 +64,25 @@ class SelfAttention(nn.Module):
 
 
 class MinibatchStddev(nn.Module):
-    def __init__(self, group_size=4):
+    def __init__(self, group_size=4, temporal_groups_per_window=1, kernel_size=32):
         super().__init__()
         self.group_size = group_size if group_size != 0 else 1e6
+        self.kernel_size = kernel_size
+        self.stride_size = self.kernel_size // temporal_groups_per_window
 
     def forward(self, x):  # B, C, T
         s = x.size()
         group_size = min(s[0], self.group_size)
-        y = x.view(group_size, -1, s[1], s[2])  # G,B//G,C,T
-        y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
-        y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
-        y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
-        y = y.repeat((group_size, 1, s[2]))  # B,1,T
-        return torch.cat([x, y], dim=1)
+        all_y = []
+        for i in range(s[2] // self.stride_size):
+            y = x[..., i * self.stride_size:(i + 1) * self.stride_size]
+            y = y.view(group_size, -1, s[1], self.stride_size)  # G,B//G,C,T
+            y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
+            y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
+            y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
+            y = y.repeat((group_size, 1, self.stride_size))  # B,1,T
+            all_y.append(y)
+        return torch.cat([x, torch.cat(all_y, dim=2)], dim=1)
 
 
 class ConditionalBatchNorm(nn.Module):
@@ -86,37 +92,38 @@ class ConditionalBatchNorm(nn.Module):
         self.num_features = num_features
         self.normalizer = nn.BatchNorm1d(num_features, affine=no_cond)
         if no_cond:
-            self.mode = 'BN'
+            self.mode = 'BN'  # batch norm
         elif latent_size == 0:
             self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False,
                                      act_alpha=-1, spectral=spectral, bias=False)
-            self.mode = 'CBN'
-        else:
+            self.mode = 'CBN'  # conditional batch norm
+        else:  # both 'SM'(self modulation) and 'CSM'(conditional self modulation)
+            # TODO maybe reduce it to a single layer linear network
             self.embed = nn.Sequential(
-                GeneralConv(latent_size, num_features * 4, kernel_size=1,
-                            equalized=False, act_alpha=0.0, spectral=True, bias=True),
-                GeneralConv(num_features * 4, num_features * 2, kernel_size=1,
+                GeneralConv(latent_size + num_classes, num_features * 2, kernel_size=1,
+                            equalized=False, act_alpha=0.0, spectral=spectral, bias=True),
+                GeneralConv(num_features * 2, num_features * 2, kernel_size=1,
                             equalized=False, act_alpha=-1, spectral=spectral, bias=False))
             if num_classes == 0:
-                self.mode = 'SM'
+                self.mode = 'SM'  # self modulation
             else:
-                self.embed_add = GeneralConv(num_classes, 2 * latent_size, kernel_size=1, equalized=False,
-                                             act_alpha=-1, spectral=spectral, bias=False)
-                self.mode = 'CSM'
+                self.mode = 'CSM'  # conditional self modulation
 
     def forward(self, x, y, z):  # y = B*num_classes*Ty ; x = B*num_features*Tx ; z = B*latent_size
         out = self.normalizer(x)
         if self.mode == 'BN':
             return out
+        if y.ndimension() == 2:
+            y = y.unsqueeze(2)
         if self.mode == 'CBN':
             cond = y
         else:
-            if self.mode == 'SM':
+            if z.ndimension() == 2:
                 cond = z.unsqueeze(2)
             else:
-                add, mul = self.embed_add(y).chunk(2, dim=1)
-                cond = z.unsqueeze(2).repeat(-1, -1, add.size(2))
-                cond = cond + add + cond * mul
+                cond = z
+            if self.mode == 'CSM':
+                cond = torch.cat([cond.repeat(1, 1, y.size(2) // cond.size(2)), y], dim=1)
         embed = self.embed(cond)  # B, num_features*2, Ty
         embed = resample_signal(embed, embed.shape[2], x.shape[2], pytorch=True)
         gamma, beta = embed.chunk(2, dim=1)
