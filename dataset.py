@@ -1,41 +1,39 @@
-import glob
 import os
+import glob
 from random import shuffle
 
-import numpy as np
 import torch
-from scipy import signal
-from scipy.integrate import simps
+import numpy as np
 from scipy.io import loadmat
+from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import default_collate
-from tqdm import tqdm, trange
 
-from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents, EPSILON
+from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents
 
 DATASET_VERSION = 6
 
 
-# min_layer_real_freq: 0.5(32 samples) -> 4 -> 8 -> 12 -> 30 -> 50 -> 100(6400 samples)
-# ideal_real_freq: (0.5 -> 2)( -> 4)( -> 8)( -> 12)( -> 16)( -> 20)( -> 30)( -> 50)( -> 100)
+# bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60 -> 100
 class EEGDataset(Dataset):
-    # for 200(sampling), starting from 1 hz(sampling) [32 samples]
-    # progression_scale_up = [4, 2, 2, 3, 4, 5, 3, 5, 2]
-    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3, 1]
-
-    # for 200(sampling), starting from 0.25 hz(sampling) [8 samples]
-    # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3, 5, 2]
-    # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2, 3, 1]
-
-    # for 60(sampling), starting from 1 hz(sampling)
+    # for 60(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
-    # for 60(sampling), starting from 0.25 hz(sampling) [8 samples]
-    # progression_scale_up = [2, 2, 4, 2, 2, 3, 4, 5, 3]
+    # for 60(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
+    # progression_scale_up   = [2, 2, 4, 2, 2, 3, 4, 5, 3]
     # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2]
 
+    # for 100(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
+    # progression_scale_up   = [4, 2, 2, 3, 4, 5, 3, 5]
+    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3]
+
+    # for 100(sampling), starting from 1 hz(sampling) [8 samples at the beginning]
+    # progression_scale_up   = [2, 2, 4, 2, 2, 3, 4, 5, 3, 5]
+    # progression_scale_down = [2, 2, 1, 1, 1, 2, 3, 4, 2, 3]
+
     picked_channels = None
+
     # picked_channels = [3, 5, 9, 15, 16]
     # picked_channels = [3, 5, 9, 12, 13, 14, 15, 16]
     # picked_channels = [3, 5, 8, 9, 10, 13, 15, 16]
@@ -133,6 +131,7 @@ class EEGDataset(Dataset):
                     data_sampling_freq: float, start_sampling_freq: float, end_sampling_freq: float,
                     start_seq_len: int, stride: float, num_channels: int,
                     per_user_normalization: bool, per_channel_normalization: bool):
+        assert end_sampling_freq <= data_sampling_freq
         mode = per_user_normalization * 2 + per_channel_normalization * 1
         train_files = None
         train_norms = None
@@ -232,53 +231,16 @@ class EEGDataset(Dataset):
         return datapoint + (t - datapoint) * (1 - self.alpha)
 
 
-def band_power(batch, sampling_freq, bands):
-    # window_size = 2 / bands[0]  # in seconds (this is the right way)
-    window_size = 1
-    window = sampling_freq * window_size
-    new_shape = (batch.shape[0], batch.shape[1], 32, batch.shape[2] // 32)
-    if isinstance(batch, np.ndarray):
-        batch = batch.reshape(*new_shape)
-    else:
-        batch = batch.view(*new_shape)
-    freqs, psd = signal.welch(batch, sampling_freq, nperseg=window)
-    freq_res = freqs[1] - freqs[0]
-    total_power = simps(psd, dx=freq_res)
-    res = []
-    for b_start, b_end in zip(bands, bands[1:]):
-        idx_band = np.logical_and(freqs >= b_start, freqs <= b_end)
-        res.append(simps(psd[..., idx_band], dx=freq_res) / total_power)
-    return np.concatenate(res, axis=1).astype(np.float32)
-
-
-def pearson_correlation_coefficient(batch, pairs):
-    normalized = batch - batch.mean(dim=2, keepdim=True)
-    squared = torch.sqrt((normalized * normalized).sum(dim=2))
-    res = []
-    for pair in pairs:
-        x = normalized[:, pair[0], :]
-        y = normalized[:, pair[1], :]
-        res.append((x * y).sum(dim=1) / (squared[:, pair[0]] * squared[:, pair[1]] + EPSILON))
-    return torch.stack(res, dim=1)
-
-
-def get_collate_real(max_sampling_freq, max_len, bands, pairs):
+def get_collate_real(max_sampling_freq, max_len):
     def collate_real(batch):
-        batch = default_collate(batch)
-        if len(bands) > 1:
-            batch['temporal_1'] = cudize(
-                torch.from_numpy(band_power(batch['x'], int(batch['x'].shape[2] * max_sampling_freq / max_len), bands)))
-        batch = cudize(batch)
-        if len(pairs) != 0:
-            batch['global_1'] = pearson_correlation_coefficient(batch['x'], pairs)
-        return batch
+        return cudize(default_collate(batch))
 
     return collate_real
 
 
 def get_collate_fake(latent_size, z_distribution, collate_real):
     def collate_fake(batch):
-        batch = collate_real(batch)
+        batch = collate_real(batch)  # extract condition(features)
         batch['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
         del batch['x']
         return batch

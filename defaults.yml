@@ -28,8 +28,6 @@ residual: false
 sagan_non_local: true
 use_factorized_attention: false
 calc_swd: false
-bands: [] # [0.5, 4, 8, 12, 30] #, 100]
-correlation_pairs: [[1,2]]
 
 Trainer:
   d_training_repeats: 5 # used to be 1 and 2 in big-gan
@@ -58,7 +56,6 @@ DepthManager:
   reset_optimizer: true
   disable_progression: false
   depth_offset: 0  # starts form 0
-  attention_transition_kimg: 400
   minibatch_default: 256
   lod_training_kimg: 400
   lod_transition_kimg: 400

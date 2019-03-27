@@ -15,8 +15,8 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from dataset import EEGDataset, get_collate_real, get_collate_fake
 from losses import generator_loss, discriminator_loss
 from network import Generator, Discriminator
-from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, CheckCond,
-                     EfficientLossMonitor, DepthManager, SaverPlugin, EvalDiscriminator, WatchSingularValues)
+from plugins import (OutputGenerator, TeeLogger, AbsoluteTimeMonitor, SlicedWDistance, SaverPlugin,
+                     EfficientLossMonitor, DepthManager, EvalDiscriminator, WatchSingularValues)
 from trainer import Trainer
 from utils import cudize, random_latents, trainable_params, create_result_subdir, num_params, parse_config, load_model
 
@@ -50,9 +50,7 @@ default_params = dict(
     residual=False,
     sagan_non_local=True,
     use_factorized_attention=False,
-    calc_swd=False,
-    correlation_pairs=[],  # [[0, 1], [1, 2], [2, 3]], #global condition
-    bands=[]  # [0.5, 4, 8, 12, 30]  # , 100] #temporal condition
+    calc_swd=False
 )
 
 
@@ -93,8 +91,6 @@ def main(params):
     global_conds = len(params['correlation_pairs'])
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
-    if len(params['self_attention_layers']) != 0:
-        stats_to_log.extend(['gamma'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
     if dataset_params['validation_ratio'] > 0:
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
@@ -143,6 +139,7 @@ def main(params):
         params['Adam']['betas'] = (0, 0.9)
 
     def get_optimizers(g_lr):
+        #biggan: G_lr=5e-5, G_B1=0.0, G_B2=0.999, adam_eps=1e-8,
         d_lr = g_lr
         if params['ttur']:
             d_lr *= 4.0
@@ -197,8 +194,7 @@ def main(params):
 
     mb_def = params['DepthManager']['minibatch_default']
 
-    collate_real = get_collate_real(dataset.end_sampling_freq, dataset.seq_len,
-                                    params['bands'], params['correlation_pairs'])
+    collate_real = get_collate_real(dataset.end_sampling_freq, dataset.seq_len)
     collate_fake = get_collate_fake(latent_size, params['z_distribution'], collate_real)
 
     def get_dataloader(minibatch_size, is_training=True, depth=0, alpha=1, is_real=True):
@@ -225,8 +221,7 @@ def main(params):
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])
     dm = DepthManager(get_dataloader, get_random_latents, max_depth, params['Trainer']['tick_kimg_default'],
-                      len(params['self_attention_layers']) != 0, get_optimizers, params['lr'],
-                      **params['DepthManager'])
+                      get_optimizers, params['lr'], **params['DepthManager'])
     trainer.register_plugin(dm)
     for i, loss_name in enumerate(losses):
         trainer.register_plugin(EfficientLossMonitor(i, loss_name, **params['EfficientLossMonitor']))
@@ -240,9 +235,6 @@ def main(params):
         trainer.register_plugin(
             SlicedWDistance(dataset.progression_scale, params['SaverPlugin']['network_snapshot_ticks'],
                             **params['SlicedWDistance']))
-    if total_temporal_conds + global_conds > 0:
-        trainer.register_plugin(CheckCond(get_random_latents, dataset.end_sampling_freq, dataset.seq_len,
-                                          params['bands'], params['correlation_pairs']))
     trainer.register_plugin(AbsoluteTimeMonitor())
     if params['Generator']['spectral']:
         trainer.register_plugin(WatchSingularValues(generator, **params['WatchSingularValues']))

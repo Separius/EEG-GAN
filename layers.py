@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
 
-from utils import cudize, pixel_norm, resample_signal
+from utils import pixel_norm, resample_signal
 
 
 class PixelNorm(nn.Module):
@@ -35,7 +35,7 @@ class GDropLayer(nn.Module):
             return x
         rnd_shape = [s if axis in self.axes else 1 for axis, s in enumerate(x.size())]
         rnd = (1 + self.strength) ** np.random.normal(size=rnd_shape)
-        rnd = cudize(torch.from_numpy(rnd).type(x.data.type()))
+        rnd = torch.from_numpy(rnd).type(x.data.type()).to(x)
         return x * rnd
 
 
@@ -44,8 +44,8 @@ class SelfAttention(nn.Module):
         super().__init__()
         d_key = max(channels_in // 8, 2)
         conv_conf = dict(kernel_size=1, equalized=False, spectral=spectral, init=init, bias=False, act_alpha=-1)
-        self.gamma = 0
-        self.pooling = nn.MaxPool1d(2) if sagan else nn.Sequential()
+        self.gamma = nn.Parameter(torch.tensor(0.), requires_grad=True)
+        self.pooling = nn.MaxPool1d(4) if sagan else nn.Sequential()
         self.key_conv = GeneralConv(channels_in, d_key, **conv_conf)
         self.query_conv = GeneralConv(channels_in, d_key, **conv_conf)
         self.value_conv = GeneralConv(channels_in, channels_in // 2, **conv_conf)
@@ -60,13 +60,11 @@ class SelfAttention(nn.Module):
             self.final_conv = spectral_norm(self.final_conv)
 
     def forward(self, x):  # BCT
-        if self.gamma == 0:
-            return x, None
         query = self.query_conv(x)  # BC/8T
-        key = self.pooling(self.key_conv(x))  # BC/8T[/2]
-        value = self.pooling(self.value_conv(x))  # BC/2T[/2]
+        key = self.pooling(self.key_conv(x))  # BC/8T[/4]
+        value = self.pooling(self.value_conv(x))  # BC/2T[/4]
         if not self.factorized_attention:
-            out = F.softmax(torch.bmm(key.permute(0, 2, 1), query) / self.scale, dim=1)  # Bnormed(T[/2])T
+            out = F.softmax(torch.bmm(key.permute(0, 2, 1), query) / self.scale, dim=1)  # Bnormed(T[/4])T
             attention_map = out
             out = torch.bmm(value, out)  # BC/2T
         else:
@@ -94,27 +92,68 @@ class MinibatchStddev(nn.Module):
 
 
 class ConditionalBatchNorm(nn.Module):
-    def __init__(self, num_features, num_classes, spectral):
+    def __init__(self, num_features, num_classes, spectral, latent_size=0):
         super().__init__()
+        self.no_cond = latent_size == 0 and num_classes == 0
         self.num_features = num_features
-        self.normalizer = nn.BatchNorm1d(num_features, affine=False)
-        self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False,
-                                 act_alpha=-1, spectral=spectral, bias=False)
+        self.normalizer = nn.BatchNorm1d(num_features, affine=self.no_cond)
+        if self.no_cond:
+            return
+        if latent_size == 0:
+            self.embed = GeneralConv(num_classes, num_features * 2, kernel_size=1, equalized=False, act_alpha=-1,
+                                     spectral=spectral, bias=False)
+            self.mode = 'CBN'
+        else:
+            self.embed = nn.Sequential(
+                GeneralConv(latent_size, num_features * 4, kernel_size=1, equalized=False, act_alpha=0.0, spectral=True,
+                            bias=True),
+                GeneralConv(num_features * 4, num_features * 2, kernel_size=1, equalized=False, act_alpha=-1,
+                            spectral=spectral, bias=False))
+            if num_classes == 0:
+                self.mode = 'SM'
+            else:
+                self.embed_add = GeneralConv(num_classes, 2 * latent_size, kernel_size=1, equalized=False, act_alpha=-1,
+                                             spectral=spectral, bias=False)
+                self.mode = 'CSM'
 
-    def forward(self, x, y):  # y is B, num_classes, Ty and x is B, num_features, Tx
+    def forward(self, x, y, z=None):  # y is B, num_classes, Ty and x is B, num_features, Tx
         out = self.normalizer(x)
-        embed = self.embed(y)  # B, num_features*2, Ty
+        if self.no_cond:
+            return out
+        if self.mode == 'CBN':
+            cond = y
+        else:
+            if self.mode == 'SM':
+                cond = z.unsqueeze(2)
+            else:
+                add, mul = self.embed_add(y).chunk(2, dim=1)
+                cond = z.unsqueeze(2).repeat(-1, -1, add.size(2))
+                cond = cond + add + cond * mul
+        embed = self.embed(cond)  # B, num_features*2, Ty
         embed = resample_signal(embed, embed.shape[2], x.shape[2], pytorch=True)
         gamma, beta = embed.chunk(2, dim=1)
-        return gamma * out + beta
+        return out + gamma * out + beta  # trick to make sure gamma is 1.0 at the beginning of the training
+
+
+class EqualizedSeparableConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False,
+                 equalized=True, init='kaiming_normal', act_alpha=0.0, bias=True):
+        super().__init__()
+        self.net = nn.Sequential(
+            EqualizedConv1d(in_channels, in_channels, kernel_size, padding, spectral, equalized, init, act_alpha, True,
+                            groups=in_channels),
+            EqualizedConv1d(in_channels, out_channels, 1, 0, spectral, equalized, init, act_alpha, bias))
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class EqualizedConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0,
-                 spectral=False, equalized=True, init='kaiming_normal', act_alpha=0.0, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, spectral=False,
+                 equalized=True, init='kaiming_normal', act_alpha=0.0, bias=True, groups=1):
         super().__init__()
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
-                              kernel_size=kernel_size, padding=padding, bias=bias)
+                              kernel_size=kernel_size, padding=padding, bias=bias, groups=groups)
         if bias:
             self.conv.bias.data.zero_()
         act_alpha = act_alpha if act_alpha > 0 else 1
@@ -136,16 +175,22 @@ class EqualizedConv1d(nn.Module):
         return self.conv(x * self.scale)
 
 
+# TODO add separable flag to G and D
 class GeneralConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, equalized=True, pad=None, act_alpha=0.0, do=0,
-                 num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True):
+                 num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True, separable=False):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
-        conv = EqualizedConv1d(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
-                               equalized=equalized, init=init, act_alpha=act_alpha,
-                               bias=bias if act_norm != 'batch' else False)
+        if separable:
+            conv_class = EqualizedSeparableConv1d
+        else:
+            conv_class = EqualizedConv1d
+        conv = conv_class(in_channels, out_channels, kernel_size, padding=pad, spectral=spectral,
+                          equalized=equalized, init=init, act_alpha=act_alpha,
+                          bias=bias if act_norm != 'batch' else False)
         norm = None
         if act_norm == 'batch':
+            # TODO add latent_size based on CBN or SM or CSM
             norm = ConditionalBatchNorm(out_channels, num_classes, spectral)
         self.conv = conv
         self.norm = norm
@@ -168,3 +213,26 @@ class GeneralConv(nn.Module):
         if self.norm:
             c = self.norm(c, y)
         return self.net(c)
+
+
+class PassChannelResidual(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, y):
+        if x.size(1) >= y.size(1):
+            x[:, :y.size(1)] = x[:, :y.size(1)] + y
+            return x
+        else:
+            y[:, :x.size(1)] = y[:, :x.size(1)] + x
+            return y
+
+
+class ConcatResidual(nn.Module):
+    def __init__(self, ch_in, ch_out, equalized, spectral, init):
+        super().__init__()
+        self.net = GeneralConv(ch_in, ch_out - ch_in, kernel_size=1,
+                               equalized=equalized, act_alpha=-1, spectral=spectral, init=init)
+
+    def forward(self, x, h):
+        return h + torch.cat([x, self.net(x)], dim=1)

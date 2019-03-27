@@ -104,9 +104,7 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss
         raise ValueError('Invalid loss type')
     if gp_gain != 0 and grad_lambda != 0:
         alpha = get_mixing_factor(real['x'].size(0))
-        min_size = real['x'].size(2)
-        x_hat = {'x': Variable(alpha * real['x'][:, :, :min_size].data +
-                               (1.0 - alpha) * g_['x'][:, :, :min_size].data, requires_grad=True)}
+        x_hat = {'x': Variable(alpha * real['x'].data + (1.0 - alpha) * g_['x'].data, requires_grad=True)}
         beta = alpha.squeeze(dim=2)
         for k in real.keys():
             if k.startswith('global_') or k.startswith('temporal_'):

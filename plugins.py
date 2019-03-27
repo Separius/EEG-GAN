@@ -12,7 +12,6 @@ import torch
 from scipy import misc
 from sklearn.utils.extmath import randomized_svd
 
-from dataset import band_power, pearson_correlation_coefficient
 from torch_utils import Plugin, LossMonitor, Logger
 from trainer import Trainer
 from utils import generate_samples, cudize, EPSILON
@@ -31,10 +30,10 @@ class DepthManager(Plugin):
 
     def __init__(self,  # everything starts from 0 or 1
                  create_dataloader_fun, create_rlg, max_depth,
-                 tick_kimg_default, has_attention, get_optimizer, default_lr,
+                 tick_kimg_default, get_optimizer, default_lr,
                  reset_optimizer: bool = True, disable_progression=False,
                  minibatch_default=256, depth_offset=0,  # starts form 0
-                 attention_transition_kimg=400, lod_training_kimg=400, lod_transition_kimg=400):
+                 lod_training_kimg=400, lod_transition_kimg=400):
         super().__init__([(1, 'iteration')])
         self.reset_optimizer = reset_optimizer
         self.minibatch_default = minibatch_default
@@ -49,40 +48,27 @@ class DepthManager(Plugin):
         self.depth_offset = depth_offset
         self.max_depth = max_depth
         self.default_lr = default_lr
-        self.attention_transition_kimg = attention_transition_kimg
-        self.alpha_map, self.start_gamma, self.end_gamma = self.pre_compute_alpha_map(self.depth_offset, max_depth,
-                                                                                      lod_training_kimg,
-                                                                                      self.training_kimg_override,
-                                                                                      lod_transition_kimg,
-                                                                                      self.transition_kimg_override,
-                                                                                      has_attention,
-                                                                                      attention_transition_kimg)
+        self.alpha_map = self.pre_compute_alpha_map(self.depth_offset, max_depth, lod_training_kimg,
+                                                    self.training_kimg_override, lod_transition_kimg,
+                                                    self.transition_kimg_override)
 
     def register(self, trainer):
         self.trainer = trainer
         self.trainer.stats['minibatch_size'] = self.minibatch_default
         self.trainer.stats['alpha'] = {'log_name': 'alpha', 'log_epoch_fields': ['{val:.2f}'], 'val': self.alpha}
-        if self.start_gamma is not None:
-            self.trainer.stats['gamma'] = {'log_name': 'gamma', 'log_epoch_fields': ['{val:.2f}'], 'val': 0}
         self.iteration(is_resuming=self.trainer.optimizer_d is not None)
 
     @staticmethod
     def pre_compute_alpha_map(start_depth, max_depth, lod_training_kimg, lod_training_kimg_overrides,
-                              lod_transition_kimg, lod_transition_kimg_overrides, has_attention,
-                              attention_transition_kimg):
-        start_gamma = None
-        end_gamma = None
+                              lod_transition_kimg, lod_transition_kimg_overrides):
         points = []
         pointer = 0
         for i in range(start_depth, max_depth):
             pointer += int(lod_training_kimg_overrides.get(i + 1, lod_training_kimg) * 1000)
             points.append(pointer)
-            if (i == max_depth - 1) and has_attention:
-                start_gamma = pointer
-                end_gamma = pointer + int(attention_transition_kimg * 1000)
             pointer += int(lod_transition_kimg_overrides.get(i + 1, lod_transition_kimg) * 1000)
             points.append(pointer)
-        return points, start_gamma, end_gamma
+        return points
 
     def calc_progress(self, cur_nimg=None):
         if cur_nimg is None:
@@ -126,16 +112,6 @@ class DepthManager(Plugin):
             self.alpha = alpha
         self.trainer.stats['depth'] = depth
         self.trainer.stats['alpha']['val'] = alpha
-        if self.start_gamma is not None:
-            cur_kimg = self.trainer.cur_nimg
-            if self.disable_progression:
-                gamma = cur_kimg / self.attention_transition_kimg
-            else:
-                gamma = (cur_kimg - self.start_gamma) / (self.end_gamma - self.start_gamma)
-            gamma = min(1, max(0, gamma))
-            self.trainer.discriminator.set_gamma(gamma)
-            self.trainer.generator.set_gamma(gamma)
-            self.trainer.stats['gamma']['val'] = gamma
 
 
 class EfficientLossMonitor(LossMonitor):
@@ -463,50 +439,3 @@ class SlicedWDistance(Plugin):
                 batchs[i] = batchs[i][:, :, ::self.progression_scale]
             swd.append(self.sliced_wasserstein(both_descriptors[0], both_descriptors[1]))
         return swd
-
-
-class CheckCond(Plugin):
-    def __init__(self, get_random_latents, max_sampling_freq, max_len, bands, pairs):
-        # NOTE you must change this for new conditions
-        super().__init__([(1, 'epoch')])
-        self.get_random_latents = get_random_latents
-        self.max_sampling_freq = max_sampling_freq
-        self.max_len = max_len
-        self.bands = bands
-        self.pairs = pairs
-        self.has_global_cond = len(pairs) > 0
-        self.has_temporal_cond = len(bands) > 1
-        self.loss = torch.nn.MSELoss(reduction='mean')
-
-    def register(self, trainer):
-        self.trainer = trainer
-        log_epoch_fields = ['{val:.2f}', '{epoch:.2f}']
-        if self.has_global_cond:
-            log_epoch_fields.append('{global_distance:.3f}')
-        if self.has_temporal_cond > 0:
-            log_epoch_fields.append('{temporal_distance:.3f}')
-        self.trainer.stats['cond'] = {'log_name': 'cond', 'log_epoch_fields': log_epoch_fields}
-        if self.has_global_cond:
-            self.trainer.stats['cond']['global_distance'] = float('nan')
-        if self.has_temporal_cond > 0:
-            self.trainer.stats['cond']['temporal_distance'] = float('nan')
-
-    def epoch(self, epoch_index):
-        with torch.no_grad():
-            z = next(self.trainer.random_latents_generator)
-            if self.has_temporal_cond:
-                expected_temporal_cond = z['temporal_1'].data.cpu()
-            fake_latents_in = cudize(z)
-            if self.has_global_cond:
-                expected_global_cond = z['global_1']
-            generated = self.trainer.generator(fake_latents_in)[0]['x'].data
-            if self.has_global_cond:
-                generated_global_cond = pearson_correlation_coefficient(generated, self.pairs)
-                self.trainer.stats['cond']['global_distance'] = self.loss(expected_global_cond, generated_global_cond)
-            if self.has_temporal_cond:
-                generated = generated.cpu()
-                generated_temporal_cond = band_power(generated,
-                                                     int(generated.shape[2] * self.max_sampling_freq / self.max_len),
-                                                     self.bands)
-                self.trainer.stats['cond']['temporal_distance'] = self.loss(expected_temporal_cond,
-                                                                            generated_temporal_cond)
