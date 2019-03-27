@@ -8,8 +8,8 @@ import numpy as np
 import torch
 import yaml
 from torch.optim import Adam
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data.sampler import SubsetRandomSampler
 
 from dataset import EEGDataset, get_collate_real, get_collate_fake
@@ -139,7 +139,6 @@ def main(params):
         params['Adam']['betas'] = (0, 0.9)
 
     def get_optimizers(g_lr):
-        #biggan: G_lr=5e-5, G_B1=0.0, G_B2=0.999, adam_eps=1e-8,
         d_lr = g_lr
         if params['ttur']:
             d_lr *= 4.0

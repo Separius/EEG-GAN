@@ -8,95 +8,79 @@ from utils import pixel_norm, resample_signal
 from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, PassChannelResidual, ConcatResidual
 
 
-class GBlock(nn.Module):  # TODO add four_convs flag to Generator
-    def __init__(self, ch_in, ch_out, num_channels, ksize=3, equalized=True,
-                 initial_kernel_size=None, is_residual=False, no_tanh=False, per_channel_noise=False,
-                 spectral=False, to_rgb_mode='pggan', init='kaiming_normal', four_convs=False, **layer_settings):
+class GBlock(nn.Module):
+    # layer_settings = dict(z_to_bn_size=0, equalized=True, spectral=False, init='kaiming_normal',
+    #           act_alpha=0.2, do=0, num_classes=0, act_norm=None, bias=True, separable=False)
+    def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None, is_residual=False, no_tanh=False,
+                 deep=False, per_channel_noise=False, to_rgb_mode='pggan', **layer_settings):
         super().__init__()
         is_first = initial_kernel_size is not None
-        if not four_convs:
-            self.c1 = GeneralConv(ch_in, ch_out, equalized=equalized, init=init, spectral=spectral,
-                                  kernel_size=initial_kernel_size if is_first else ksize,
-                                  pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
-            self.c2 = GeneralConv(ch_out, ch_out, equalized=equalized, kernel_size=ksize,
-                                  spectral=spectral, init=init, **layer_settings)
-            if per_channel_noise:
-                self.c1_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
-                self.c2_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
-            else:
-                self.c1_noise_weight, self.c2_noise_weight = None, None
+        first_k_size = initial_kernel_size if is_first else k_size
+        first_ch_out = (ch_in // 4) if deep else ch_out
+        self.c1 = GeneralConv(ch_in, first_ch_out, kernel_size=first_k_size,
+                              pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
+        self.c2 = GeneralConv(first_ch_out, first_ch_out, kernel_size=k_size, **layer_settings)
+        if per_channel_noise:
+            self.c1_noise_weight = nn.Parameter(torch.zeros(1, first_ch_out, 1))
+            self.c2_noise_weight = nn.Parameter(torch.zeros(1, first_ch_out, 1))
         else:
-            self.c1 = GeneralConv(ch_in, ch_in // 4, equalized=equalized, init=init, spectral=spectral,
-                                  kernel_size=initial_kernel_size if is_first else ksize,
-                                  pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
-            self.c2 = GeneralConv(ch_in // 4, ch_in // 4, equalized=equalized, kernel_size=ksize,
-                                  spectral=spectral, init=init, **layer_settings)
-            self.c3 = GeneralConv(ch_in // 4, ch_in // 4, equalized=equalized, kernel_size=ksize,
-                                  spectral=spectral, init=init, **layer_settings)
-            self.c4 = GeneralConv(ch_in // 4, ch_out, equalized=equalized, kernel_size=ksize,
-                                  spectral=spectral, init=init, **layer_settings)
+            self.c1_noise_weight, self.c2_noise_weight = None, None
+        if deep:
+            self.c3 = GeneralConv(first_ch_out, first_ch_out, kernel_size=k_size, **layer_settings)
+            self.c4 = GeneralConv(first_ch_out, ch_out, kernel_size=k_size, **layer_settings)
             if per_channel_noise:
-                self.c1_noise_weight = nn.Parameter(torch.zeros(1, ch_in // 4, 1))
-                self.c2_noise_weight = nn.Parameter(torch.zeros(1, ch_in // 4, 1))
-                self.c3_noise_weight = nn.Parameter(torch.zeros(1, ch_in // 4, 1))
+                self.c3_noise_weight = nn.Parameter(torch.zeros(1, first_ch_out, 1))
                 self.c4_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
             else:
-                self.c1_noise_weight, self.c2_noise_weight = None, None
                 self.c3_noise_weight, self.c4_noise_weight = None, None
+        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['equalized'],
+                                      init=layer_settings['equalized'])
         if to_rgb_mode == 'pggan':
-            to_rgb = GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1,
-                                 equalized=equalized, spectral=spectral, init=init)
+            to_rgb = GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **reduced_layer_settings)
         elif to_rgb_mode in {'sngan', 'sagan'}:
-            to_rgb = GeneralConv(ch_out, num_channels if to_rgb_mode == 'sngan' else ch_out, kernel_size=3,
-                                 act_alpha=0.2, equalized=equalized, spectral=spectral, num_classes=0, init=init)
+            to_rgb = GeneralConv(ch_out, ch_rgb if to_rgb_mode == 'sngan' else ch_out, kernel_size=3, act_alpha=0.2,
+                                 **reduced_layer_settings)
             if to_rgb_mode == 'sagan':
                 to_rgb = nn.Sequential(
-                    GeneralConv(ch_out, num_channels, kernel_size=1, act_alpha=-1, equalized=equalized,
-                                spectral=spectral, init=init), to_rgb)
+                    GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **reduced_layer_settings), to_rgb)
         elif to_rgb_mode == 'biggan':
             to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.ReLU(),
-                                   GeneralConv(ch_out, num_channels, kernel_size=3, act_alpha=-1, equalized=equalized,
-                                               spectral=False, init=init))
+                                   GeneralConv(ch_out, ch_rgb, kernel_size=3, act_alpha=-1, **reduced_layer_settings))
         else:
             raise ValueError()
         if no_tanh:
             self.toRGB = to_rgb
         else:
             self.toRGB = nn.Sequential(to_rgb, ScaledTanh())
-        if not four_convs:
+        if deep:
+            self.residual = PassChannelResidual()
+        else:
             if not is_first and is_residual:
                 self.residual = nn.Sequential() if ch_in == ch_out else \
-                    GeneralConv(ch_in, ch_out, 1, equalized, init=init, act_alpha=-1, spectral=spectral)
+                    GeneralConv(ch_in, ch_out, 1, act_alpha=-1, **reduced_layer_settings)
             else:
                 self.residual = None
-        else:
-            self.residual = PassChannelResidual()
-        self.four_conv = four_convs
+        self.deep = deep
 
     @staticmethod
     def get_per_channel_noise(noise_weight):
         return None if noise_weight is None else torch.randn(*noise_weight.size()) * noise_weight
 
-    def forward(self, x, y=None, last=False):
-        if not self.four_conv:
-            h = self.c1(x, y=y, z=self.get_per_channel_noise(self.c1_noise_weight))
-            h = self.c2(h, y=y, z=self.get_per_channel_noise(self.c2_noise_weight))
-        else:
-            h = self.c1(x, y=y, z=self.get_per_channel_noise(self.c1_noise_weight))
-            h = self.c2(h, y=y, z=self.get_per_channel_noise(self.c2_noise_weight))
-            h = self.c3(h, y=y, z=self.get_per_channel_noise(self.c3_noise_weight))
-            h = self.c4(h, y=y, z=self.get_per_channel_noise(self.c4_noise_weight))
-        if not self.four_conv:
-            if self.residual is not None:
-                h = h + self.residual(x)
-        else:
+    def forward(self, x, y=None, z=None, last=False):
+        h = self.c1(x, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c1_noise_weight))
+        h = self.c2(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c2_noise_weight))
+        if self.deep:
+            h = self.c3(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c3_noise_weight))
+            h = self.c4(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c4_noise_weight))
             h = self.residual(h, x)
+        elif self.residual is not None:
+            h = h + self.residual(x)
         if last:
             return self.toRGB(h)
         return h
 
 
-class Generator(nn.Module):
+class Generator(nn.Module):  # make first layer conv by not setting initial_kernel_size!
     def __init__(self, initial_kernel_size, num_channels, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
                  self_attention_layers, progression_scale_up, progression_scale_down, init, act_alpha,
                  residual, sagan_non_local, factorized_attention, z_distribution, num_conds, to_rgb_mode: str = 'pggan',
@@ -212,17 +196,22 @@ class Generator(nn.Module):
         return saved_inputs, all_attention_maps
 
 
-class DBlock(nn.Module):  # TODO add four_convs flag to Discriminator
-    def __init__(self, ch_in, ch_out, num_channels, initial_kernel_size=None, is_residual=False,
-                 ksize=3, equalized=True, group_size=4, act_alpha: float = 0.0, spectral=False, sngan_rgb=False,
-                 init='kaiming_normal', four_convs=False, **layer_settings):
+# DEBUG:
+#   GeneralConv(in_channels, out_channels, z_to_bn_size=0,
+#   kernel_size=3, equalized=True, pad=None, act_alpha=0.2,
+#   do=0, num_classes=0, act_norm=None, spectral=False,
+#   init='kaiming_normal', bias=True, separable=False)
+
+class DBlock(nn.Module):
+    # layer_settings = dict(equalized=True, spectral=False, init='kaiming_normal',
+    #           act_alpha=0.2, do=0, num_classes=0, act_norm=None, bias=True, separable=False)
+    def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None,
+                 is_residual=False, deep=False, group_size=4, **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
-        self.fromRGB = GeneralConv(num_channels, ch_in, kernel_size=1, equalized=equalized,
-                                   act_alpha=-1 if sngan_rgb else act_alpha, spectral=spectral, init=init)
         self.net = []
         if is_last:
-            self.net.append(MinibatchStddev(group_size))
+            self.net.append(MinibatchStddev(group_size, initial_kernel_size=initial_kernel_size))
         self.net.append(
             GeneralConv(ch_in + (1 if is_last else 0), ch_in if not four_convs else ch_out // 4, kernel_size=ksize,
                         equalized=equalized, act_alpha=act_alpha, spectral=spectral, init=init, **layer_settings))
@@ -239,6 +228,8 @@ class DBlock(nn.Module):  # TODO add four_convs flag to Discriminator
                             spectral=spectral, init=init, **layer_settings))
         self.net = nn.Sequential(*self.net)
         self.is_last = initial_kernel_size
+        self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, equalized=equalized,
+                                   act_alpha=act_alpha, spectral=spectral, init=init)
         if not four_convs:
             if is_residual and not is_last:
                 self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
