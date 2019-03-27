@@ -102,7 +102,7 @@ class EEGDataset(Dataset):
                         self.datas.append(tmp[self.picked_channels, :num_points[-1]])
             else:
                 for_range = range(num_channels) if self.picked_channels is None else self.picked_channels
-                for kk, j in enumerate(range(num_channels)):
+                for kk, j in enumerate(for_range):
                     with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
                         tmp = list(map(float, f.read().split()))
                         tmp = np.array(tmp, dtype=np.float32)
@@ -284,15 +284,3 @@ def get_collate_fake(latent_size, z_distribution, collate_real):
         return batch
 
     return collate_fake
-
-
-if __name__ == '__main__':
-    a = EEGDataset(None, None, None, dir_path='./data/prepared_sample')
-    a.model_depth = 0
-    a.alpha = 1.0
-    print(a[0].shape)
-    for i in range(a.max_dataset_depth - 1):
-        a.model_depth = i + 1
-        for alpha in (0.0, 0.5, 1.0):
-            a.alpha = alpha
-            print(i, alpha, a[0].shape)

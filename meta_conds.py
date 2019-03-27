@@ -1,80 +1,71 @@
 import math
 import numpy as np
-import sklearn as sklearn
 from sklearn.decomposition import FastICA
 from sklearn.cross_decomposition import CCA
+
+
+def normalize(v):
+    norm = np.linalg.norm(v, keepdims=True, axis=-1)
+    if norm == 0:
+        return v
+    return v / norm
+
+
+def fast_ica(signal, o1_channel_id, o2_channel_id):
+    Cs = []
+    o_components = []
+    num_of_channels = signal.shape[1]
+    for entity in signal:
+        transformer = FastICA(random_state=0)
+        C = transformer.fit_transform(np.transpose(entity))
+        C = np.transpose(C)
+        Cs.append(C)
+        corr = np.absolute(np.corrcoef(np.concatenate((signal, C), axis=0)))
+        corr = corr[:num_of_channels, num_of_channels:]
+        corr = (corr[o1_channel_id, :] + corr[o2_channel_id, :]) / 2
+        o_components.append(np.argmax(corr))
+    return Cs, o_components
 
 
 def eye_state(signal, signal_frequency, o1_channel_id=2, o2_channel_id=3, overlap=0.5):
     # signal = (batch_size, num_channels, num_samples)
     delta_t = 2 * signal_frequency
+    batch_size = signal.shape[0]
     step = int(math.floor(delta_t * overlap))
-    pass
-
-
-def eye_closure_detection(signal, signal_frequency, o1_channel_id=2, o2_channel_id=3):
-    # signal = [n_channels, n_samples]
-    # TODO batchify this
-    overlap = 0.5
-    delta_t = 2 * signal_frequency
-    step = np.floor(delta_t * overlap)
-    step = step.astype('int32')
     min_frequency = 3
     min_freq_alpha = 7
     max_freq_alpha = 13
-    num_of_channels = signal.shape[0]
-    alpha_mode = False
     delta_f_cca = np.floor((min_freq_alpha + max_freq_alpha) / 2 - min_frequency - 1) / 3
     freqs = np.array([min_frequency + 1, min_frequency + 1 + delta_f_cca, min_frequency + 1 + 2 * delta_f_cca,
                       (min_freq_alpha + max_freq_alpha) / 2, max_freq_alpha + delta_f_cca])
-    signal = sklearn.preprocessing.normalize(signal, norm='l2', axis=1, copy=True, return_norm=False)
+    signal = normalize(signal)
     res_size = 0
     for l in range(0, signal.shape[1] - delta_t, step):
         res_size += 1
-    # ICA
-    transformer = FastICA(random_state=0)
-    C = transformer.fit_transform(np.transpose(signal))
-    C = np.transpose(C)
-    corr = np.absolute(np.corrcoef(np.concatenate((signal, C), axis=0)))
-    corr = corr[:num_of_channels, num_of_channels:]
-    corr = (corr[o1_channel_id, :] + corr[o2_channel_id, :]) / 2
-    o_component = np.argmax(corr)
-
-    # CCA
-
+    Cs, o_components = fast_ica(signal, o1_channel_id, o2_channel_id)
     t = np.arange(0, delta_t) / signal_frequency
     sin1 = [np.sin(2 * np.pi * freqs[0] * t)]
     sin2 = [np.sin(2 * np.pi * freqs[1] * t)]
     sin3 = [np.sin(2 * np.pi * freqs[2] * t)]
     sin4 = [np.sin(2 * np.pi * freqs[3] * t)]
     sin5 = [np.sin(2 * np.pi * freqs[4] * t)]
-
     SIN = np.concatenate((sin1, sin2, sin3, sin4, sin5), axis=0)
+    res_shape = (batch_size, res_size)
+    alpha_label = np.zeros(res_shape)
+    alpha_label_adaptive = np.zeros(res_shape)
+    alpha_label_3level = np.zeros(res_shape)
+    FFT = np.fft.fft(signal[:, [o1_channel_id, o2_channel_id], :], axis=2)
+    f = np.absolute(signal_frequency * np.fft.fftfreq(FFT.shape[1]))
+    FFT = FFT[:, np.argwhere(f >= min_frequency)[0][0]: FFT.shape[1] / 2]
+    f = f[np.argwhere(f >= min_frequency)[0][0]: FFT.shape[1] / 2]
+    idx = np.argmax(np.abs(FFT), axis=1)
+    main_freq_o1_o2 = f[idx]
+    alpha_mode = np.mean([main_freq_o1_o2[:, 0], main_freq_o1_o2[:, 1]]) >= min_freq_alpha and np.mean(
+            [main_freq_o1_o2[:, 0], main_freq_o1_o2[:, 1]]) <= max_freq_alpha
 
-    alpha_label = np.zeros((res_size,))
-    alpha_label_adaptive = np.zeros((res_size,))
-    alpha_label_3level = np.zeros((res_size,))
 
-    # whole signal main frquency
-    # TODO batchify these two
-    FFT = np.fft.fft(signal[o1_channel_id, :])
-    f = np.absolute(signal_frequency * np.fft.fftfreq(len(FFT)))
-    FFT = FFT[np.argwhere(f >= min_frequency)[0][0]: len(FFT) / 2]
-    f = f[np.argwhere(f >= min_frequency)[0][0]: len(FFT) / 2]
-    idx = np.argmax(np.abs(FFT))
-    main_freq_o1 = f[idx]
-
-    FFT = np.fft.fft(signal[o2_channel_id, :])
-    f = np.absolute(signal_frequency * np.fft.fftfreq(len(FFT)))
-    FFT = FFT[np.argwhere(f >= min_frequency)[0][0]: len(FFT) / 2]
-    f = f[np.argwhere(f >= min_frequency)[0][0]: len(FFT) / 2]
-    idx = np.argmax(np.abs(FFT))
-    main_freq_o2 = f[idx]
-
-    if np.mean([main_freq_o1, main_freq_o2]) >= min_freq_alpha and np.mean(
-            [main_freq_o1, main_freq_o2]) <= max_freq_alpha:
-        alpha_mode = True
-
+def eye_closure_detection(signal, signal_frequency, o1_channel_id=2, o2_channel_id=3):
+    # signal = [n_channels, n_samples]
     # TODO batchify this
     for kk, l in enumerate(range(0, signal.shape[1] - delta_t, step)):
         # ICA temporal
