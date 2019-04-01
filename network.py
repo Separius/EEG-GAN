@@ -9,8 +9,6 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, Pass
 
 
 class GBlock(nn.Module):
-    # layer_settings = dict(z_to_bn_size=0, equalized=True, spectral=False, init='kaiming_normal',
-    #           act_alpha=0.2, do=0, num_classes=0, act_norm=None, bias=True, separable=False)
     def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None, is_residual=False, no_tanh=False,
                  deep=False, per_channel_noise=False, to_rgb_mode='pggan', **layer_settings):
         super().__init__()
@@ -80,13 +78,13 @@ class GBlock(nn.Module):
         return h
 
 
-class NeoGenerator(nn.Module):
+class Generator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable, equalized,
                  spectral, init, act_alpha, z_distribution, latent_size=256, no_tanh=False, deep=False,
                  per_channel_noise=False, to_rgb_mode='pggan', z_to_bn=False, split_z=False, dropout=0.2, num_classes=0,
                  act_norm='pixel', conv_only=False, shared_embedding_size=32, concat_conditioning=False,
-                 normalize_latents=True):
+                 normalize_latents=True, rgb_generation_mode='pggan'):
         super().__init__()
         R = len(progression_scale_up)
         self.progression_scale_up = progression_scale_up
@@ -142,12 +140,17 @@ class NeoGenerator(nn.Module):
         self.blocks = nn.ModuleList(
             [GBlock(nf(i + 1) + extra_input, nf(i + 2), **block_settings, **layer_settings) for i in range(R)])
         self.max_depth = len(self.blocks)
+        self.deep = deep
+        self.rgb_generation_mode = rgb_generation_mode
 
     def _cat_z(self, l, y, z):
         if not self.split_z:
             return y
-        z_slice = z[:, (2 + l) * self.latent_size:(3 + l) * self.latent_size, None]
-        return z_slice if y is None else torch.cat([y, z_slice.repeat(1, 1, y.shape[2])], dim=1)
+        if self.deep:
+            z_slice = z
+        else:
+            z_slice = z[:, (2 + l) * self.latent_size:(3 + l) * self.latent_size]
+        return z_slice if y is None else torch.cat([y, resample_signal(z_slice, z_slice.size(2), y.size(2))], dim=1)
 
     def do_layer(self, l, h, y, z):
         if l in self.self_attention:
@@ -157,6 +160,30 @@ class NeoGenerator(nn.Module):
         h = resample_signal(h, self.progression_scale_down[l], self.progression_scale_up[l], True)
         return self.blocks[l](h, self._cat_z(l, y, z), False), attention_map
 
+    def combine_rgbs(self, saved_rgbs):
+        if self.rgb_generation_mode == 'msg':
+            return saved_rgbs
+        if self.rgb_generation_mode == 'residual':
+            return_value = saved_rgbs[0]
+            for rgb in saved_rgbs[1:]:
+                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
+            if self.alpha == 1.0:
+                return return_value
+            else:
+                return return_value - (1.0 - self.alpha) * saved_rgbs[-1]
+        if self.rgb_generation_mode == 'mean':
+            return_value = saved_rgbs[0]
+            for rgb in saved_rgbs[1:]:
+                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
+            return_value = return_value / len(saved_rgbs)
+            if self.alpha == 1.0:
+                return return_value
+            else:
+                return (return_value * len(saved_rgbs) - saved_rgbs[-1]) / (len(saved_rgbs) - 1) * (
+                        1.0 - self.alpha) + return_value * self.alpha
+        else:
+            return None
+
     def forward(self, z, y=None):
         if y is not None:
             if y.ndimension() == 2:
@@ -165,27 +192,40 @@ class NeoGenerator(nn.Module):
                 y = self.y_encoder(y)
             else:
                 y = None
-        # WIP
         if self.normalize_latents:
             z = pixel_norm(z)
-        h = z.unsqueeze(2)
-        if self.split_z:
-            h = h[:, :self.latent_size, :]
-        h = self.block0(h, self._cat_z(-1, y, z), self.depth == 0)
+        if z.ndimmension() == 2:
+            z = z.unsqueeze(2)
+        if self.split_z and not self.deep:
+            h = z[:, :self.latent_size, :]
+        else:
+            h = z
+        save_rgb = self.rgb_generation_mode != 'pggan'
+        saved_rgbs = []
         if self.depth == 0:
-            return h, {}
+            h = self.block0(h, self._cat_z(-1, y, z), True)
+            if save_rgb:
+                saved_rgbs.append(h)
+            return h, {}, self.combine_rgbs(saved_rgbs)
+        h = self.block0(h, self._cat_z(-1, y, z))
+        if save_rgb:
+            saved_rgbs.append(self.block0.toRGB(h))
         all_attention_maps = {}
         for i in range(self.depth - 1):
             h, attention_map = self.do_layer(i, h, y, z)
+            if save_rgb:
+                saved_rgbs.append(self.blocks[i].toRGB(h))
             if attention_map is not None:
                 all_attention_maps[i] = attention_map
         h = resample_signal(h, self.progression_scale_down[self.depth - 1], self.progression_scale_up[self.depth - 1],
                             True)
         ult = self.blocks[self.depth - 1](h, self._cat_z(self.depth - 1, y, z), True)
+        if save_rgb:
+            saved_rgbs.append(ult)
         if self.alpha == 1.0:
-            return ult, all_attention_maps
+            return ult, all_attention_maps, self.combine_rgbs(saved_rgbs)
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
-        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha, all_attention_maps
+        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha, all_attention_maps, self.combine_rgbs(saved_rgbs)
 
 
 class DBlock(nn.Module):
@@ -354,73 +394,3 @@ class Discriminator(nn.Module):
                 emb = self.class_emb(y)
                 cond_loss = cond_loss + (emb * h.squeeze()).sum(dim=1)
         return o + cond_loss, h, all_attention_maps
-
-
-if __name__ == '__main__':
-    a = Generator(32, 5, 2048, 128, 32, 3, True, [], [4, 2, 2, 3, 4, 5, 3], [1, 1, 1, 2, 3, 4, 2],
-                  'kaiming_normal', 0.2, False, False, False, 'normal', 5, act_norm='batch', split_z=False)
-    z = {'z': torch.randn(3, 256), 'global_1': torch.randn(3, 2), 'global_2': torch.randn(3, 1),
-         'temporal_1': torch.randn(3, 1, 32), 'temporal_2': torch.randn(3, 1, 256)}
-    for i in range(8):
-        a.depth = i
-        print(a(z)[0].shape)
-
-    a = Generator(32, 5, 2048, 128, 32, 3, True, [], [4, 2, 2, 3, 4, 5, 3], [1, 1, 1, 2, 3, 4, 2],
-                  'kaiming_normal', 0.2, False, False, False, 'normal', 0, act_norm='pixel', split_z=False)
-    z = {'z': torch.randn(3, 256)}
-    for i in range(8):
-        a.depth = i
-        print(a(z)[0].shape)
-    a = Discriminator(32, 5, 512, 512, 2, 3, True, [], [4, 2, 2, 3, 4, 5, 3], [1, 1, 1, 2, 3, 4, 2],
-                      'kaiming_normal', 0.2, False, False, False, 4, {'temporal_1': 1, 'temporal_2': 2})
-    x = {'x': torch.randn(3, 5, 32), 'global_1': torch.randn(3, 4), 'temporal_1': torch.randn(3, 1, 64),
-         'temporal_2': torch.randn(3, 2, 512)}
-    print(0, a(x)[0].shape)
-
-    x['x'] = torch.randn(3, 5, 32 * 4)  # 128
-    a.depth = 1
-    print(1, a(x)[0].shape)
-    a.alpha = 0.5
-    print(0.5, a(x)[0].shape)
-
-    a.alpha = 1.0
-    a.depth = 2
-    x['x'] = torch.randn(3, 5, 32 * 4 * 2)  # 256
-    print(2, a(x)[0].shape)
-    a.alpha = 0.5
-    print(1.5, a(x)[0].shape)
-
-    a.depth = 3
-    x['x'] = torch.randn(3, 5, 32 * 4 * 2 * 2)  # 512
-    a.alpha = 0.5
-    print(2.5, a(x)[0].shape)
-    a.alpha = 1.0
-    print(3, a(x)[0].shape)
-
-    a.depth = 4
-    x['x'] = torch.randn(3, 5, 32 * 4 * 2 * 3)  # 768
-    a.alpha = 0.5
-    print(3.5, a(x)[0].shape)
-    a.alpha = 1.0
-    print(4, a(x)[0].shape)
-
-    a.depth = 5
-    x['x'] = torch.randn(3, 5, 32 * 4 * 2 * 4)  # 1024
-    a.alpha = 0.5
-    print(4.5, a(x)[0].shape)
-    a.alpha = 1.0
-    print(5, a(x)[0].shape)
-
-    a.depth = 6
-    x['x'] = torch.randn(3, 5, 32 * 4 * 2 * 5)  # 1280
-    a.alpha = 0.5
-    print(5.5, a(x)[0].shape)
-    a.alpha = 1.0
-    print(6, a(x)[0].shape)
-
-    a.depth = 7
-    x['x'] = torch.randn(3, 5, 32 * 4 * 3 * 5)  # 1920
-    a.alpha = 0.5
-    print(6.5, a(x)[0].shape)
-    a.alpha = 1.0
-    print(7, a(x)[0].shape)

@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
 
-from utils import pixel_norm, resample_signal
+from utils import pixel_norm, resample_signal, expand3d
 
 
 class PixelNorm(nn.Module):
@@ -118,12 +118,11 @@ class ConditionalBatchNorm(nn.Module):
         if self.mode == 'CBN':
             cond = y
         else:
-            if z.ndimension() == 2:
-                cond = z.unsqueeze(2)
-            else:
-                cond = z
             if self.mode == 'CSM':
-                cond = torch.cat([cond.repeat(1, 1, y.size(2) // cond.size(2)), y], dim=1)
+                z = expand3d(z)
+                cond = torch.cat([resample_signal(z, z.size(2), y.size(2)), y], dim=1)
+            else:
+                cond = expand3d(z)
         embed = self.embed(cond)  # B, num_features*2, Ty
         embed = resample_signal(embed, embed.shape[2], x.shape[2], pytorch=True)
         gamma, beta = embed.chunk(2, dim=1)

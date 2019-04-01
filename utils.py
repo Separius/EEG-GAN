@@ -203,16 +203,29 @@ def downsample_signal(signal, downsample_factor):
     return F.avg_pool1d(signal, downsample_factor, downsample_factor, 0, False, True)
 
 
+def expand3d(signal):
+    orig_dim = signal.dim()
+    if orig_dim == 2:
+        return signal[None]
+    if orig_dim == 1:
+        return signal[None, None]
+    return signal
+
+
 def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
     if isinstance(signal, np.ndarray):
         new_signal = torch.from_numpy(signal)
     else:
         new_signal = signal
     orig_dim = new_signal.dim()
-    if orig_dim == 2:
-        new_signal = new_signal[None]
-    if orig_dim == 1:
-        new_signal = new_signal[None, None]
+    if orig_dim <= 3 or signal.shape[2] == 1:
+        if orig_dim == 2:
+            new_signal = new_signal[None]
+        if orig_dim == 1:
+            new_signal = new_signal[None, None]
+        ratio = desired_freq / signal_freq
+        assert ratio == int(ratio)
+        return new_signal.repeat(1, 1, int(ratio))
     if isinstance(desired_freq, float):
         if desired_freq == int(desired_freq) and signal_freq == int(signal_freq):
             desired_freq = int(desired_freq)
