@@ -98,7 +98,7 @@ class ConditionalBatchNorm(nn.Module):
                                      act_alpha=-1, spectral=spectral, bias=False)
             self.mode = 'CBN'  # conditional batch norm
         else:  # both 'SM'(self modulation) and 'CSM'(conditional self modulation)
-            # TODO maybe reduce it to a single layer linear network
+            # NOTE maybe reduce it to a single layer linear network?
             self.embed = nn.Sequential(
                 GeneralConv(latent_size + num_classes, num_features * 2, kernel_size=1,
                             equalized=False, act_alpha=0.0, spectral=spectral, bias=True),
@@ -107,7 +107,7 @@ class ConditionalBatchNorm(nn.Module):
             if num_classes == 0:
                 self.mode = 'SM'  # self modulation
             else:
-                self.mode = 'CSM'  # conditional self modulation
+                self.mode = 'CSM'  # conditional self modulation(biggan)
 
     def forward(self, x, y, z):  # y = B*num_classes*Ty ; x = B*num_features*Tx ; z = B*latent_size
         out = self.normalizer(x)
@@ -120,11 +120,11 @@ class ConditionalBatchNorm(nn.Module):
         else:
             if self.mode == 'CSM':
                 z = expand3d(z)
-                cond = torch.cat([resample_signal(z, z.size(2), y.size(2)), y], dim=1)
+                cond = torch.cat([resample_signal(z, z.size(2), y.size(2), pytorch=True), y], dim=1)
             else:
                 cond = expand3d(z)
         embed = self.embed(cond)  # B, num_features*2, Ty
-        embed = resample_signal(embed, embed.shape[2], x.shape[2], pytorch=True)
+        embed = resample_signal(embed, embed.shape[2], out.shape[2], pytorch=True)
         gamma, beta = embed.chunk(2, dim=1)
         return out + gamma * out + beta  # trick to make sure gamma is 1.0 at the beginning of the training
 
@@ -170,9 +170,9 @@ class EqualizedConv1d(nn.Module):
 
 
 class GeneralConv(nn.Module):
-    def __init__(self, in_channels, out_channels, z_to_bn_size=0, kernel_size=3, equalized=True, pad=None,
-                 act_alpha=0.2, do=0, num_classes=0, act_norm=None, spectral=False, init='kaiming_normal', bias=True,
-                 separable=False, stride=1):
+    def __init__(self, in_channels, out_channels, z_to_bn_size=0, kernel_size=3, equalized=True,
+                 pad=None, act_alpha=0.2, do=0, num_classes=0, act_norm=None, spectral=False,
+                 init='kaiming_normal', bias=True, separable=False, stride=1):
         super().__init__()
         pad = (kernel_size - 1) // 2 if pad is None else pad
         if separable:
@@ -199,7 +199,7 @@ class GeneralConv(nn.Module):
             self.net.append(GDropLayer(strength=do))
         self.net = nn.Sequential(*self.net)
 
-    def forward(self, x, y=None, z=None, conv_noise=None, *args, **kwargs):
+    def forward(self, x, y=None, z=None, conv_noise=None):
         c = self.conv(x)
         if conv_noise is not None:
             c = c * conv_noise
