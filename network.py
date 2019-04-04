@@ -81,9 +81,9 @@ class GBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
-                 equalized, spectral, init, act_alpha, z_distribution, latent_size=256, no_tanh=False,
-                 deep=False, per_channel_noise=False, to_rgb_mode='pggan', z_to_bn=False, split_z=False,
-                 dropout=0.2, num_classes=0, act_norm='pixel', conv_only=False, shared_embedding_size=32,
+                 equalized, spectral, init, act_alpha, num_classes, deep, z_distribution='normal',
+                 latent_size=256, no_tanh=False, per_channel_noise=False, to_rgb_mode='pggan', z_to_bn=False,
+                 split_z=False, dropout=0.2, act_norm='pixel', conv_only=False, shared_embedding_size=32,
                  normalize_latents=True, rgb_generation_mode='pggan'):
         """
         :param initial_kernel_size: int, this should be always correct regardless of conv_only
@@ -111,7 +111,7 @@ class Generator(nn.Module):
         :param split_z: bool
         :param dropout: float
         :param num_classes: int, input y.shape == (batch_size, num_classes, T_y)
-        :param act_norm: 'batch' or 'pixel'
+        :param act_norm: 'batch' or 'pixel' or None
         :param conv_only: bool
         :param shared_embedding_size: int, in case it's none zero, y will be transformed to (batch_size, shared_embedding_size, T_y)
         :param normalize_latents: bool
@@ -124,7 +124,7 @@ class Generator(nn.Module):
         self.progression_scale_down = progression_scale_down
         self.depth = 0
         self.alpha = 1.0
-        if self.deep:
+        if deep:
             split_z = False
         self.split_z = split_z
         self.z_distribution = z_distribution
@@ -208,7 +208,6 @@ class Generator(nn.Module):
         return None
 
     def forward(self, z, y=None):
-        # block(x, y=None, z=None, last=False)
         if y is not None:
             if y.ndimension() == 2:
                 y = y.unsqueeze(2)
@@ -231,7 +230,7 @@ class Generator(nn.Module):
             if save_rgb:
                 saved_rgbs.append(h)
             return h, {}, self._combine_rgbs(saved_rgbs)
-        h = self.block0(h, y, self._cat_z(-1, z))
+        h = self.block0(h, y, self._split_z(-1, z))
         if save_rgb:
             saved_rgbs.append(self.block0.toRGB(h))
         all_attention_maps = {}
@@ -253,8 +252,6 @@ class Generator(nn.Module):
 
 
 class DBlock(nn.Module):
-    # layer_settings = dict(equalized=True, spectral=False, init='kaiming_normal',
-    #           act_alpha=0.2, do=0, num_classes=0, act_norm=None, bias=True, separable=False)
     def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None, is_residual=False,
                  deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, **layer_settings):
         super().__init__()
@@ -265,17 +262,15 @@ class DBlock(nn.Module):
         hidden_size = (ch_out // 4) if deep else ch_in
         self.net.append(
             GeneralConv(ch_in + (1 if is_last else 0), hidden_size, kernel_size=k_size, **layer_settings))
-        is_linear_last = is_last and not conv_disc
-        self.net.append(GeneralConv(hidden_size, hidden_size if deep else ch_out,
-                                    kernel_size=initial_kernel_size if is_linear_last else k_size,
-                                    pad=0 if is_linear_last else None, **layer_settings))
         if deep:
             self.net.append(
                 GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings))
             self.net.append(
-                GeneralConv(hidden_size, ch_out, kernel_size=k_size, **layer_settings))
+                GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings))
+        is_linear_last = is_last and not conv_disc
+        self.net.append(GeneralConv(hidden_size, ch_out, kernel_size=initial_kernel_size if is_linear_last else k_size,
+                                    pad=0 if is_linear_last else None, **layer_settings))
         self.net = nn.Sequential(*self.net)
-        self.is_last = initial_kernel_size
         reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['equalized'],
                                       init=layer_settings['equalized'])
         self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
@@ -283,7 +278,7 @@ class DBlock(nn.Module):
         if deep:
             self.residual = ConcatResidual(ch_in, ch_out, **reduced_layer_settings)
         else:
-            if is_residual and not is_last:
+            if is_residual and (not is_last or conv_disc):
                 self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
                                                                                     act_alpha=-1,
                                                                                     **reduced_layer_settings)
@@ -296,94 +291,83 @@ class DBlock(nn.Module):
             x = self.fromRGB(x)
         h = self.net(x)
         if self.deep:
-            return self.residual(x, h)
+            return self.residual(h, x)
         if self.residual:
             h = h + self.residual(x)
         return h
 
 
 class Discriminator(nn.Module):
-    def __init__(self, initial_kernel_size, num_channels, fmap_base, fmap_max, fmap_min, kernel_size, equalized,
-                 self_attention_layers, progression_scale_up, progression_scale_down, init, act_alpha,
-                 residual, sagan_non_local, factorized_attention, global_conds, temporal_conds, sngan_rgb: bool = False,
-                 dropout: float = 0.2, spectral: bool = False, act_norm: Optional[str] = None, group_size: int = 4):
-        # temporal_conds = {'temporal_1': 3, 'temporal_2': 1, ...}
+    def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                 self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                 equalized, spectral, init, act_alpha, num_classes, deep, dropout=0.2, act_norm=None,
+                 group_size=4, temporal_groups_per_window=1, conv_only=False):  # TODO use rgb_out[]
+        """
+        NOTE we only support global conidtioning(not temporal) for now
+        :param initial_kernel_size:
+        :param num_rgb_channels:
+        :param fmap_base:
+        :param fmap_max:
+        :param fmap_min:
+        :param kernel_size:
+        :param self_attention_layers:
+        :param progression_scale_up:
+        :param progression_scale_down:
+        :param residual:
+        :param separable:
+        :param equalized:
+        :param spectral:
+        :param init:
+        :param act_alpha:
+        :param num_classes:
+        :param deep:
+        :param dropout:
+        :param act_norm:
+        :param group_size:
+        :param temporal_groups_per_window:
+        :param conv_only:
+        """
         super().__init__()
         R = len(progression_scale_up)
+        assert len(progression_scale_up) == len(progression_scale_down)
         self.progression_scale_up = progression_scale_up
         self.progression_scale_down = progression_scale_down
+        self.depth = 0
+        self.alpha = 1.0
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
 
-        layer_settings = dict(do=dropout, act_norm=act_norm)
-        last_block = DBlock(nf(1), nf(0), num_channels, initial_kernel_size=initial_kernel_size, ksize=kernel_size,
-                            equalized=equalized, is_residual=residual, group_size=group_size, act_alpha=act_alpha,
-                            spectral=spectral, sngan_rgb=sngan_rgb, init=init, **layer_settings)
+        layer_settings = dict(equalized=equalized, spectral=spectral, init=init, act_alpha=act_alpha,
+                              do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
+        block_settings = dict(ch_rgb=num_rgb_channels, k_size=kernel_size, is_residual=residual, conv_disc=conv_only,
+                              group_size=group_size, temporal_groups_per_window=temporal_groups_per_window, deep=deep)
+
+        last_block = DBlock(nf(1), nf(0), initial_kernel_size=initial_kernel_size, **block_settings, **layer_settings)
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
-            dummy.append(SelfAttention(nf(layer + 1), sagan_non_local, spectral, factorized_attention, init))
+            dummy.append(SelfAttention(nf(layer + 1), spectral, init))
             self.self_attention[layer] = dummy[-1]
-        self.dummy = nn.ModuleList(dummy)
-        self.blocks = nn.ModuleList([DBlock(nf(i + 2), nf(i + 1), num_channels, ksize=kernel_size, equalized=equalized,
-                                            initial_kernel_size=None, is_residual=residual, group_size=group_size,
-                                            act_alpha=act_alpha, spectral=spectral, init=init, sngan_rgb=sngan_rgb,
-                                            **layer_settings) for i in range(R - 1, -1, -1)] + [last_block])
-        if global_conds != 0:
-            self.class_emb = nn.Linear(global_conds, nf(0), False)
+        if len(dummy):
+            self.dummy = nn.ModuleList(dummy)
+        self.blocks = nn.ModuleList(
+            [DBlock(nf(i + 2), nf(i + 1), **block_settings, **layer_settings) for i in range(R - 1, -1, -1)] + [
+                last_block])
+
+        if num_classes != 0:
+            self.class_emb = nn.Linear(num_classes, nf(0), False)
             if spectral:
                 self.class_emb = spectral_norm(self.class_emb)
         else:
             self.class_emb = None
-        self.linear = GeneralConv(nf(0), 1, kernel_size=1, equalized=equalized, act_alpha=-1, spectral=spectral,
-                                  init=init)
-        self.depth = 0
-        self.alpha = 1.0
+        self.linear = GeneralConv(nf(0), 1, kernel_size=1, equalized=equalized, act_alpha=-1,
+                                  spectral=spectral, init=init)
         self.max_depth = len(self.blocks) - 1
-        self.output_sizes = [initial_kernel_size]
-        for u, d in zip(self.progression_scale_up, self.progression_scale_down):
-            self.output_sizes.append(int(self.output_sizes[-1] * u / d))
-        self.temporal_condition_emb = nn.ModuleDict()
-        for k, v in temporal_conds.items():
-            module_list = nn.ModuleList(
-                [GeneralConv(v, nf(i + 1), kernel_size=1, equalized=False, act_alpha=-1, spectral=spectral, init=init)
-                 for i in range(R - 1, -2, -1)])
-            self.temporal_condition_emb[k] = module_list
 
-    def find_appropriate_layer(self, cond):
-        cond_length = cond.shape[2]
-        for i, o in enumerate(self.output_sizes):
-            if cond_length <= o:
-                return i
-            if i == self.depth:
-                return i
-        assert False, 'we should not reach here'
-
-    def forward(self, x):
-        if isinstance(x, dict):
-            x, y = x['x'], x
-        else:
-            y = None
-        layer_to_conds = {}
-        if y is not None:
-            for k, v in y.items():
-                if k.startswith('temporal_'):
-                    l = len(self.blocks) - self.find_appropriate_layer(v) - 1
-                    if l in layer_to_conds:
-                        layer_to_conds[l].append(k)
-                    else:
-                        layer_to_conds[l] = [k]
-        cond_loss = 0
+    def forward(self, x, y=None):
         xhighres = x
         h = self.blocks[-(self.depth + 1)](xhighres, True)
-        current_layer = len(self.blocks) - self.depth - 1
-        if current_layer in layer_to_conds:
-            for cond in layer_to_conds[current_layer]:
-                # TODO instead of changing y(class) -> y_emb / change d_this_layer -> y_dim (like super res)
-                current_emb = self.temporal_condition_emb[cond][current_layer](y[cond])
-                current_emb = resample_signal(current_emb, current_emb.shape[2], h.shape[2], True)
-                cond_loss = cond_loss + (current_emb * h).sum(dim=1).mean(dim=1)
         if self.depth > 0:
             h = resample_signal(h, self.progression_scale_up[self.depth - 1],
                                 self.progression_scale_down[self.depth - 1], True)
@@ -395,28 +379,18 @@ class Discriminator(nn.Module):
         all_attention_maps = {}
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
-            current_layer = len(self.blocks) - i
-            if current_layer in layer_to_conds:
-                for cond in layer_to_conds[current_layer]:
-                    current_emb = self.temporal_condition_emb[cond][current_layer](y[cond])
-                    current_emb = resample_signal(current_emb, current_emb.shape[2], h.shape[2], True)
-                    cond_loss = cond_loss + (current_emb * h).sum(dim=1).mean(dim=1)
             if i > 1:
                 h = resample_signal(h, self.progression_scale_up[i - 2], self.progression_scale_down[i - 2], True)
             if (i - 2) in self.self_attention:
                 h, attention_map = self.self_attention[i - 2](h)
                 if attention_map is not None:
                     all_attention_maps[i] = attention_map
-        print('debug.disc_h_size', h.shape)
         o = self.linear(h).mean(dim=2).squeeze()
         if y is not None:
-            y = [v for k, v in y.items() if k.startswith('global_')]
-            if len(y) > 0:
-                y = torch.cat(y, dim=1)
-                if y.dim() >= 3:
-                    raise ValueError()
-                emb = self.class_emb(y)
-                cond_loss = cond_loss + (emb * h.squeeze()).sum(dim=1)
+            emb = self.class_emb(y)
+            cond_loss = (emb * h.squeeze()).sum(dim=1)
+        else:
+            cond_loss = 0.0
         return o + cond_loss, h, all_attention_maps
 
 
@@ -428,26 +402,26 @@ def main():
     fmap_min = 32
     kernel_size = 3
     self_attention_layers = []
-    progression_scale_up = [4, 3, 2]
-    progression_scale_down = [3, 1, 1]
-    residual = False
+    progression_scale_up = [3, 4, 2]
+    progression_scale_down = [1, 3, 1]
+    residual = True
     separable = False
     equalized = True
     spectral = False
     init = 'orthogonal'
     act_alpha = 0.2
     z_distribution = 'normal'
-    latent_size = 256
+    latent_size = 64
     no_tanh = False
-    deep = False
-    per_channel_noise = False
+    deep = True
+    per_channel_noise = True
     to_rgb_mode = 'pggan'
-    z_to_bn = False
+    z_to_bn = True
     split_z = False
     dropout = 0.2
     num_classes = 0
-    act_norm = 'pixel'
-    conv_only = False
+    act_norm = 'batch'
+    conv_only = True
     shared_embedding_size = 32
     normalize_latents = True
     rgb_generation_mode = 'pggan'
@@ -456,7 +430,6 @@ def main():
                   spectral, init, act_alpha, z_distribution, latent_size, no_tanh, deep, per_channel_noise, to_rgb_mode,
                   z_to_bn, split_z, dropout, num_classes, act_norm, conv_only, shared_embedding_size, normalize_latents,
                   rgb_generation_mode)
-    print(g(torch.randn(4, 256))[0].shape)
 
 
 if __name__ == '__main__':

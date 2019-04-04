@@ -113,7 +113,7 @@ class ConditionalBatchNorm(nn.Module):
         out = self.normalizer(x)
         if self.mode == 'BN':
             return out
-        if y.ndimension() == 2:
+        if y is not None and y.ndimension() == 2:
             y = y.unsqueeze(2)
         if self.mode == 'CBN':
             cond = y
@@ -216,16 +216,20 @@ class PassChannelResidual(nn.Module):
         if x.size(1) >= y.size(1):
             x[:, :y.size(1)] = x[:, :y.size(1)] + y
             return x
-        else:
-            y[:, :x.size(1)] = y[:, :x.size(1)] + x
-            return y
+        return y[:, :x.size(1)] + x
 
 
 class ConcatResidual(nn.Module):
     def __init__(self, ch_in, ch_out, equalized, spectral, init):
         super().__init__()
-        self.net = GeneralConv(ch_in, ch_out - ch_in, kernel_size=1,
-                               equalized=equalized, act_alpha=-1, spectral=spectral, init=init)
+        assert ch_out >= ch_in
+        if ch_out > ch_in:
+            self.net = GeneralConv(ch_in, ch_out - ch_in, kernel_size=1, equalized=equalized, act_alpha=-1,
+                                   spectral=spectral, init=init)
+        else:
+            self.net = None
 
-    def forward(self, x, h):
-        return h + torch.cat([x, self.net(x)], dim=1)
+    def forward(self, h, x):
+        if self.net:
+            return h + torch.cat([x, self.net(x)], dim=1)
+        return h + x
