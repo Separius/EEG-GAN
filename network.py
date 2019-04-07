@@ -79,7 +79,7 @@ class GBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
-                 equalized, spectral, init, act_alpha, num_classes, deep, z_distribution='normal',
+                 equalized, init, act_alpha, num_classes, deep, spectral=False, z_distribution='normal',
                  latent_size=256, no_tanh=False, per_channel_noise=False, to_rgb_mode='pggan', z_to_bn=False,
                  split_z=False, dropout=0.2, act_norm='pixel', conv_only=False, shared_embedding_size=32,
                  normalize_latents=True, rgb_generation_mode='pggan'):
@@ -298,7 +298,7 @@ class DBlock(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
-                 equalized, spectral, init, act_alpha, num_classes, deep, dropout=0.2, act_norm=None,
+                 equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
                  group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False):
         """
         NOTE we only support global conidtioning(not temporal) for now
@@ -386,7 +386,7 @@ class Discriminator(nn.Module):
                 if self.input_to_all_layers:
                     x_lowres = resample_signal(x_lowres, self.progression_scale_up[i - 2],
                                                self.progression_scale_down[i - 2], True)
-                    h = (h + self.blocks[-i - 1].fromRGB(x_lowres)) / 2.0
+                    h = (h + self.blocks[-i + 1].fromRGB(x_lowres)) / 2.0
             if (i - 2) in self.self_attention:
                 h, attention_map = self.self_attention[i - 2](h)
                 if attention_map is not None:
@@ -404,38 +404,49 @@ def main():
     initial_kernel_size = 8
     num_rgb_channels = 3
     fmap_base = 256
-    fmap_max = 128
-    fmap_min = 32
+    fmap_max = 256
+    fmap_min = 8
     kernel_size = 3
     self_attention_layers = []
     progression_scale_up = [3, 4, 2]
     progression_scale_down = [1, 3, 1]
     residual = True
-    separable = False
+    separable = True
     equalized = True
     spectral = False
     init = 'orthogonal'
     act_alpha = 0.2
-    z_distribution = 'normal'
-    latent_size = 64
-    no_tanh = False
-    deep = True
-    per_channel_noise = True
-    to_rgb_mode = 'pggan'
-    z_to_bn = True
-    split_z = False
-    dropout = 0.2
     num_classes = 0
+    deep = False
+    # z_distribution = 'normal'
+    # latent_size = 64
+    # no_tanh = False
+    # per_channel_noise = True
+    # to_rgb_mode = 'pggan'
+    # z_to_bn = True
+    # split_z = False
+    dropout = 0.2
     act_norm = 'batch'
+    # conv_only = True
+    # shared_embedding_size = 32
+    # normalize_latents = True
+    # rgb_generation_mode = 'pggan'
+    group_size = 4
+    temporal_groups_per_window = 2
     conv_only = True
-    shared_embedding_size = 32
-    normalize_latents = True
-    rgb_generation_mode = 'pggan'
-    g = Generator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
-                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable, equalized,
-                  spectral, init, act_alpha, num_classes, deep, z_distribution, latent_size, no_tanh, per_channel_noise,
-                  to_rgb_mode, z_to_bn, split_z, dropout, act_norm, conv_only, shared_embedding_size, normalize_latents,
-                  rgb_generation_mode)
+    input_to_all_layers = False
+    # g = Generator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+    #               self_attention_layers, progression_scale_up, progression_scale_down, residual, separable, equalized,
+    #               spectral, init, act_alpha, num_classes, deep, z_distribution, latent_size, no_tanh, per_channel_noise,
+    #               to_rgb_mode, z_to_bn, split_z, dropout, act_norm, conv_only, shared_embedding_size, normalize_latents,
+    #               rgb_generation_mode)
+    d = Discriminator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                      self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                      equalized, spectral, init, act_alpha, num_classes, deep, dropout, act_norm,
+                      group_size, temporal_groups_per_window, conv_only, input_to_all_layers)
+    d.alpha = 1.0
+    d.depth = 3
+    print(d(torch.randn(4, num_rgb_channels, initial_kernel_size * 8)))
 
 
 if __name__ == '__main__':

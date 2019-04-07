@@ -48,9 +48,10 @@ default_params = dict(
     init='kaiming_normal',  # or xavier_uniform or orthogonal
     act_alpha=0.2,
     residual=False,
-    sagan_non_local=True,
-    use_factorized_attention=False,
-    calc_swd=False
+    calc_swd=False,
+    separable=False,
+    num_classes=0,
+    deep=False
 )
 
 
@@ -102,15 +103,13 @@ def main(params):
         stats_to_log.extend(['cond.temporal_distance'])
 
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
-    shared_model_params = dict(initial_kernel_size=dataset.initial_kernel_size, num_channels=dataset.num_channels,
+    shared_model_params = dict(initial_kernel_size=dataset.initial_kernel_size, num_rgb_channels=dataset.num_channels,
                                fmap_base=params['fmap_base'], fmap_max=params['fmap_max'], fmap_min=params['fmap_min'],
-                               kernel_size=params['kernel_size'], equalized=params['equalized'],
-                               self_attention_layers=params['self_attention_layers'],
+                               kernel_size=params['kernel_size'], self_attention_layers=params['self_attention_layers'],
                                progression_scale_up=dataset.progression_scale_up,
-                               progression_scale_down=dataset.progression_scale_down, init=params['init'],
-                               act_alpha=params['act_alpha'], residual=params['residual'],
-                               sagan_non_local=params['sagan_non_local'],
-                               factorized_attention=params['use_factorized_attention'])
+                               progression_scale_down=dataset.progression_scale_down, residual=params['residual'],
+                               separable=params['separable'], equalized=params['equalized'], init=params['init'],
+                               act_alpha=params['act_alpha'], num_classes=params['num_classes'], deep=params['deep'])
     for n in ('Generator', 'Discriminator'):
         p = params[n]
         if p['spectral']:
@@ -122,11 +121,8 @@ def main(params):
         logger.log('Warning, you have set the residual to false and disabled the progression')
     if params['Discriminator']['act_norm'] is not None:
         logger.log('Warning, you are using an activation normalization in discriminator')
-    temporal_conds = {'temporal_1': total_temporal_conds} if len(params['bands']) > 1 else {}
-    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'],
-                          num_conds=global_conds + total_temporal_conds, **params['Generator'])
-    discriminator = Discriminator(**shared_model_params, global_conds=global_conds, temporal_conds=temporal_conds,
-                                  **params['Discriminator'])
+    generator = Generator(**shared_model_params, z_distribution=params['z_distribution'], **params['Generator'])
+    discriminator = Discriminator(**shared_model_params, **params['Discriminator'])
 
     def rampup(cur_nimg):
         if cur_nimg < params['lr_rampup_kimg'] * 1000:

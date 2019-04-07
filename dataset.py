@@ -13,6 +13,14 @@ from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents
 
 DATASET_VERSION = 6
 
+'''
+!pip install gdown
+!gdown --id 1rVey-8ZN1mAYcCISie5kGuZ_2WNWZ8Jb
+!gdown --id 1QMKt1c6v-Pa6sGXDia4x_OwNkSNSocCW
+!gdown --id 1vMVSmtdUzIt7MfDnNzB5CO8u8Xl19k5s
+!gdown --id 1GpBX7pkmUHu6JP63WH9FcvHp9Wxz7ZUi
+'''
+
 
 # bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60 -> 100
 class EEGDataset(Dataset):
@@ -38,9 +46,9 @@ class EEGDataset(Dataset):
     # picked_channels = [3, 5, 9, 12, 13, 14, 15, 16]
     # picked_channels = [3, 5, 8, 9, 10, 13, 15, 16]
 
-    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.0, dir_path: str = './data/tuh1',
-                 data_sampling_freq: float = 80.0, start_sampling_freq: float = 1.0, end_sampling_freq: float = 60.0,
-                 start_seq_len: int = 32, stride: float = 0.25, num_channels: int = 5, number_of_files: int = 1500,
+    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
+                 data_sampling_freq: float = 80, start_sampling_freq: float = 1, end_sampling_freq: float = 60,
+                 start_seq_len: int = 32, stride: float = 0.5, num_channels: int = 5, number_of_files: int = 100000,
                  per_user_normalization: bool = True, per_channel_normalization: bool = False):
         super().__init__()
         self.model_depth = 0

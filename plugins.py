@@ -231,7 +231,7 @@ class EvalDiscriminator(Plugin):
 class OutputGenerator(Plugin):
 
     def __init__(self, sample_fn, checkpoints_dir: str, seq_len: int, max_freq: float,
-                 samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.9):
+                 samples_count: int = 8, output_snapshot_ticks: int = 25, old_weight: float = 0.59):
         super().__init__([(1, 'epoch')])
         self.old_weight = old_weight
         self.sample_fn = sample_fn
