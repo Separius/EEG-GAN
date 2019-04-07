@@ -21,16 +21,16 @@ class EEGDataset(Dataset):
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
     # for 60(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
-    # progression_scale_up   = [2, 2, 4, 2, 2, 3, 4, 5, 3]
-    # progression_scale_down = [1, 1, 1, 1, 1, 2, 3, 4, 2]
+    # progression_scale_up   = [2, 2] + progression_scale_up
+    # progression_scale_down = [1, 1] + progression_scale_down
 
     # for 100(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
-    # progression_scale_up   = [4, 2, 2, 3, 4, 5, 3, 5]
-    # progression_scale_down = [1, 1, 1, 2, 3, 4, 2, 3]
+    # progression_scale_up   = progression_scale_up + [5]
+    # progression_scale_down = progression_scale_down + [3]
 
-    # for 100(sampling), starting from 1 hz(sampling) [8 samples at the beginning]
-    # progression_scale_up   = [2, 2, 4, 2, 2, 3, 4, 5, 3, 5]
-    # progression_scale_down = [2, 2, 1, 1, 1, 2, 3, 4, 2, 3]
+    # for 100(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
+    # progression_scale_up   = [2, 2] + progression_scale_up + [5]
+    # progression_scale_down = [1, 1] + progression_scale_down + [3]
 
     picked_channels = None
 

@@ -218,11 +218,11 @@ def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
     else:
         new_signal = signal
     orig_dim = new_signal.dim()
-    if orig_dim < 3 or signal.shape[2] == 1:
-        if orig_dim == 2:
-            new_signal = new_signal[None]
-        if orig_dim == 1:
-            new_signal = new_signal[None, None]
+    if orig_dim == 2:
+        new_signal = new_signal[None]
+    if orig_dim == 1:
+        new_signal = new_signal[None, None]
+    if pytorch and (orig_dim < 3 or signal.shape[2] == 1):
         ratio = desired_freq / signal_freq
         assert ratio == int(ratio)
         return new_signal.repeat(1, 1, int(ratio))

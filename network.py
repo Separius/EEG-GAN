@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 from torch import nn
 from torch.nn.utils import spectral_norm
@@ -115,7 +113,7 @@ class Generator(nn.Module):
         :param conv_only: bool
         :param shared_embedding_size: int, in case it's none zero, y will be transformed to (batch_size, shared_embedding_size, T_y)
         :param normalize_latents: bool
-        :param rgb_generation_mode: 'msg' or 'residual' or 'mean' or 'none'
+        :param rgb_generation_mode: 'msg'([rgbs]) or 'residual'sum([rgbs]) or 'mean'mean([rgbs]) or 'none'([])
         """
         super().__init__()
         R = len(progression_scale_up)
@@ -301,7 +299,7 @@ class Discriminator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                  equalized, spectral, init, act_alpha, num_classes, deep, dropout=0.2, act_norm=None,
-                 group_size=4, temporal_groups_per_window=1, conv_only=False):  # TODO use rgb_out[]
+                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False):
         """
         NOTE we only support global conidtioning(not temporal) for now
         :param initial_kernel_size:
@@ -326,6 +324,7 @@ class Discriminator(nn.Module):
         :param group_size:
         :param temporal_groups_per_window:
         :param conv_only:
+        :param input_to_all_layers:
         """
         super().__init__()
         R = len(progression_scale_up)
@@ -334,6 +333,7 @@ class Discriminator(nn.Module):
         self.progression_scale_down = progression_scale_down
         self.depth = 0
         self.alpha = 1.0
+        self.input_to_all_layers = input_to_all_layers
 
         def nf(stage):
             return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
@@ -366,21 +366,27 @@ class Discriminator(nn.Module):
         self.max_depth = len(self.blocks) - 1
 
     def forward(self, x, y=None):
-        xhighres = x
-        h = self.blocks[-(self.depth + 1)](xhighres, True)
+        h = self.blocks[-(self.depth + 1)](x, True)
         if self.depth > 0:
             h = resample_signal(h, self.progression_scale_up[self.depth - 1],
                                 self.progression_scale_down[self.depth - 1], True)
-            if self.alpha < 1.0:
-                xlowres = resample_signal(xhighres, self.progression_scale_up[self.depth - 1],
-                                          self.progression_scale_down[self.depth - 1], True)
-                preult_rgb = self.blocks[-self.depth].fromRGB(xlowres)
-                h = h * self.alpha + (1.0 - self.alpha) * preult_rgb
+            if self.alpha < 1.0 or self.input_to_all_layers:
+                x_lowres = resample_signal(x, self.progression_scale_up[self.depth - 1],
+                                           self.progression_scale_down[self.depth - 1], True)
+                preult_rgb = self.blocks[-self.depth].fromRGB(x_lowres)
+                if self.input_to_all_layers:
+                    h = (h * self.alpha + preult_rgb) / (1.0 + self.alpha)
+                else:
+                    h = h * self.alpha + (1.0 - self.alpha) * preult_rgb
         all_attention_maps = {}
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
                 h = resample_signal(h, self.progression_scale_up[i - 2], self.progression_scale_down[i - 2], True)
+                if self.input_to_all_layers:
+                    x_lowres = resample_signal(x_lowres, self.progression_scale_up[i - 2],
+                                               self.progression_scale_down[i - 2], True)
+                    h = (h + self.blocks[-i - 1].fromRGB(x_lowres)) / 2.0
             if (i - 2) in self.self_attention:
                 h, attention_map = self.self_attention[i - 2](h)
                 if attention_map is not None:
@@ -427,8 +433,8 @@ def main():
     rgb_generation_mode = 'pggan'
     g = Generator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                   self_attention_layers, progression_scale_up, progression_scale_down, residual, separable, equalized,
-                  spectral, init, act_alpha, z_distribution, latent_size, no_tanh, deep, per_channel_noise, to_rgb_mode,
-                  z_to_bn, split_z, dropout, num_classes, act_norm, conv_only, shared_embedding_size, normalize_latents,
+                  spectral, init, act_alpha, num_classes, deep, z_distribution, latent_size, no_tanh, per_channel_noise,
+                  to_rgb_mode, z_to_bn, split_z, dropout, act_norm, conv_only, shared_embedding_size, normalize_latents,
                   rgb_generation_mode)
 
 
