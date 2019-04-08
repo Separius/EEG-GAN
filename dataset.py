@@ -14,6 +14,7 @@ from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents
 DATASET_VERSION = 6
 
 '''
+!pip install imageio
 !pip install gdown
 !gdown --id 1rVey-8ZN1mAYcCISie5kGuZ_2WNWZ8Jb
 !gdown --id 1QMKt1c6v-Pa6sGXDia4x_OwNkSNSocCW

@@ -9,7 +9,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import torch
-from scipy import misc
+from imageio import imwrite
 from sklearn.utils.extmath import randomized_svd
 
 from torch_utils import Plugin, LossMonitor, Logger
@@ -286,7 +286,7 @@ class OutputGenerator(Plugin):
                 axs[ch][3].legend()
             fig.suptitle('epoch: {}, sample: {}'.format(epoch, index))
             fig.canvas.draw()
-            image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+            image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
             image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
             images.append(image)
             plt.close(fig)
@@ -309,7 +309,7 @@ class OutputGenerator(Plugin):
             frequency = self.max_freq * out.shape[2] / self.seq_len
             images = self.get_images(frequency, epoch_index, out)
             for i, image in enumerate(images):
-                misc.imsave(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
+                imwrite(os.path.join(self.checkpoints_dir, '{}_{}.png'.format(epoch_index, i)), image)
 
 
 class TeeLogger(Logger):
