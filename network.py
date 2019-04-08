@@ -79,7 +79,7 @@ class GBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
-                 equalized, init, act_alpha, num_classes, deep, spectral=False, z_distribution='normal',
+                 equalized, init, act_alpha, num_classes, deep, z_distribution, spectral=False,
                  latent_size=256, no_tanh=False, per_channel_noise=False, to_rgb_mode='pggan', z_to_bn=False,
                  split_z=False, dropout=0.2, act_norm='pixel', conv_only=False, shared_embedding_size=32,
                  normalize_latents=True, rgb_generation_mode='pggan'):
@@ -113,7 +113,7 @@ class Generator(nn.Module):
         :param conv_only: bool
         :param shared_embedding_size: int, in case it's none zero, y will be transformed to (batch_size, shared_embedding_size, T_y)
         :param normalize_latents: bool
-        :param rgb_generation_mode: 'msg'([rgbs]) or 'residual'sum([rgbs]) or 'mean'mean([rgbs]) or 'none'([])
+        :param rgb_generation_mode: 'residual'sum([rgbs]) or 'mean'mean([rgbs]) or 'pggan'(last_rgb)
         """
         super().__init__()
         R = len(progression_scale_up)
@@ -184,9 +184,7 @@ class Generator(nn.Module):
         h = resample_signal(h, self.progression_scale_down[l], self.progression_scale_up[l], True)
         return self.blocks[l](h, y, self._split_z(l, z), last=False), attention_map
 
-    def _combine_rgbs(self, saved_rgbs):
-        if self.rgb_generation_mode == 'msg':
-            return saved_rgbs
+    def _combine_rgbs(self, last_rgb, saved_rgbs):
         if self.rgb_generation_mode == 'residual':
             return_value = saved_rgbs[0]
             for rgb in saved_rgbs[1:]:
@@ -194,7 +192,7 @@ class Generator(nn.Module):
             if self.alpha == 1.0:
                 return return_value
             return return_value - (1.0 - self.alpha) * saved_rgbs[-1]
-        if self.rgb_generation_mode == 'mean':
+        elif self.rgb_generation_mode == 'mean':
             return_value = saved_rgbs[0]
             for rgb in saved_rgbs[1:]:
                 return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
@@ -203,9 +201,18 @@ class Generator(nn.Module):
                 return return_value
             return (return_value * len(saved_rgbs) - saved_rgbs[-1]) / (len(saved_rgbs) - 1) * (
                     1.0 - self.alpha) + return_value * self.alpha
-        return None
+        return last_rgb
 
-    def forward(self, z, y=None):
+    def _wrap_output(self, last_rgb, all_rgbs, y):
+        return {'x': self._combine_rgbs(last_rgb, all_rgbs), 'y': y}
+
+    def forward(self, z):
+        if isinstance(z, dict):
+            z, y = z['z'], z.get('y', None)
+        elif isinstance(z, tuple):
+            z, y = z
+        else:
+            y = None
         if y is not None:
             if y.ndimension() == 2:
                 y = y.unsqueeze(2)
@@ -227,7 +234,7 @@ class Generator(nn.Module):
             h = self.block0(h, y, self._split_z(-1, z), last=True)
             if save_rgb:
                 saved_rgbs.append(h)
-            return h, {}, self._combine_rgbs(saved_rgbs)
+            return self._wrap_output(h, saved_rgbs, y), {}
         h = self.block0(h, y, self._split_z(-1, z))
         if save_rgb:
             saved_rgbs.append(self.block0.toRGB(h))
@@ -244,9 +251,9 @@ class Generator(nn.Module):
         if save_rgb:
             saved_rgbs.append(ult)
         if self.alpha == 1.0:
-            return ult, all_attention_maps, self._combine_rgbs(saved_rgbs)
+            return self._wrap_output(ult, saved_rgbs, y), all_attention_maps
         preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
-        return preult_rgb * (1.0 - self.alpha) + ult * self.alpha, all_attention_maps, self._combine_rgbs(saved_rgbs)
+        return self._wrap_output(preult_rgb * (1.0 - self.alpha) + ult * self.alpha, saved_rgbs, y), all_attention_maps
 
 
 class DBlock(nn.Module):
@@ -365,7 +372,13 @@ class Discriminator(nn.Module):
                                   spectral=spectral, init=init)
         self.max_depth = len(self.blocks) - 1
 
-    def forward(self, x, y=None):
+    def forward(self, x):
+        if isinstance(x, dict):
+            x, y = x['x'], x.get('y', None)
+        elif isinstance(x, tuple):
+            x, y = x
+        else:
+            y = None
         h = self.blocks[-(self.depth + 1)](x, True)
         if self.depth > 0:
             h = resample_signal(h, self.progression_scale_up[self.depth - 1],

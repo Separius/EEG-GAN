@@ -1,8 +1,9 @@
 import torch
 import random
-from utils import cudize
 import torch.nn.functional as F
 from torch.autograd import Variable, grad
+
+from utils import cudize
 
 one = None
 zero = None

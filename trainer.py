@@ -1,4 +1,5 @@
 import heapq
+
 from utils import cudize
 from network import Generator, Discriminator
 

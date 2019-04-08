@@ -4,8 +4,8 @@ from random import shuffle
 
 import torch
 import numpy as np
+from tqdm import tqdm
 from scipy.io import loadmat
-from tqdm import tqdm, trange
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import default_collate
 
@@ -71,7 +71,7 @@ class EEGDataset(Dataset):
             self.files = given_data[0]['files']
             self.norms = given_data[0]['norms']
             self.data_pointers = given_data[0]['pointers']
-            self.datas = [given_data[1]['arr_{}'.format(i)] for i in trange(len(given_data[1].keys()))]
+            self.datas = [given_data[1]['arr_{}'.format(i)] for i in range(len(given_data[1].keys()))]
             return
         all_files = glob.glob(os.path.join(dir_path, '*_1.txt'))[:number_of_files]
         is_matlab = len(all_files) == 0

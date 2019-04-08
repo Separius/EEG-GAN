@@ -88,8 +88,6 @@ def main(params):
     result_dir = create_result_subdir(params['result_dir'], params['exp_name'])
 
     losses = ['G_loss', 'D_loss']
-    total_temporal_conds = ((len(params['bands']) - 1) * dataset.num_channels) if len(params['bands']) > 1 else 0
-    global_conds = len(params['correlation_pairs'])
     stats_to_log = ['tick_stat', 'kimg_stat']
     stats_to_log.extend(['depth', 'alpha', 'minibatch_size'])
     stats_to_log.extend(['time', 'sec.tick', 'sec.kimg'] + losses)
@@ -97,10 +95,6 @@ def main(params):
         stats_to_log.extend(['memorization.val', 'memorization.epoch'])
     if params['calc_swd']:
         stats_to_log.extend(['swd.val', 'swd.epoch'])
-    if global_conds > 0:
-        stats_to_log.extend(['cond.global_distance'])
-    if total_temporal_conds > 0:
-        stats_to_log.extend(['cond.temporal_distance'])
 
     logger = TeeLogger(os.path.join(result_dir, 'log.txt'), params['exp_name'], stats_to_log, [(1, 'epoch')])
     shared_model_params = dict(initial_kernel_size=dataset.initial_kernel_size, num_rgb_channels=dataset.num_channels,
@@ -205,13 +199,9 @@ def main(params):
         return DataLoader(**shared_dataloader_params, sampler=InfiniteRandomSampler(list(range(len(ds)))))
 
     # NOTE you can not put the if inside your function (a function should either return or yield)
-    if global_conds + total_temporal_conds > 0:
-        def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
-            return iter(get_dataloader(minibatch_size, is_training, depth, alpha, False))
-    else:
-        def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
-            while True:
-                yield {'z': cudize(random_latents(minibatch_size, latent_size, params['z_distribution']))}
+    def get_random_latents(minibatch_size, is_training=True, depth=0, alpha=1):
+        while True:
+            yield {'z': cudize(random_latents(minibatch_size, latent_size, params['z_distribution']))}
 
     trainer = Trainer(discriminator, generator, d_loss_fun, g_loss_fun, dataset, get_random_latents(mb_def),
                       train_cur_img, opt_g, opt_d, **params['Trainer'])

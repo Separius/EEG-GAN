@@ -152,7 +152,7 @@ def load_model(model_path, return_all=False):
     return state['model'], state['optimizer'], state['cur_nimg']
 
 
-def parse_config(default_params, need_arg_classes, exclude_adam=True):
+def parse_config(default_params, need_arg_classes, exclude_adam=True, read_cli=True):
     parser = ArgumentParser()
     if exclude_adam:
         excludes = {'Adam': {'lr', 'amsgrad'}}
@@ -169,7 +169,10 @@ def parse_config(default_params, need_arg_classes, exclude_adam=True):
             group.add_argument('--{}'.format(name), type=generic_arg_parse)
             default_params[name] = auto_args[cls][k]
     parser.set_defaults(**default_params)
-    params = vars(parser.parse_args())
+    if read_cli:
+        params = vars(parser.parse_args())
+    else:
+        params = default_params
     if params['config_file']:
         print('loading config_file')
         with open(params['config_file']) as f:
