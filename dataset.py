@@ -21,24 +21,18 @@ DATASET_VERSION = 6
 !gdown --id 1kqU1fFINqknRyIyxw9ameGdi4LJzqE-s
 !gdown --id 1g6363MyMk0pSgwdPN-wW4mFjI98HKmEM
 !gdown --id 1lW4IyO-dmjzTgTmvTvJNJrzLllxj-W2e
+#val=0, stride=0.5, num_channels=5
 '''
 
 
 # our channels are CHNL = { 'F3', 'F4', 'O1', 'O2', 'CZ' }
-# 17 channels are CHNL = { 'FP1' , 'FP2' , ...
-#     'F7' , 'F3', 'FZ' , 'F4', 'F8' , ...
-#     'T3' , 'C3' , 'CZ' , 'C4' , 'T4' , ...
-#     'P3' , 'PZ' , 'P4' , ...
-#     'O1', 'O2' }; => [3, 5, 15, 16, 9]
-
-
 # bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60
 class EEGDataset(Dataset):
     # for 60(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
-    # for 60(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
+    # for 60(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning] (also set start_depth)
     # progression_scale_up = [2, 2] + progression_scale_up
     # progression_scale_down = [1, 1] + progression_scale_down
 
@@ -253,3 +247,61 @@ def get_collate_fake(latent_size, z_distribution, collate_real):
         return batch
 
     return collate_fake
+
+
+class ThinEEGDataset(Dataset):
+    def __init__(self, given_data, data_sampling_freq, start_seq_len, stride):
+        super().__init__()
+        seq_len = start_seq_len * data_sampling_freq
+        assert seq_len == int(seq_len), 'seq_len must be an int'
+        seq_len = int(seq_len)
+        self.seq_len = seq_len
+        self.stride = int(seq_len * stride)
+        if given_data is not None:
+            self.sizes = given_data[0]['sizes']
+            self.files = given_data[0]['files']
+            self.data_pointers = given_data[0]['pointers']
+            self.datas = [given_data[1]['arr_{}'.format(i)] for i in range(len(given_data[1].keys()))]
+            self.num_channels = self.datas[0].shape[0]
+            return
+        else:
+            raise ValueError('This is the Thin Wrapper and can only load data')
+
+    @classmethod
+    def from_config(cls, validation_ratio: float = 0, dir_path: str = './', number_of_files: int = 100000,
+                    start_sampling_freq: float = 1, end_sampling_freq: float = 60, start_seq_len: int = 32,
+                    stride: float = 0.8, num_channels: int = 5, per_user_normalization: bool = True,
+                    per_channel_normalization: bool = False):
+        mode = per_user_normalization * 2 + per_channel_normalization * 1
+        datasets = [None, None]
+        for index, split in enumerate(('train', 'val')):
+            target_location = os.path.join(dir_path, '{}%_{}c_{}m_{}s_{}v_{}ss_{}es_{}l_{}n_{}.npz'
+                                           .format(validation_ratio, num_channels, mode, stride,
+                                                   DATASET_VERSION, start_sampling_freq, end_sampling_freq,
+                                                   start_seq_len, number_of_files, split))
+            given_data = None
+            if os.path.exists(target_location):
+                print('loading {} dataset from file'.format(split))
+                if split == 'val' and validation_ratio == 0:
+                    return datasets[0], None
+                else:
+                    given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
+            else:
+                raise ValueError('Can\'t create dataset')
+            dataset = cls(given_data, end_sampling_freq, start_seq_len, stride)
+            datasets[index] = dataset
+        return datasets[0], datasets[1]
+
+    @property
+    def shape(self):
+        return len(self), self.num_channels, self.seq_len
+
+    def __len__(self):
+        return len(self.data_pointers)
+
+    def load_file(self, item):
+        i, k = self.data_pointers[item]
+        return self.datas[i][:, k * self.stride:k * self.stride + self.seq_len]
+
+    def __getitem__(self, item):
+        return torch.from_numpy(self.load_file(item).astype(np.float32))

@@ -1,7 +1,7 @@
-import numpy as np
 import torch
-import torch.nn.functional as F
+import numpy as np
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.init import calculate_gain
 from torch.nn.utils import spectral_norm
 
@@ -121,7 +121,7 @@ class ConditionalBatchNorm(nn.Module):
             if self.mode == 'CSM':
                 z = expand3d(z)
                 cond = torch.cat([resample_signal(z, z.size(2), y.size(2), pytorch=True), y], dim=1)
-            else:
+            else:  # 'SM'
                 cond = expand3d(z)
         embed = self.embed(cond)  # B, num_features*2, Ty
         embed = resample_signal(embed, embed.shape[2], out.shape[2], pytorch=True)
@@ -233,4 +233,3 @@ class ConcatResidual(nn.Module):
         if self.net:
             return h + torch.cat([x, self.net(x)], dim=1)
         return h + x
-

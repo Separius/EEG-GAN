@@ -4,11 +4,11 @@ import torch
 import random
 import inspect
 import numpy as np
-from typing import Dict
 from pickle import load, dump
 from functools import partial
 from fractions import Fraction
 import torch.nn.functional as F
+from typing import Dict, TypeVar
 from argparse import ArgumentParser
 
 EPSILON = 1e-8
@@ -110,7 +110,10 @@ def get_structured_params(params):
     return new_params
 
 
-def cudize(thing):
+T = TypeVar('T')
+
+
+def cudize(thing: T) -> T:
     if thing is None:
         return None
     has_cuda = torch.cuda.is_available()
@@ -246,3 +249,41 @@ def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
             return new_signal[0].numpy()
         return new_signal[0, 0].numpy()
     return new_signal
+
+
+def dict_add(base, new, multiplier=1.0):
+    for k, v in new.items():
+        if k not in base:
+            base[k] = [multiplier * vv for vv in v]
+        else:
+            base[k] = [multiplier * vv + vvv for vv, vvv in zip(v, base[k])]
+
+
+def divide_dict(base, size):
+    for k, v in base.items():
+        base[k] = [vv / size for vv in v]
+
+
+def merge_pred_accs(all_pred_acc, K, bidir):
+    # 'f/b_k_t/b': [0.04077060931899642, 0.03391017025089606]
+    acc_k_b = {k + 1: [] for k in range(K)}
+    acc_k_t = {k + 1: [] for k in range(K)}
+    for k in range(K):
+        acc_k_b[k + 1].append(sum(all_pred_acc['f_{}_b'.format(k + 1)]) / 2)
+        if bidir:
+            acc_k_b[k + 1].append(sum(all_pred_acc['b_{}_b'.format(k + 1)]) / 2)
+        acc_k_t[k + 1].append(sum(all_pred_acc['f_{}_t'.format(k + 1)]) / 2)
+        if bidir:
+            acc_k_t[k + 1].append(sum(all_pred_acc['b_{}_t'.format(k + 1)]) / 2)
+    acc_k_b = {k: sum(v) / len(v) for k, v in acc_k_b.items()}
+    acc_k_t = {k: sum(v) / len(v) for k, v in acc_k_t.items()}
+    v = sum(acc_k_b.values()) / len(acc_k_b)
+    v += sum(acc_k_t.values()) / len(acc_k_t)
+    v /= 2
+    return v
+
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__dict__ = self
