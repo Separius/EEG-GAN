@@ -233,3 +233,4 @@ class ConcatResidual(nn.Module):
         if self.net:
             return h + torch.cat([x, self.net(x)], dim=1)
         return h + x
+

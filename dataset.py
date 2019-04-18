@@ -16,40 +16,38 @@ DATASET_VERSION = 6
 '''
 !pip install imageio
 !pip install gdown
-!gdown --id 1rVey-8ZN1mAYcCISie5kGuZ_2WNWZ8Jb
-!gdown --id 1QMKt1c6v-Pa6sGXDia4x_OwNkSNSocCW
-!gdown --id 1vMVSmtdUzIt7MfDnNzB5CO8u8Xl19k5s
-!gdown --id 1GpBX7pkmUHu6JP63WH9FcvHp9Wxz7ZUi
+#val=0.1, stride=0.5, num_channels=17
+!gdown --id 17-KHzOzejlbtfyTDa9goPiETxesVFKDy
+!gdown --id 1kqU1fFINqknRyIyxw9ameGdi4LJzqE-s
+!gdown --id 1g6363MyMk0pSgwdPN-wW4mFjI98HKmEM
+!gdown --id 1lW4IyO-dmjzTgTmvTvJNJrzLllxj-W2e
 '''
 
 
-# bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60 -> 100
+# our channels are CHNL = { 'F3', 'F4', 'O1', 'O2', 'CZ' }
+# 17 channels are CHNL = { 'FP1' , 'FP2' , ...
+#     'F7' , 'F3', 'FZ' , 'F4', 'F8' , ...
+#     'T3' , 'C3' , 'CZ' , 'C4' , 'T4' , ...
+#     'P3' , 'PZ' , 'P4' , ...
+#     'O1', 'O2' }; => [3, 5, 15, 16, 9]
+
+
+# bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60
 class EEGDataset(Dataset):
     # for 60(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
     progression_scale_up = [4, 2, 2, 3, 4, 5, 3]
     progression_scale_down = [1, 1, 1, 2, 3, 4, 2]
 
     # for 60(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
-    # progression_scale_up   = [2, 2] + progression_scale_up
+    # progression_scale_up = [2, 2] + progression_scale_up
     # progression_scale_down = [1, 1] + progression_scale_down
 
-    # for 100(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
-    # progression_scale_up   = progression_scale_up + [5]
-    # progression_scale_down = progression_scale_down + [3]
+    picked_channels = [3, 5, 9, 15, 16]
 
-    # for 100(sampling), starting from 0.25 hz(sampling) [8 samples at the beginning]
-    # progression_scale_up   = [2, 2] + progression_scale_up + [5]
-    # progression_scale_down = [1, 1] + progression_scale_down + [3]
-
-    picked_channels = None
-
-    # picked_channels = [3, 5, 9, 15, 16]
-    # picked_channels = [3, 5, 9, 12, 13, 14, 15, 16]
-    # picked_channels = [3, 5, 8, 9, 10, 13, 15, 16]
-
-    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1, dir_path: str = './data/tuh1',
-                 data_sampling_freq: float = 80, start_sampling_freq: float = 1, end_sampling_freq: float = 60,
-                 start_seq_len: int = 32, stride: float = 0.5, num_channels: int = 5, number_of_files: int = 100000,
+    def __init__(self, train_files, norms, given_data, validation_ratio: float = 0.1,
+                 dir_path: str = './data/prepared_eegs_mat_th5/', data_sampling_freq: float = 220,
+                 start_sampling_freq: float = 1, end_sampling_freq: float = 60, start_seq_len: int = 32,
+                 stride: float = 0.5, num_channels: int = 17, number_of_files: int = 100000,
                  per_user_normalization: bool = True, per_channel_normalization: bool = False):
         super().__init__()
         self.model_depth = 0

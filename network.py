@@ -188,14 +188,14 @@ class Generator(nn.Module):
         if self.rgb_generation_mode == 'residual':
             return_value = saved_rgbs[0]
             for rgb in saved_rgbs[1:]:
-                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
+                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2), True) + rgb
             if self.alpha == 1.0:
                 return return_value
             return return_value - (1.0 - self.alpha) * saved_rgbs[-1]
         elif self.rgb_generation_mode == 'mean':
             return_value = saved_rgbs[0]
             for rgb in saved_rgbs[1:]:
-                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
+                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2), True) + rgb
             return_value = return_value / len(saved_rgbs)
             if self.alpha == 1.0:
                 return return_value
