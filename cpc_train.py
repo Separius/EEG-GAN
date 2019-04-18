@@ -18,26 +18,25 @@ hp = AttrDict(
     ds_stride=0.5,
     num_channels=17,
     use_sinc_encoder=False,
+    causal_prediction=True,
+    use_transformer=False,
 
     bidirectional=False,
-    causal_prediction=True,
 
     prediction_loss_weight=3.0,
     global_loss_weight=1.0,
     local_loss_weight=2.0,
 
-    use_transformer=False,
     contextualizer_num_layers=1,
     contextualizer_dropout=0.0,
+    encoder_dropout=0.1,
+    encoder_activation='relu',  # glu or relu
+    tiny_encoder=False,
 
     batch_size=128,
     lr=2e-3,
-    epochs=100,
+    epochs=32,
     weight_decay=0.005,
-
-    encoder_dropout=0.1,
-    encoder_activation='glu',
-    tiny_encoder=False,
 )
 
 

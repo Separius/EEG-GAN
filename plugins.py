@@ -4,6 +4,7 @@ import time
 from copy import deepcopy
 from datetime import timedelta
 from glob import glob
+from scipy import linalg
 
 import matplotlib
 import numpy as np
@@ -14,7 +15,9 @@ from sklearn.utils.extmath import randomized_svd
 
 from torch_utils import Plugin, LossMonitor, Logger
 from trainer import Trainer
-from utils import generate_samples, cudize, EPSILON
+from utils import generate_samples, cudize, EPSILON, resample_signal
+from cpc_network import Network as CpcNetwork
+from cpc_train import hp as cpc_hp
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -439,3 +442,200 @@ class SlicedWDistance(Plugin):
                 batchs[i] = batchs[i][:, :, ::self.progression_scale]
             swd.append(self.sliced_wasserstein(both_descriptors[0], both_descriptors[1]))
         return swd
+
+
+class FidCalculator(Plugin):
+    def __init__(self, num_channels, create_dataloader_fun, target_seq_len, num_samples=1024 * 16,
+                 output_snapshot_ticks=25, calc_for_z=True, calc_for_zp=True, calc_for_c=True, calc_for_cp=True):
+        super().__init__([(1, 'epoch')])
+        self.create_dataloader_fun = create_dataloader_fun
+        self.output_snapshot_ticks = output_snapshot_ticks
+        self.last_depth = -1
+        self.last_alpha = -1
+        self.target_seq_len = target_seq_len
+        self.calc_z = calc_for_z
+        self.calc_zp = calc_for_zp
+        self.calc_c = calc_for_c
+        self.calc_cp = calc_for_cp
+        self.num_samples = num_samples
+        hp = cpc_hp
+        self.network = cudize(CpcNetwork(num_channels, generate_long_sequence=hp.generate_long_sequence,
+                                         pooling=hp.pool_or_stride == 'pool', encoder_dropout=hp.encoder_dropout,
+                                         use_sinc_encoder=hp.use_sinc_encoder, use_shared_sinc=hp.use_shared_sinc,
+                                         bidirectional=hp.bidirectional,
+                                         contextualizer_num_layers=hp.contextualizer_num_layers,
+                                         contextualizer_dropout=hp.contextualizer_dropout,
+                                         use_transformer=hp.use_transformer,
+                                         causal_prediction=hp.causal_prediction, prediction_k=hp.prediction_k,
+                                         encoder_activation=hp.encoder_activation, tiny_encoder=hp.tiny_encoder)).eval()
+
+    def register(self, trainer):
+        self.trainer = trainer
+        fields = []
+        dd = {'epoch': 0}
+        if self.calc_c:
+            fields.append('{c_fake:.2f}')
+            dd['c_fake'] = float('nan')
+        if self.calc_z:
+            fields.append('{z_fake:.2f}')
+            dd['z_fake'] = float('nan')
+        if self.calc_cp:
+            fields.append('{cp_fake:.2f}')
+            dd['cp_fake'] = float('nan')
+        if self.calc_zp:
+            fields.append('{zp_fake:.2f}')
+            dd['zp_fake'] = float('nan')
+        fields.append('{epoch:.2f}')
+
+        self.trainer.stats['FID'] = {
+            'log_name': 'FID',
+            'log_epoch_fields': fields,
+            **dd
+        }
+
+    @staticmethod
+    def torch_cov(m, rowvar=False):
+        if m.dim() > 2:
+            raise ValueError('m has more than 2 dimensions')
+        if m.dim() < 2:
+            m = m.view(1, -1)
+        if not rowvar and m.size(0) != 1:
+            m = m.t()
+        fact = 1.0 / (m.size(1) - 1)
+        m -= torch.mean(m, dim=1, keepdim=True)
+        mt = m.t()
+        return fact * m.matmul(mt).squeeze()
+
+    @staticmethod
+    def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
+        mu1 = np.atleast_1d(mu1)
+        mu2 = np.atleast_1d(mu2)
+        sigma1 = np.atleast_2d(sigma1)
+        sigma2 = np.atleast_2d(sigma2)
+        assert mu1.shape == mu2.shape, 'Training and test mean vectors have different lengths'
+        assert sigma1.shape == sigma2.shape, 'Training and test covariances have different dimensions'
+        diff = mu1 - mu2
+        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        if not np.isfinite(covmean).all():
+            print('fid calculation produces singular product; adding %s to diagonal of cov estimates' % eps)
+            offset = np.eye(sigma1.shape[0]) * eps
+            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+        if np.iscomplexobj(covmean):
+            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-1):
+                m = np.max(np.abs(covmean.imag))
+                raise ValueError('Imaginary component {}'.format(m))
+            covmean = covmean.real
+        tr_covmean = np.trace(covmean)
+        out = diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * tr_covmean
+        return out
+
+    @staticmethod
+    def sqrt_newton_schulz(A, numIters, dtype=None):
+        with torch.no_grad():
+            if dtype is None:
+                dtype = A.type()
+            batchSize = A.shape[0]
+            dim = A.shape[1]
+            normA = A.mul(A).sum(dim=1).sum(dim=1).sqrt()
+            Y = A.div(normA.view(batchSize, 1, 1).expand_as(A))
+            I = torch.eye(dim, dim).view(1, dim, dim).repeat(batchSize, 1, 1).type(dtype)
+            Z = torch.eye(dim, dim).view(1, dim, dim).repeat(batchSize, 1, 1).type(dtype)
+            for i in range(numIters):
+                T = 0.5 * (3.0 * I - Z.bmm(Y))
+                Y = Y.bmm(T)
+                Z = T.bmm(Z)
+            sA = Y * torch.sqrt(normA).view(batchSize, 1, 1).expand_as(A)
+        return sA
+
+    @staticmethod
+    def calc_fid(mu1, std1, mu2, std2):
+        FID = FidCalculator.torch_calculate_frechet_distance(mu1, std1, mu2, std2).item()
+        if FID != FID:
+            FID = FidCalculator.numpy_calculate_frechet_distance(mu1.numpy(), std1.numpy(),
+                                                                 mu2.numpy(), std2.numpy())
+        return FID
+
+    @staticmethod
+    def torch_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
+        assert mu1.shape == mu2.shape, 'Training and test mean vectors have different lengths'
+        assert sigma1.shape == sigma2.shape, 'Training and test covariances have different dimensions'
+        diff = mu1 - mu2
+        covmean = FidCalculator.sqrt_newton_schulz(sigma1.mm(sigma2).unsqueeze(0), 50).squeeze()
+        out = (diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2) - 2 * torch.trace(covmean))
+        return out
+
+    def epoch(self, epoch_index):
+        if epoch_index % self.output_snapshot_ticks != 0:
+            return
+        if not (self.last_depth == self.trainer.dataset.model_depth and self.last_alpha == self.trainer.dataset.alpha):
+            with torch.no_grad():
+                all_z = []
+                all_c = []
+                all_zp = []
+                all_cp = []
+                i = 0
+                for data in self.create_dataloader_fun(min(self.trainer.stats['minibatch_size'], 1024), False,
+                                                       self.trainer.dataset.model_depth, self.trainer.dataset.alpha):
+                    x = cudize(data['x'])
+                    x = resample_signal(x, x.size(2), self.target_seq_len, True)
+                    batch_size = x.size(0)
+                    z, c, zp, cp = self.network.inference_forward(x)
+                    if self.calc_z:
+                        all_z.append(z.view(-1, z.size(1)).cpu())
+                    if self.calc_c:
+                        all_c.append(c.view(-1, z.size(1)).cpu())
+                    if self.calc_zp:
+                        all_zp.append(zp.cpu())
+                    if self.calc_cp:
+                        all_cp.append(cp.cpu())
+                    i += batch_size
+                    if i >= self.num_samples:
+                        break
+                if self.calc_z:
+                    all_z = torch.cat(all_z, dim=0)
+                    self.z_mu, self.z_std = torch.mean(all_z, 0), self.torch_cov(all_z, rowvar=False)
+                if self.calc_c:
+                    all_c = torch.cat(all_c, dim=0)
+                    self.c_mu, self.c_std = torch.mean(all_c, 0), self.torch_cov(all_c, rowvar=False)
+                if self.calc_zp:
+                    all_zp = torch.cat(all_zp, dim=0)
+                    self.zp_mu, self.zp_std = torch.mean(all_zp, 0), self.torch_cov(all_zp, rowvar=False)
+                if self.calc_c:
+                    all_cp = torch.cat(all_cp, dim=0)
+                    self.cp_mu, self.cp_std = torch.mean(all_cp, 0), self.torch_cov(all_cp, rowvar=False)
+        with torch.no_grad():
+            i = 0
+            all_z = []
+            all_c = []
+            all_zp = []
+            all_cp = []
+            while i < self.num_samples:
+                fake_latents_in = cudize(next(self.trainer.random_latents_generator))
+                x = self.trainer.generator(fake_latents_in)[0]['x']
+                x = resample_signal(x, x.size(2), self.target_seq_len, True)
+                z, c, zp, cp = self.network.inference_forward(x)
+                if self.calc_z:
+                    all_z.append(z.view(-1, z.size(1)).cpu())
+                if self.calc_c:
+                    all_c.append(c.view(-1, z.size(1)).cpu())
+                if self.calc_zp:
+                    all_zp.append(zp.cpu())
+                if self.calc_cp:
+                    all_cp.append(cp.cpu())
+            if self.calc_z:
+                all_z = torch.cat(all_z, dim=0)
+                fz_mu, fz_std = torch.mean(all_z, 0), self.torch_cov(all_z, rowvar=False)
+                self.trainer.stats['FID']['z_fake'] = self.calc_fid(fz_mu, fz_std, self.z_mu, self.z_std)
+            if self.calc_c:
+                all_c = torch.cat(all_c, dim=0)
+                fc_mu, fc_std = torch.mean(all_c, 0), self.torch_cov(all_c, rowvar=False)
+                self.trainer.stats['FID']['c_fake'] = self.calc_fid(fc_mu, fc_std, self.c_mu, self.c_std)
+            if self.calc_zp:
+                all_zp = torch.cat(all_zp, dim=0)
+                fzp_mu, fzp_std = torch.mean(all_zp, 0), self.torch_cov(all_zp, rowvar=False)
+                self.trainer.stats['FID']['zp_fake'] = self.calc_fid(fzp_mu, fzp_std, self.zp_mu, self.zp_std)
+            if self.calc_c:
+                all_cp = torch.cat(all_cp, dim=0)
+                fcp_mu, fcp_std = torch.mean(all_cp, 0), self.torch_cov(all_cp, rowvar=False)
+                self.trainer.stats['FID']['cp_fake'] = self.calc_fid(fcp_mu, fcp_std, self.cp_mu, self.cp_std)
+            self.trainer.stats['FID']['epoch'] = epoch_index
