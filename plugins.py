@@ -13,6 +13,7 @@ import torch
 from imageio import imwrite
 from sklearn.utils.extmath import randomized_svd
 
+from ndb import NDB
 from torch_utils import Plugin, LossMonitor, Logger
 from trainer import Trainer
 from utils import generate_samples, cudize, EPSILON, resample_signal
@@ -639,3 +640,55 @@ class FidCalculator(Plugin):
                 fcp_mu, fcp_std = torch.mean(all_cp, 0), self.torch_cov(all_cp, rowvar=False)
                 self.trainer.stats['FID']['cp_fake'] = self.calc_fid(fcp_mu, fcp_std, self.cp_mu, self.cp_std)
             self.trainer.stats['FID']['epoch'] = epoch_index
+
+
+class NDBScore(Plugin):
+    def __init__(self, create_dataloader_fun, output_dir, output_snapshot_ticks=25, number_bins=100,
+                 num_samples=1024 * 32):
+        super().__init__([(1, 'epoch')])
+        self.output_dir = output_dir
+        self.create_dataloader_fun = create_dataloader_fun
+        self.output_snapshot_ticks = output_snapshot_ticks
+        self.num_samples = num_samples
+        self.last_stage = -1
+        self.num_bins = number_bins
+
+    def register(self, trainer):
+        self.trainer = trainer
+        self.trainer.stats['ndb'] = {
+            'log_name': 'ndb',
+            'log_epoch_fields': ['{ndb:.2f}', '{js:.2f}', '{epoch:.2f}'],
+            'ndb': float('nan'), 'epoch': 0, 'js': float('nan')
+        }
+
+    def epoch(self, epoch_index):
+        if epoch_index % self.output_snapshot_ticks != 0:
+            return
+        if self.last_stage != (self.trainer.dataset.model_depth + self.trainer.dataset.alpha):
+            self.last_stage = self.trainer.dataset.model_depth + self.trainer.dataset.alpha
+            values = []
+            i = 0
+            for data in self.create_dataloader_fun(min(self.trainer.stats['minibatch_size'], 1024), False,
+                                                   self.trainer.dataset.model_depth, self.trainer.dataset.alpha):
+                x = data['x']
+                x = x.view(x.size(0), -1).numpy()
+                values.append(x)
+                i += x.shape[0]
+                if i >= self.num_samples:
+                    break
+            values = np.stack(values)
+            self.ndb = NDB(values, self.num_bins, cache_folder=self.output_dir, stage=self.last_stage)
+        with torch.no_grad():
+            values = []
+            i = 0
+            while i < self.num_samples:
+                fake_latents_in = cudize(next(self.trainer.random_latents_generator))
+                x = self.trainer.generator(fake_latents_in)[0]['x'].cpu()
+                i += x.size(0)
+                x = x.view(x.size(0), -1).numpy()
+                values.append(x)
+        values = np.stack(values)
+        result = self.ndb.evaluate(values)
+        self.trainer.stats['ndb']['ndb'] = result[0]
+        self.trainer.stats['ndb']['js'] = result[1]
+        self.trainer.stats['ndb']['epoch'] = epoch_index
