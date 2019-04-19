@@ -1,14 +1,9 @@
-# calculate FID of {real, permuted, shifted, zeroed, salt and peppered, concatenated, mode collapsed} * progression
-# check our FID calculation's variance over 50 runs compared to their mean (reliability of the metric) * progression
-# check our FID over training (improved model generates better results)(also considers progression)
-# experiment on samples needed for FID calculation => plot(calculated_on_small, calculated_on_large)
-# * all meters?(swd, bins) + different weights experiment
 from cpc_train import hp
 from ndb import NDB
 from cpc_network import Network
 from plugins import FidCalculator
 from dataset import ThinEEGDataset, EEGDataset
-from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, merge_pred_accs
+from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, merge_pred_accs, save_pkl
 
 import torch
 import numpy as np
@@ -36,10 +31,12 @@ local_hp = AttrDict(generate_long_sequence=True, pool_or_stride='stride', use_sh
                     weight_decay=0.01)
 
 
-def calculate_stats(dataset, net, scale_up, scale_down, skip_depth, num_samples, mode, current_hp, real_ndb):
+def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
+                    num_samples, mode, current_hp, real_ndb, real_stats):
     samples = {'normal': [], 'permute_0': [], 'permute_1': [], 'permute_2': [], 'permute_3': [], 'shift_0': [],
                'shift_1': [], 'shift_2': [], 'shift_3': [], 'concat': [], 'zero_0': [], 'zero_1': [], 'zero_2': [],
-               'zero_3': [], 'zero_4': [], 'noise_1': [], 'noise_2': [], 'noise_3': [], 'collapse': []}
+               'zero_3': [], 'zero_4': [], 'noise_1': [], 'noise_2': [], 'noise_3': [], 'collapse': [],
+               'validation': [], 'tiny': []}
     if mode in ['shift']:
         i = 0
         while i < num_samples:
@@ -113,17 +110,17 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth, num_samples,
             x = torch.cat([dataset[np.random.randint(len(dataset))], dataset[np.random.randint(len(dataset))]], dim=1)
             start = np.random.randint(dataset.seq_len // 4, dataset.seq_len // 2)
             samples['concat'].append(x[:, start:start + dataset.seq_len].unsqueeze(0))
-    elif mode in ['normal', 'permute', 'tiny', 'downsample']:
+    elif mode in ['normal', 'permute', 'tiny', 'validation']:
         dataloader = DataLoader(dataset, batch_size=current_hp.batch_size, shuffle=True, drop_last=True)
         i = 0
         for b in dataloader:
-            if mode == 'normal':
-                samples['x'].append(b)
-            else:
+            if mode == 'permute':
                 samples['permute_0'].append(b[:, [1, 0, 2, 3, 4]])
                 samples['permute_1'].append(b[:, [0, 1, 2, 4, 3]])
                 samples['permute_2'].append(b[:, [0, 1, 3, 2, 4]])
                 samples['permute_3'].append(b[:, [4, 2, 1, 3, 0]])
+            else:
+                samples[mode].append(b)
             i += b.size(0)
             if mode == 'tiny':
                 if i >= (num_samples // 10):
@@ -141,13 +138,12 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth, num_samples,
             seq_lens = [int(seq_lens[0] * scale_down[i] / scale_up[i])] + seq_lens
         for seq_len in seq_lens:
             this_x = resample_signal(x, max_seq_len, seq_len, True)
-            this_x = resample_signal(this_x, seq_len, max_seq_len, True)
             real_ndb[seq_len] = NDB(this_x.view(this_x.size(0), -1).numpy(), stage=seq_len)
-    return {k: calculate_network_stats(v, net, scale_up, scale_down, skip_depth, current_hp, real_ndb) for k, v in
-            samples.items()}, real_ndb
+    return {k: calculate_network_stats(v, net, scale_up, scale_down, skip_depth,
+                                       current_hp, real_ndb, real_stats) for k, v in samples.items()}, real_ndb
 
 
-def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, current_hp, real_ndb):
+def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, current_hp, real_ndb, real_stats):
     max_seq_len = x.size(2)
     seq_lens = [max_seq_len]
     for i in reversed(range(skip_depth, len(scale_up))):
@@ -156,6 +152,7 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
     with torch.no_grad():
         for seq_len in seq_lens:
             this_x = resample_signal(x, max_seq_len, seq_len, True)
+            ndb, js = real_ndb[seq_len].evaluate(this_x.view(this_x.size(0), -1).numpy())
             this_x = resample_signal(this_x, seq_len, max_seq_len, True)  # resample to give to the net
             total_network_loss = 0.0
             total_prediction_loss = 0.0
@@ -171,15 +168,13 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
             all_c = []
             all_zp = []
             all_cp = []
-            all_x = []
             for i in range(x.size(0) // 128):
-                all_x.append(this_x[i * 128:(i + 1) * 128])
                 prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_accuracy = net(
-                    cudize(all_x[-1]))
+                    cudize(this_x[i * 128:(i + 1) * 128]))
                 global_accuracy_one, global_accuracy_two = global_accuracy
                 local_accuracy_one, local_accuracy_two = local_accuracy
                 network_loss = current_hp.prediction_loss_weight * prediction_loss + current_hp.global_loss_weight * global_discriminator_loss + current_hp.local_loss_weight * local_discriminator_loss
-                this_batch_size = all_x[-1].size(0)
+                this_batch_size = this_x[i * 128:(i + 1) * 128].size(0)
                 total_count += this_batch_size
                 total_network_loss += network_loss.item() * this_batch_size
                 total_prediction_loss += prediction_loss.item() * this_batch_size
@@ -195,7 +190,6 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
                 all_c.append(c.view(-1, z.size(1)).cpu())
                 all_zp.append(zp.cpu())
                 all_cp.append(cp.cpu())
-                all_x[-1] = all_x[-1].view(this_batch_size, -1)
 
             total_global_accuracy_one /= total_count
             total_global_accuracy_two /= total_count
@@ -212,26 +206,46 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
             total_local_accuracy = (total_local_accuracy_one + total_local_accuracy_two) / 2
             total_network_loss /= total_count
 
-            ndb, js = real_ndb[seq_len].evaluate(torch.stack(all_x, dim=0).cpu())
-
             metrics = dict(prediction_loss=total_prediction_loss, prediction_acc=total_pred_acc,
                            global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy,
                            local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy,
-                           net_loss=total_network_loss, **calc_mean_cov('z', all_z), **calc_mean_cov('c', all_c),
-                           **calc_mean_cov('zp', all_zp), **calc_mean_cov('cp', all_cp), ndb_score=ndb, ndb_js=js)
+                           net_loss=total_network_loss, ndb_score=ndb, ndb_js=js, **calc_mean_cov('z', all_z),
+                           **calc_mean_cov('c', all_c), **calc_mean_cov('zp', all_zp), **calc_mean_cov('cp', all_cp))
+            if real_stats is not None:
+                for name, all_name in zip(['z', 'c', 'zp', 'cp'], [all_z, all_c, all_zp, all_cp]):
+                    metrics.update({name + '_fid': FidCalculator.calc_fid(real_stats['normal'][seq_len][name + '_mean'],
+                                                                          real_stats['normal'][seq_len][name + '_cov'],
+                                                                          metrics[name + '_mean'],
+                                                                          metrics[name + '_cov'])})
+                    if seq_len == max_seq_len:
+                        metrics.update({name + '_fid_max_seq_len': metrics[name + '_fid']})
+                    else:
+                        metrics.update({name + '_fid_max_seq_len': FidCalculator.calc_fid(
+                            real_stats['normal'][max_seq_len][name + '_mean'],
+                            real_stats['normal'][max_seq_len][name + '_cov'], metrics[name + '_mean'],
+                            metrics[name + '_cov'])})
             stats[seq_len] = metrics
+            if real_stats is None:  # we are the real_stats
+                if seq_len != max_seq_len:
+                    for name, all_name in zip(['z', 'c', 'zp', 'cp'], [all_z, all_c, all_zp, all_cp]):
+                        stats[seq_len].update({name + '_fid_max_seq_len': FidCalculator.calc_fid(
+                            stats[max_seq_len][name + '_mean'], stats[max_seq_len][name + '_cov'],
+                            metrics[name + '_mean'], metrics[name + '_cov'])})
+                else:
+                    for name in ['z', 'c', 'zp', 'cp']:
+                        stats[seq_len].update({name + '_fid_max_seq_len': 0.0})
     return stats
 
 
 def main(num_samples):
     # NOTE, this are model dependent and it's far better to read them from a yml file
     skip_depth = 0
-
     progression_scale_up = EEGDataset.progression_scale_up
     progression_scale_down = EEGDataset.progression_scale_down
     train_dataset, val_dataset = ThinEEGDataset.from_config(validation_ratio=hp.validation_ratio,
                                                             num_channels=hp.num_channels, stride=hp.ds_stride)
     real_ndb = None
+    final_result = {}
     for current_hp, model_address in zip([hp, prediction_hp, local_hp],
                                          ['default_-7.531810902716695', 'prediction_-2.450593529493725',
                                           'local_-0.5012809535156667']):
@@ -245,41 +259,55 @@ def main(num_samples):
                           prediction_k=current_hp.prediction_k, encoder_activation=current_hp.encoder_activation,
                           tiny_encoder=current_hp.tiny_encoder)
         network.load_state_dict(torch.load('./results/cpc_trained/' + model_address + '.pth', map_location='cpu'))
-        network = cudize(network)
+        network = cudize(network.eval())
+        collected_results = []
         for i in range(10):  # for stability checks
             real_stats, real_ndb = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                                   skip_depth, num_samples, 'normal', current_hp, real_ndb)
+                                                   skip_depth, num_samples, 'normal', current_hp, real_ndb, None)
             val_stats, _ = calculate_stats(val_dataset, network, progression_scale_up, progression_scale_down,
-                                           skip_depth,
-                                           num_samples, 'normal', current_hp, real_ndb)
+                                           skip_depth, num_samples, 'validation', current_hp, real_ndb, real_stats)
             permuted_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                                skip_depth, num_samples, 'permute', current_hp, real_ndb)
+                                                skip_depth, num_samples, 'permute', current_hp, real_ndb, real_stats)
             shifted_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                               skip_depth, num_samples, 'shift', current_hp, real_ndb)
+                                               skip_depth, num_samples, 'shift', current_hp, real_ndb, real_stats)
             concatenated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
-                                                    progression_scale_down,
-                                                    skip_depth, num_samples, 'concat', current_hp, real_ndb)
-            downsampled_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                                   skip_depth, num_samples, 'downsample', current_hp, real_ndb)
+                                                    progression_scale_down, skip_depth, num_samples, 'concat',
+                                                    current_hp, real_ndb, real_stats)
             tiny_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                            skip_depth, num_samples, 'tiny', current_hp, real_ndb)
+                                            skip_depth, num_samples, 'tiny', current_hp, real_ndb, real_stats)
             zeroed_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                              skip_depth, num_samples, 'zero', current_hp, real_ndb)
+                                              skip_depth, num_samples, 'zero', current_hp, real_ndb, real_stats)
             noised_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                              skip_depth, num_samples, 'noise', current_hp, real_ndb)
+                                              skip_depth, num_samples, 'noise', current_hp, real_ndb, real_stats)
             collapsed_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                                 skip_depth, num_samples, 'collapse', current_hp, real_ndb)
+                                                 skip_depth, num_samples, 'collapse', current_hp, real_ndb, real_stats)
+            collected_results.append({**real_stats, **val_stats, **permuted_stats, **shifted_stats, **collapsed_stats,
+                                      **concatenated_stats, **tiny_stats, **zeroed_stats, **noised_stats})
             # TODO (over time and different truncation threshold)
             # normal_generated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
             #                                             progression_scale_down, skip_depth, num_samples, 'generated',
-            #                                             current_hp, real_ndb)
+            #                                             current_hp, real_ndb, real_stats)
             # averaged_generated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
             #                                               progression_scale_down, skip_depth, num_samples, 'averaged',
-            #                                               current_hp, real_ndb)
+            #                                               current_hp, real_ndb, real_stats)
             # truncated_generated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
             #                                                progression_scale_down, skip_depth, num_samples,
-            #                                                'truncation', current_hp, real_ndb)
+            #                                                'truncation', current_hp, real_ndb, real_stats)
+        # calc std for each stats ([{key(mode_n): {key(seq_len): {meter: value}}}])
+        final_result[model_address] = {mode: {seq_len: {meter: (
+            np.mean([collected_results[j][mode][seq_len][meter] for j in range(10)]),
+            np.std([collected_results[j][mode][seq_len][meter] for j in range(10)])) for meter in
+            {'prediction_loss', 'prediction_acc', 'global_loss',
+             'global_acc', 'local_loss', 'local_acc', 'c_fid_max_seq_len',
+             'z_fid_max_seq_len', 'cp_fid_max_seq_len',
+             'zp_fid_max_seq_len', 'net_loss', 'ndb_score', 'ndb_js',
+             'c_fid', 'z_fid', 'zp_fid', 'cp_fid'}} for seq_len in
+            collected_results[0][mode].keys()} for mode in
+            collected_results[0].keys()}
+    return final_result
 
 
 if __name__ == '__main__':
-    main(1024 * 32)
+    results = main(num_samples=1024 * 32)
+    save_pkl('./results/cpc_eval.pkl', results)
+    print(results)
