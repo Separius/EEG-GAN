@@ -5,6 +5,7 @@ from dataset import ThinEEGDataset
 import torch
 import numpy as np
 from torch.optim import Adam
+from pytorch_pretrained_bert import BertAdam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, SubsetRandomSampler
 
@@ -21,6 +22,9 @@ hp = AttrDict(
     causal_prediction=True,
     use_transformer=False,
 
+    use_scheduler=True,
+    use_bert_adam=False,
+
     bidirectional=False,
 
     prediction_loss_weight=3.0,
@@ -28,7 +32,7 @@ hp = AttrDict(
     local_loss_weight=2.0,
 
     contextualizer_num_layers=1,
-    contextualizer_dropout=0.0,
+    contextualizer_dropout=0,
     encoder_dropout=0.1,
     encoder_activation='relu',  # glu or relu
     tiny_encoder=False,
@@ -68,8 +72,13 @@ def main(summary):
                              encoder_activation=hp.encoder_activation, tiny_encoder=hp.tiny_encoder))
     num_parameters = num_params(network)
     print('num_parameters', num_parameters)
-    network_optimizer = Adam(network.parameters(), lr=hp.lr, weight_decay=hp.weight_decay)
-    scheduler = ReduceLROnPlateau(network_optimizer, patience=3, verbose=True)
+    if hp.use_bert_adam:
+        network_optimizer = BertAdam(network.parameters(), lr=hp.lr, weight_decay=hp.weight_decay,
+                                     warmup=0.2, t_total=hp.epochs * len(train_dataloader), schedule='warmup_linear')
+    else:
+        network_optimizer = Adam(network.parameters(), lr=hp.lr, weight_decay=hp.weight_decay)
+    if hp.use_scheduler:
+        scheduler = ReduceLROnPlateau(network_optimizer, patience=3, verbose=True)
     best_val_loss = float('inf')
     for epoch in range(hp.epochs):
         for training, data_loader in zip((False, True), (val_dataloader, train_dataloader)):
@@ -129,7 +138,7 @@ def main(summary):
                            global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy,
                            local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy,
                            net_loss=total_network_loss)
-            if not training:
+            if not training and hp.use_scheduler:
                 scheduler.step(metrics['net_loss'])
             if summary:
                 print('train' if training else 'validation', epoch, metrics['net_loss'])
@@ -137,6 +146,7 @@ def main(summary):
                 print('train' if training else 'validation', epoch, metrics)
             if not training and (metrics['net_loss'] < best_val_loss):
                 best_val_loss = metrics['net_loss']
+                print('update best to', best_val_loss)
                 torch.save(network.state_dict(), 'best_network.pth')
 
 

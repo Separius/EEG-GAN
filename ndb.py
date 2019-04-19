@@ -83,7 +83,7 @@ class NDB:
         self.ref_sample_size = n
         self.__write_to_bins_file(bins_file)
 
-    def evaluate(self, query_samples, model_label=None):
+    def evaluate(self, query_samples):
         """
         Assign each sample to the nearest bin center (in L2). Pre-whiten if required. and calculate the NDB
         (Number of statistically Different Bins) and JS divergence scores.

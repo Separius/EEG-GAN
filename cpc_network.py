@@ -1,6 +1,3 @@
-from cpc_loss import KPredLoss, OneOneMI, SeqOneMI
-from utils import cudize
-
 import math
 import torch
 import numpy as np
@@ -9,24 +6,28 @@ import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 from pytorch_pretrained_bert.modeling import BertLayer
 
+from utils import cudize
+from cpc_loss import KPredLoss, OneOneMI, SeqOneMI
 
-class SincWrapper(nn.Module):
-    def __init__(self, num_channels, is_shared=True):
+
+class SincEncoder(nn.Module):
+    def __init__(self, num_channels, is_shared=True, kernel_size=121,
+                 num_kernels=16, sample_rate=60.0, min_low_hz=0.0, min_band_hz=1.0):
         super().__init__()
         self.is_shared = is_shared
         if is_shared:
-            self.sinc = SincConv_fast(121, 16)
+            self.sinc = SincConv(kernel_size, num_kernels, sample_rate, min_low_hz, min_band_hz)
         else:
-            self.sinc = nn.ModuleList([SincConv_fast(121, 8) for i in range(num_channels)])
+            self.sinc = nn.ModuleList([SincConv(kernel_size, num_kernels) for i in range(num_channels)])
 
     def forward(self, x):
         B, C, T = x.shape
         if self.is_shared:
-            return self.sinc(x.view(B * C, 1, T)).view(B, 16 * C, T)
+            return self.sinc(x.view(B * C, 1, T)).view(B, -1, T)
         return torch.cat([self.sinc[i](x[:, i:i + 1, :]) for i in range(C)], dim=1)
 
 
-class SincConv_fast(nn.Module):
+class SincConv(nn.Module):
     def __init__(self, kernel_size, out_channels, sample_rate=60.0, min_low_hz=0.0, min_band_hz=1.0):
         super().__init__()
         self.out_channels = out_channels
@@ -84,7 +85,7 @@ class PriorDiscriminator(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, input_channels=5, long=False, use_pooling=False, activation='glu',
+    def __init__(self, input_channels=5, long=True, use_pooling=False, activation='relu',
                  dropout=0.1, use_sinc=False, shared_sinc=True, tiny=False):
         super().__init__()
         activation = activation.lower()
@@ -113,7 +114,7 @@ class ConvEncoder(nn.Module):
             raise ValueError('invalid activation')
         net = []
         if use_sinc:
-            net.append(SincWrapper(input_channels, shared_sinc))
+            net.append(SincEncoder(input_channels, shared_sinc))
             multiplier = 2 if shared_sinc else 1
             net.append(nn.Conv1d(input_channels * multiplier * 8, input_channels * multiplier * 2, 1))
             net.append(nn.ReLU())
@@ -161,7 +162,7 @@ class PNormPooling(nn.Module):
 
 
 class AutoRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, bidirectional=True, cell_type='GRU', num_layers=1, dropout=0.0):
+    def __init__(self, input_size, hidden_size, bidirectional=False, cell_type='GRU', num_layers=1, dropout=0):
         super().__init__()
         cell_type = cell_type.lower()
         if cell_type == 'gru':
@@ -195,8 +196,8 @@ class Transformer(nn.Module):
             self.num_attention_heads = num_heads
             self.attention_probs_dropout_prob = dropout
             self.hidden_dropout_prob = dropout
-            self.intermediate_size = hidden_size * 4
-            self.hidden_act = 'gelu'
+            self.intermediate_size = hidden_size * 2
+            self.hidden_act = 'gelu'  # gelu, relu, swish
 
     def create_attention_mask(self, seq_len, forward=True):
         if self.causal:
@@ -208,8 +209,8 @@ class Transformer(nn.Module):
             attention_mask = torch.ones(1, 1, 1, seq_len)
         return (1.0 - attention_mask) * -10000.0
 
-    def __init__(self, input_size, causal=True, bidirectional=True,
-                 num_layers=3, num_heads=8, dropout=0.0, max_seq_len=32):
+    def __init__(self, input_size, causal=True, bidirectional=False,
+                 num_layers=3, num_heads=4, dropout=0.2, max_seq_len=32):
         super().__init__()
         self.pos_embedding = nn.Embedding(max_seq_len, input_size)
         self.causal = causal
@@ -243,8 +244,8 @@ class Transformer(nn.Module):
 class Network(nn.Module):
     def __init__(self, input_channels, generate_long_sequence=True, pooling=False, encoder_dropout=0.1,
                  use_sinc_encoder=False, use_shared_sinc=True, bidirectional=False, contextualizer_num_layers=1,
-                 contextualizer_dropout=0.0, use_transformer=False, causal_prediction=True, prediction_k=4,
-                 encoder_activation='glu', tiny_encoder=True):
+                 contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
+                 encoder_activation='relu', tiny_encoder=True):
         super().__init__()
         encoder = ConvEncoder(input_channels=input_channels, long=generate_long_sequence, use_pooling=pooling,
                               activation=encoder_activation, dropout=encoder_dropout, use_sinc=use_sinc_encoder,
@@ -252,7 +253,7 @@ class Network(nn.Module):
         z_pooler = PNormPooling(encoder.z_size)
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
-                                         num_heads=8, max_seq_len=32 if generate_long_sequence else 16,
+                                         num_heads=4, max_seq_len=32 if generate_long_sequence else 16,
                                          num_layers=contextualizer_num_layers, dropout=contextualizer_dropout)
         else:
             contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=2 * encoder.z_size,

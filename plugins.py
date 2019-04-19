@@ -643,8 +643,8 @@ class FidCalculator(Plugin):
 
 
 class NDBScore(Plugin):
-    def __init__(self, create_dataloader_fun, output_dir, output_snapshot_ticks=25, number_bins=100,
-                 num_samples=1024 * 32):
+    def __init__(self, create_dataloader_fun, output_dir, output_snapshot_ticks=25,
+                 number_bins=100, num_samples=1024 * 32):
         super().__init__([(1, 'epoch')])
         self.output_dir = output_dir
         self.create_dataloader_fun = create_dataloader_fun
