@@ -7,6 +7,7 @@ from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, merg
 
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 
@@ -209,33 +210,68 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
                            net_loss=total_network_loss, ndb_score=ndb, ndb_js=js)
             if test_mode:
                 print(metrics)
-            metrics.update(
-                {**calc_mean_cov('z', torch.cat(all_z, dim=0)), **calc_mean_cov('c', torch.cat(all_c, dim=0)),
-                 **calc_mean_cov('zp', torch.cat(all_zp, dim=0)), **calc_mean_cov('cp', torch.cat(all_cp, dim=0))})
-            if real_stats is not None:
-                for name in ['z', 'c', 'zp', 'cp']:
+            all_z = torch.cat(all_z, dim=0)
+            all_c = torch.cat(all_c, dim=0)
+            all_zp = torch.cat(all_zp, dim=0)
+            all_cp = torch.cat(all_cp, dim=0)
+            for (name, all_name) in zip(['z', 'c', 'zp', 'cp'], [all_z, all_c, all_zp, all_cp]):
+                all_name = cudize(all_name)
+                mean_cov = calc_mean_cov(name, all_name)
+                if real_stats is None:
+                    trained_vin = train_virtual_inception_network(all_name)
+                    metrics.update({**mean_cov, name + '_fid': 0.0,
+                                    name + '_virtual_inception_network': trained_vin})
+                else:
+                    trained_vin = real_stats['normal'][seq_len][name + '_virtual_inception_network']
                     metrics.update({name + '_fid': FidCalculator.calc_fid(real_stats['normal'][seq_len][name + '_mean'],
                                                                           real_stats['normal'][seq_len][name + '_cov'],
-                                                                          metrics[name + '_mean'],
-                                                                          metrics[name + '_cov'])})
-                    if seq_len == max_seq_len:
-                        metrics.update({name + '_fid_max_seq_len': metrics[name + '_fid']})
-                    else:
-                        metrics.update({name + '_fid_max_seq_len': FidCalculator.calc_fid(
-                            real_stats['normal'][max_seq_len][name + '_mean'],
-                            real_stats['normal'][max_seq_len][name + '_cov'], metrics[name + '_mean'],
-                            metrics[name + '_cov'])})
-            stats[seq_len] = metrics
-            if real_stats is None:  # we are the real_stats
-                if seq_len != max_seq_len:
-                    for name in ['z', 'c', 'zp', 'cp']:
-                        stats[seq_len].update({name + '_fid_max_seq_len': FidCalculator.calc_fid(
-                            stats[max_seq_len][name + '_mean'], stats[max_seq_len][name + '_cov'],
-                            metrics[name + '_mean'], metrics[name + '_cov']), name + '_fid': 0.0})
+                                                                          mean_cov[name + '_mean'],
+                                                                          mean_cov[name + '_cov'])})
+                metrics.update({name + '_vis': calculate_inception_score(all_name, trained_vin)})
+                if seq_len == max_seq_len:
+                    metrics.update({name + '_fid_max_seq_len': metrics[name + '_fid'],
+                                    name + '_vis_max_seq_len': metrics[name + '_vis']})
                 else:
-                    for name in ['z', 'c', 'zp', 'cp']:
-                        stats[seq_len].update({name + '_fid_max_seq_len': 0.0, name + '_fid': 0.0})
+                    if real_stats is None:
+                        working_real_stats = stats[max_seq_len]
+                    else:
+                        working_real_stats = real_stats['normal'][max_seq_len]
+                    max_mean = working_real_stats[name + '_mean']
+                    max_cov = working_real_stats[name + '_cov']
+                    max_vin = working_real_stats[name + '_virtual_inception_network']
+                    metrics.update({name + '_fid_max_seq_len': FidCalculator.calc_fid(max_mean, max_cov,
+                                                                                      mean_cov[name + '_mean'],
+                                                                                      mean_cov[name + '_cov']),
+                                    name + '_vis_max_seq_len': calculate_inception_score(all_name, max_vin)})
+            stats[seq_len] = metrics
     return stats
+
+
+def calculate_inception_score(x, inception_network):
+    with torch.no_grad():
+        pred = inception_network(x).cpu().numpy()
+    kl_inception = pred * (np.log(pred) - np.log(np.expand_dims(np.mean(pred, 0), 0)))
+    return np.mean(np.exp(np.mean(np.sum(kl_inception, 1))))
+
+
+def train_virtual_inception_network(x, num_virtual_classes=32, num_epochs=1000):
+    model = cudize(torch.nn.Sequential(torch.nn.Linear(x.size(1), num_virtual_classes), torch.nn.Softmax(dim=1)))
+    optim = torch.optim.Adam(model.parameters(), lr=0.001)
+    for i in range(num_epochs):
+        pred = model(x)
+        entropy = (pred.mean(dim=0) * torch.log(pred.mean(dim=0))).sum()
+        sparsity = ((pred.max(dim=1)[0] - 1.0) ** 2).mean()
+        loss = 1.0 * entropy + 2.5 * sparsity
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
+    if test_mode:
+        with torch.no_grad():
+            print(model(x[:128]).max(dim=1)[0])
+            print(model(x).max(dim=1)[0].mean().item())
+            plt.hist(model(x).max(dim=1)[1].cpu().numpy(), bins=num_virtual_classes)
+            plt.show()
+    return model
 
 
 def main(num_samples):
@@ -309,11 +345,11 @@ def main(num_samples):
         final_result[model_address] = {mode: {seq_len: {meter: (
             np.mean([collected_results[j][mode][seq_len][meter] for j in range(2 if test_mode else 10)]),
             np.std([collected_results[j][mode][seq_len][meter] for j in range(2 if test_mode else 10)])) for meter in
-            {'prediction_loss', 'prediction_acc', 'global_loss',
-             'global_acc', 'local_loss', 'local_acc', 'c_fid_max_seq_len',
-             'z_fid_max_seq_len', 'cp_fid_max_seq_len',
-             'zp_fid_max_seq_len', 'net_loss', 'ndb_score', 'ndb_js',
-             'c_fid', 'z_fid', 'zp_fid', 'cp_fid'}} for seq_len in
+            {'prediction_loss', 'prediction_acc', 'global_loss', 'global_acc', 'local_loss', 'local_acc',
+             'c_fid_max_seq_len', 'z_fid_max_seq_len', 'cp_fid_max_seq_len', 'zp_fid_max_seq_len', 'net_loss',
+             'ndb_score', 'ndb_js', 'c_fid', 'z_fid', 'zp_fid', 'cp_fid', 'z_vis_max_seq_len', 'z_vis',
+             'c_vis_max_seq_len', 'c_vis', 'zp_vis_max_seq_len', 'zp_vis', 'cp_vis_max_seq_len', 'cp_vis'}} for seq_len
+            in
             collected_results[0][mode].keys()} for mode in
             collected_results[0].keys()}
     return final_result
