@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 from pytorch_pretrained_bert.modeling import BertLayer
 
-from utils import cudize
 from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI
 
 
@@ -88,6 +87,7 @@ class ConvEncoder(nn.Module):
     def __init__(self, input_channels=5, long=True, use_pooling=False, activation='relu',
                  dropout=0.1, use_sinc=False, shared_sinc=True, tiny=False):
         super().__init__()
+        # TODO add residual connections?
         activation = activation.lower()
         if long:  # generates 32 codes of size 128
             down_ratios = [5, 4, 3]
@@ -225,7 +225,7 @@ class Transformer(nn.Module):
             self.backward_transformer = None
 
     def forward(self, x):  # BCT
-        pos_embedding = self.pos_embedding(cudize(torch.arange(x.size(2)))).permute(1, 0).unsqueeze(0)
+        pos_embedding = self.pos_embedding(torch.arange(x.size(2)).to(x.device)).permute(1, 0).unsqueeze(0)
         forward_mask = self.create_attention_mask(x.size(2), True).to(x)
         forward_output = (x + pos_embedding).permute(0, 2, 1)
         for bl in self.forward_transformer:
@@ -245,12 +245,15 @@ class Network(nn.Module):
     def __init__(self, input_channels, generate_long_sequence=True, pooling=False, encoder_dropout=0.1,
                  use_sinc_encoder=False, use_shared_sinc=True, bidirectional=False, contextualizer_num_layers=1,
                  contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
-                 encoder_activation='relu', tiny_encoder=True):
+                 encoder_activation='relu', tiny_encoder=True, have_global=True, have_local=True, cross_entropy=True):
         super().__init__()
         encoder = ConvEncoder(input_channels=input_channels, long=generate_long_sequence, use_pooling=pooling,
                               activation=encoder_activation, dropout=encoder_dropout, use_sinc=use_sinc_encoder,
                               shared_sinc=use_shared_sinc, tiny=tiny_encoder)
-        z_pooler = PNormPooling(encoder.z_size)
+        if have_global:
+            z_pooler = PNormPooling(encoder.z_size)
+        else:
+            z_pooler = None
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
                                          num_heads=4, max_seq_len=32 if generate_long_sequence else 16,
@@ -259,12 +262,23 @@ class Network(nn.Module):
             contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=2 * encoder.z_size,
                                      bidirectional=bidirectional, num_layers=contextualizer_num_layers,
                                      dropout=contextualizer_dropout, cell_type='GRU')
-        c_pooler = PNormPooling(contextualizer.c_size)
+        if have_global or have_local:
+            c_pooler = PNormPooling(contextualizer.c_size)
+        else:
+            c_pooler = None
         prediction_loss_network = KPredLoss(contextualizer.c_size, encoder.z_size, k=prediction_k,
-                                            auto_is_bidirectional=bidirectional, look_both=not causal_prediction)
-        mi_hidden_size = min(c_pooler.pool_size, z_pooler.pool_size) * 2
-        c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size, hidden_size=mi_hidden_size)
-        c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size, hidden_size=mi_hidden_size)
+                                            cross_entropy=cross_entropy, auto_is_bidirectional=bidirectional,
+                                            look_both=not causal_prediction)
+        if have_global:
+            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size,
+                                            hidden_size=min(c_pooler.pool_size, z_pooler.pool_size) * 2)
+        else:
+            c_pooled_mi_z_pooled = None
+        if have_local:
+            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size,
+                                     hidden_size=min(c_pooler.pool_size, encoder.z_size) * 2)
+        else:
+            c_pooled_mi_z = None
 
         self.encoder = encoder
         self.z_pooler = z_pooler
@@ -274,29 +288,41 @@ class Network(nn.Module):
         self.c_pooled_mi_z_pooled = c_pooled_mi_z_pooled
         self.c_pooled_mi_z = c_pooled_mi_z
 
-    def forward(self, x):
+    def forward(self, x, return_all=False):
         z = self.encoder(x)
-        z_pooled = self.z_pooler(z)
+        if self.z_pooler is not None:
+            z_pooled = self.z_pooler(z)
+        else:
+            z_pooled = z.mean(dim=2)
         c = self.contextualizer(z)
-        c_pooled = self.c_pooler(c)
+        if self.c_pooler is not None:
+            c_pooled = self.c_pooler(c)
+        else:
+            c_pooled = c.mean(dim=2)
         prediction_loss, pred_acc = self.prediction_loss_network(c, z)
-        global_discriminator_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
-        local_discriminator_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
-        return prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_acc
+        if self.c_pooled_mi_z_pooled is not None:
+            global_discriminator_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
+        else:
+            global_discriminator_loss, global_accuracy = torch.tensor(0.0).to(c_pooled), [0.0, 0.0]
+        if self.c_pooled_mi_z is not None:
+            local_discriminator_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
+        else:
+            local_discriminator_loss, local_accuracy = torch.tensor(0.0).to(c_pooled), [0.0, 0.0]
+        return_values = prediction_loss, global_discriminator_loss, local_discriminator_loss, \
+                        global_accuracy, local_accuracy, pred_acc
+        if return_all:
+            return return_values, z, c, z_pooled, c_pooled
+        return return_values
 
     def inference_forward(self, x):
         z = self.encoder(x)
-        z_pooled = self.z_pooler(z)
+        if self.z_pooler is not None:
+            z_pooled = self.z_pooler(z)
+        else:
+            z_pooled = z.mean(dim=2)
         c = self.contextualizer(z)
-        c_pooled = self.c_pooler(c)
+        if self.c_pooler is not None:
+            c_pooled = self.c_pooler(c)
+        else:
+            c_pooled = c.mean(dim=2)
         return z, c, z_pooled, c_pooled
-
-    def complete_forward(self, x):
-        z = self.encoder(x)
-        z_pooled = self.z_pooler(z)
-        c = self.contextualizer(z)
-        c_pooled = self.c_pooler(c)
-        prediction_loss, pred_acc = self.prediction_loss_network(c, z)
-        global_discriminator_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
-        local_discriminator_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
-        return prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_acc, z, c, z_pooled

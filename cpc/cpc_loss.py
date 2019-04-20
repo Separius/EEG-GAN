@@ -186,17 +186,18 @@ class SeqOneMI(nn.Module):
 
 class KPredLoss(nn.Module):
     def __init__(self, c_size, z_size, k=4, measure='JSD', mode='bilinear',
-                 auto_is_bidirectional=True, look_both=False):
+                 auto_is_bidirectional=True, look_both=False, cross_entropy=False):
         super().__init__()
-        assert k > 0
+        if k <= 0:
+            k = 0
         self.k = k
+        self.cross_entropy = cross_entropy
         self.split_c = auto_is_bidirectional and not look_both
         self.bidirectional = auto_is_bidirectional
         measure = measure.upper()
         mode = mode.lower()
         self.measure = measure
         self.mode = mode
-
         c_size = (c_size // 2) if self.split_c else c_size
         if self.mode == 'bilinear':
             self.forward_weights = []
@@ -219,6 +220,16 @@ class KPredLoss(nn.Module):
         positive_mask[b, :] = 1.0
         return calc_one_way_loss(u, positive_mask, mean_dim, self.measure)
 
+    @staticmethod
+    def calc_cross_entropy_loss(u, softmax_dim, target_id):
+        if softmax_dim == 0:
+            _u = u.permute(1, 0, 2)
+        elif softmax_dim == 2:
+            _u = u.permute(0, 2, 1)
+        else:
+            _u = u
+        return F.cross_entropy(_u, (torch.ones(_u.size(0), _u.size(2)) * target_id).long().to(u.device))
+
     def calc_both_way_loss_t(self, c_flat, z_flat, weight):
         t = z_flat.size(2)
         t = np.random.randint(t)
@@ -227,7 +238,10 @@ class KPredLoss(nn.Module):
         else:
             u = torch.einsum('bzt,dz->btd', c_flat, z_flat[..., t])
         acc1 = (u.argmax(dim=1) == t).sum().item() / (u.size(0) * u.size(1))
-        first_loss = self.calc_one_way_loss_t(u, t, torch.zeros(u.size(0), u.size(1)).to(u), 2)
+        if self.cross_entropy:
+            first_loss = self.calc_cross_entropy_loss(u, 1, t)
+        else:
+            first_loss = self.calc_one_way_loss_t(u, t, torch.zeros(u.size(0), u.size(1)).to(u), 2)
         t = c_flat.size(2)
         t = np.random.randint(t)
         if self.mode == 'bilinear':
@@ -235,7 +249,11 @@ class KPredLoss(nn.Module):
         else:
             u = torch.einsum('bz,dzt->bdt', c_flat[..., t], z_flat)
         acc2 = (u.argmax(dim=2) == t).sum().item() / (u.size(1) * u.size(2))
-        return first_loss + self.calc_one_way_loss_t(u, t, torch.zeros(u.size(1), u.size(2)).to(u), 0), (acc1, acc2)
+        if self.cross_entropy:
+            second_loss = self.calc_cross_entropy_loss(u, 2, t)
+        else:
+            second_loss = self.calc_one_way_loss_t(u, t, torch.zeros(u.size(1), u.size(2)).to(u), 0)
+        return first_loss + second_loss, (acc1, acc2)
 
     def calc_both_way_loss_b(self, c_flat, z_flat, weight):
         b = z_flat.size(0)
@@ -245,7 +263,10 @@ class KPredLoss(nn.Module):
         else:
             u = torch.einsum('bzt,zi->bti', c_flat, z_flat[b])
         acc1 = (u.argmax(dim=0) == b).sum().item() / (u.size(0) * u.size(1))
-        first_loss = self.calc_one_way_loss_b(u, b, torch.zeros(u.size(0), u.size(1)).to(u), 2)
+        if self.cross_entropy:
+            first_loss = self.calc_cross_entropy_loss(u, 0, b)
+        else:
+            first_loss = self.calc_one_way_loss_b(u, b, torch.zeros(u.size(0), u.size(1)).to(u), 2)
         b = c_flat.size(0)
         b = np.random.randint(b)
         if self.mode == 'bilinear':
@@ -253,14 +274,29 @@ class KPredLoss(nn.Module):
         else:
             u = torch.einsum('zt,dzi->tdi', c_flat[b], z_flat)
         acc2 = (u.argmax(dim=1) == b).sum().item() / (u.size(1) * u.size(2))
-        return first_loss + self.calc_one_way_loss_b(u, b, torch.zeros(u.size(1), u.size(2)).to(u), 0), (acc1, acc2)
+        if self.cross_entropy:
+            second_loss = self.calc_cross_entropy_loss(u, 1, b)
+        else:
+            second_loss = self.calc_one_way_loss_b(u, b, torch.zeros(u.size(1), u.size(2)).to(u), 0)
+        return first_loss + second_loss, (acc1, acc2)
 
     def calc_four_way_loss(self, c_flat, z_flat, weight):
         t_loss, t_acc = self.calc_both_way_loss_t(c_flat, z_flat, weight)
         b_loss, b_acc = self.calc_both_way_loss_b(c_flat, z_flat, weight)
         return t_loss + b_loss, t_acc, b_acc
 
+    def calc_full_cross_entropy_loss(self, c_flat, z_flat, weights):
+        c_flat = c_flat.contiguous().view(-1, c_flat.size(1))
+        z_flat = z_flat.contiguous().view(-1, z_flat.size(1))
+        u = torch.einsum('bc,cz,dz->bd', c_flat, weights, z_flat)
+        targets = torch.arange(u.size(0)).to(u.device)
+        acc = (u.argmax(1) == targets).sum().item() / u.size(0)
+        f_loss = F.cross_entropy(u, targets)
+        return f_loss, (acc, acc), (acc, acc)
+
     def forward(self, c, z):
+        if self.k == 0:
+            return torch.tensor(0.0).to(c), {}
         B, c_size, T = c.size()
         if self.split_c:
             c_size = c_size // 2
@@ -269,15 +305,20 @@ class KPredLoss(nn.Module):
         for i in range(self.k):
             c_flat = c[:, :c_size, :-(i + 1)]
             z_flat = z[..., (i + 1):]
-            f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.forward_weights[i])
+            if self.cross_entropy:  # this is the safe version
+                f_loss, t_acc, b_acc = self.calc_full_cross_entropy_loss(c_flat, z_flat, self.forward_weights[i])
+            else:
+                f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.forward_weights[i])
             accs['f_{}_t'.format(i + 1)] = t_acc
             accs['f_{}_b'.format(i + 1)] = b_acc
             total_loss = total_loss + f_loss
-        if self.bidirectional:
-            for i in range(self.k):
+            if self.bidirectional:
                 c_flat = c[:, -c_size:, (i + 1):]
                 z_flat = z[..., :-(i + 1)]
-                f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.backward_weights[i])
+                if self.cross_entropy:  # this is the safe version
+                    f_loss, t_acc, b_acc = self.calc_full_cross_entropy_loss(c_flat, z_flat, self.forward_weights[i])
+                else:
+                    f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.backward_weights[i])
                 accs['b_{}_t'.format(i + 1)] = t_acc
                 accs['b_{}_b'.format(i + 1)] = b_acc
                 total_loss = total_loss + f_loss

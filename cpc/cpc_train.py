@@ -10,13 +10,14 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, SubsetRandomSampler
 
 hp = AttrDict(
-    generate_long_sequence=True,
-    pool_or_stride='stride',
+    generate_long_sequence=True,  # 32 vs 16
+    pool_or_stride='stride',  # max pooling tends to overfit
     use_shared_sinc=True,
-    seed=12658,
+    seed=12658,  # used when val=0
     prediction_k=4,
-    validation_ratio=0.1,
-    ds_stride=0.5,
+    cross_entropy=True,
+    validation_ratio=0,
+    ds_stride=1,
     num_channels=17,
     use_sinc_encoder=False,
     causal_prediction=True,
@@ -33,18 +34,23 @@ hp = AttrDict(
 
     contextualizer_num_layers=1,
     contextualizer_dropout=0,
-    encoder_dropout=0.1,
+    encoder_dropout=0.2,  # used to be 0.1
     encoder_activation='relu',  # glu or relu
     tiny_encoder=False,
 
     batch_size=128,
     lr=2e-3,
-    epochs=32,
+    epochs=31,
     weight_decay=0.005,
 )
 
 
 def main(summary):
+    # TODO make these function
+    # TODO better encoder (residual)
+    # TODO better(cross entropy based) loss for global?
+    # TODO better(cross entropy based) loss for local??
+    # TODO have two flags for the cross entropy in prediction
     train_dataset, val_dataset = ThinEEGDataset.from_config(validation_ratio=hp.validation_ratio,
                                                             num_channels=hp.num_channels, stride=hp.ds_stride)
     if hp.validation_ratio == 0:
@@ -68,8 +74,10 @@ def main(summary):
                              use_sinc_encoder=hp.use_sinc_encoder, use_shared_sinc=hp.use_shared_sinc,
                              bidirectional=hp.bidirectional, contextualizer_num_layers=hp.contextualizer_num_layers,
                              contextualizer_dropout=hp.contextualizer_dropout, use_transformer=hp.use_transformer,
-                             causal_prediction=hp.causal_prediction, prediction_k=hp.prediction_k,
-                             encoder_activation=hp.encoder_activation, tiny_encoder=hp.tiny_encoder))
+                             causal_prediction=hp.causal_prediction, have_global=(hp.global_loss_weight != 0.0),
+                             prediction_k=hp.prediction_k * (hp.prediction_loss_weight != 0.0),
+                             encoder_activation=hp.encoder_activation, tiny_encoder=hp.tiny_encoder,
+                             have_local=(hp.local_loss_weight != 0.0), cross_entropy=hp.cross_entropy))
     num_parameters = num_params(network)
     print('num_parameters', num_parameters)
     if hp.use_bert_adam:
@@ -83,6 +91,8 @@ def main(summary):
     for epoch in range(hp.epochs):
         for training, data_loader in zip((False, True), (val_dataloader, train_dataloader)):
             if training:
+                if epoch == hp.epochs - 1:
+                    break
                 network.train()
             else:
                 network.eval()
@@ -99,7 +109,7 @@ def main(summary):
             with torch.set_grad_enabled(training):
                 for batch in data_loader:
                     x = cudize(batch)
-                    prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_accuracy = network(
+                    prediction_loss, global_discriminator_loss, local_discriminator_loss, global_accuracy, local_accuracy, pred_accuracy = network(
                         x)
                     global_accuracy_one, global_accuracy_two = global_accuracy
                     local_accuracy_one, local_accuracy_two = local_accuracy
@@ -133,11 +143,13 @@ def main(summary):
             total_local_discriminator_loss /= total_count
             total_local_accuracy = (total_local_accuracy_one + total_local_accuracy_two) / 2
             total_network_loss /= total_count
-
-            metrics = dict(prediction_loss=total_prediction_loss, prediction_acc=total_pred_acc,
-                           global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy,
-                           local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy,
-                           net_loss=total_network_loss)
+            metrics = dict(net_loss=total_network_loss)
+            if network.prediction_loss_network.k > 0:
+                metrics.update(dict(prediction_loss=total_prediction_loss, prediction_acc=total_pred_acc))
+            if hp.global_loss_weight != 0:
+                metrics.update(dict(global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy))
+            if hp.local_loss_weight != 0:
+                metrics.update(dict(local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy))
             if not training and hp.use_scheduler:
                 scheduler.step(metrics['net_loss'])
             if summary:
@@ -151,4 +163,4 @@ def main(summary):
 
 
 if __name__ == '__main__':
-    main(summary=True)
+    main(summary=False)

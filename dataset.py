@@ -21,7 +21,11 @@ DATASET_VERSION = 6
 !gdown --id 1kqU1fFINqknRyIyxw9ameGdi4LJzqE-s
 !gdown --id 1g6363MyMk0pSgwdPN-wW4mFjI98HKmEM
 !gdown --id 1lW4IyO-dmjzTgTmvTvJNJrzLllxj-W2e
-#val=0, stride=0.5, num_channels=5
+#val=0, stride=1, num_channels=17
+!gdown --id 1Vw4sQDRyAEjnl1lH77D8PVkba954BvGG
+!gdown --id 1kv6w38Oyo3-PyaKqOEmSVYaKSc-DOZid
+!gdown --id 1xCNE-zIV6fMFPSxRye1V8X7BVwgS_tYF
+!gdown --id 14vvrnu8LfJy_BAwWRvAFzrLR8zPqv2uv
 '''
 
 

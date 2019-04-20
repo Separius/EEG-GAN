@@ -265,6 +265,8 @@ def divide_dict(base, size):
 
 
 def merge_pred_accs(all_pred_acc, K, bidir):
+    if K <= 0:
+        return 0.0
     # 'f/b_k_t/b': [0.04077060931899642, 0.03391017025089606]
     acc_k_b = {k + 1: [] for k in range(K)}
     acc_k_t = {k + 1: [] for k in range(K)}
