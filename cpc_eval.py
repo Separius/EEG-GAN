@@ -35,8 +35,7 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
                     num_samples, mode, current_hp, real_ndb, real_stats):
     samples = {'normal': [], 'permute_0': [], 'permute_1': [], 'permute_2': [], 'permute_3': [], 'shift_0': [],
                'shift_1': [], 'shift_2': [], 'shift_3': [], 'concat': [], 'zero_0': [], 'zero_1': [], 'zero_2': [],
-               'zero_3': [], 'zero_4': [], 'noise_1': [], 'noise_2': [], 'noise_3': [], 'collapse': [],
-               'validation': [], 'tiny': []}
+               'zero_3': [], 'zero_4': [], 'noise_1': [], 'noise_2': [], 'noise_3': [], 'validation': [], 'tiny': []}
     if mode in ['shift']:
         i = 0
         while i < num_samples:
@@ -50,16 +49,18 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
             start = np.random.randint(dataset.seq_len - 100)
             samples['shift_0'].append(
                 torch.cat([x[0:1, start:start + dataset.seq_len], x[1:, start + 10:start + 10 + dataset.seq_len]],
-                          dim=1).unsqueeze(0))
+                          dim=0).unsqueeze(0))
             samples['shift_1'].append(
                 torch.cat([x[0:2, start:start + dataset.seq_len], x[2:, start + 50:start + 50 + dataset.seq_len]],
-                          dim=1).unsqueeze(0))
+                          dim=0).unsqueeze(0))
+            if test_mode:
+                continue
             samples['shift_2'].append(
                 torch.cat([x[-1:, start:start + dataset.seq_len], x[:-1, start + 50:start + 50 + dataset.seq_len]],
-                          dim=1).unsqueeze(0))
+                          dim=0).unsqueeze(0))
             samples['shift_3'].append(
                 torch.cat([x[-2:, start:start + dataset.seq_len], x[:-2, start + 10:start + 10 + dataset.seq_len]],
-                          dim=1).unsqueeze(0))
+                          dim=0).unsqueeze(0))
     elif mode in ['zero']:
         dataloader = DataLoader(dataset, batch_size=current_hp.batch_size, shuffle=True, drop_last=True)
         i = 0
@@ -69,20 +70,22 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
             samples['zero_0'].append(
                 torch.cat([b[:, 0:3],
                            torch.zeros(bs, dataset.num_channels - 3, dataset.seq_len)], dim=1))
-            samples['zero_1'].append(
-                torch.cat([b[:, 0:4],
-                           torch.zeros(bs, dataset.num_channels - 4, dataset.seq_len)], dim=1))
+            if not test_mode:
+                samples['zero_1'].append(
+                    torch.cat([b[:, 0:4],
+                               torch.zeros(bs, dataset.num_channels - 4, dataset.seq_len)], dim=1))
             start = np.random.randint(dataset.seq_len // 2)
             duration = np.random.randint(dataset.seq_len // 4)
             samples['zero_2'].append(torch.cat(
                 [torch.cat([b[:, 0:1, :start],
                             torch.zeros(bs, 1, duration), b[:, 0:1, start + duration:]], dim=2), b[:, 1:]], dim=1))
-            samples['zero_3'].append(torch.cat(
-                [torch.cat([b[:, 0:2, :start],
-                            torch.zeros(bs, 2, duration), b[:, 0:2, start + duration:]], dim=2), b[:, 2:]], dim=1))
-            samples['zero_4'].append(torch.cat([b[:, :, :start],
-                                                torch.zeros(bs, dataset.num_channels, dataset.seq_len),
-                                                b[:, :, start + duration:]], dim=2))
+            if not test_mode:
+                samples['zero_3'].append(torch.cat(
+                    [torch.cat([b[:, 0:2, :start],
+                                torch.zeros(bs, 2, duration), b[:, 0:2, start + duration:]], dim=2), b[:, 2:]], dim=1))
+                samples['zero_4'].append(torch.cat([b[:, :, :start],
+                                                    torch.zeros(bs, dataset.num_channels, dataset.seq_len),
+                                                    b[:, :, start + duration:]], dim=2))
             if i >= num_samples:
                 break
     elif mode in ['noise']:
@@ -92,17 +95,9 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
             bs = b.size(0)
             i += bs
             samples['noise_1'].append(b + torch.randn_like(b) * 0.01)
-            samples['noise_2'].append(b + torch.randn_like(b) * 0.05)
-            samples['noise_3'].append(b + torch.randn_like(b) * 0.2)
-            if i >= num_samples:
-                break
-    elif mode in ['collapse']:
-        dataloader = DataLoader(dataset, batch_size=current_hp.batch_size, shuffle=True, drop_last=True)
-        i = 0
-        for b in dataloader:
-            bs = b.size(0)
-            i += bs * 10
-            samples['collapse'].append(b.repeat(10, 1, 1))
+            if not test_mode:
+                samples['noise_2'].append(b + torch.randn_like(b) * 0.05)
+                samples['noise_3'].append(b + torch.randn_like(b) * 0.2)
             if i >= num_samples:
                 break
     elif mode in ['concat']:
@@ -116,9 +111,10 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
         for b in dataloader:
             if mode == 'permute':
                 samples['permute_0'].append(b[:, [1, 0, 2, 3, 4]])
-                samples['permute_1'].append(b[:, [0, 1, 2, 4, 3]])
-                samples['permute_2'].append(b[:, [0, 1, 3, 2, 4]])
-                samples['permute_3'].append(b[:, [4, 2, 1, 3, 0]])
+                if not test_mode:
+                    samples['permute_1'].append(b[:, [0, 1, 2, 4, 3]])
+                    samples['permute_2'].append(b[:, [0, 1, 3, 2, 4]])
+                    samples['permute_3'].append(b[:, [4, 2, 1, 3, 0]])
             else:
                 samples[mode].append(b)
             i += b.size(0)
@@ -148,6 +144,7 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
     seq_lens = [max_seq_len]
     for i in reversed(range(skip_depth, len(scale_up))):
         seq_lens = [int(seq_lens[0] * scale_down[i] / scale_up[i])] + seq_lens
+    seq_lens = reversed(seq_lens)
     stats = {}
     with torch.no_grad():
         for seq_len in seq_lens:
@@ -169,7 +166,7 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
             all_zp = []
             all_cp = []
             for i in range(x.size(0) // 128):
-                prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_accuracy = net(
+                prediction_loss, global_discriminator_loss, local_discriminator_loss, cp, global_accuracy, local_accuracy, pred_accuracy, z, c, zp = net.complete_forward(
                     cudize(this_x[i * 128:(i + 1) * 128]))
                 global_accuracy_one, global_accuracy_two = global_accuracy
                 local_accuracy_one, local_accuracy_two = local_accuracy
@@ -185,9 +182,9 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
                 total_local_accuracy_one += local_accuracy_one * this_batch_size
                 total_local_accuracy_two += local_accuracy_two * this_batch_size
                 dict_add(total_pred_acc, pred_accuracy, this_batch_size)
-                z, c, zp, cp = net.inference_forward(x)
-                all_z.append(z.view(-1, z.size(1)).cpu())
-                all_c.append(c.view(-1, z.size(1)).cpu())
+                # subsample z and c (assumes T = 32)
+                all_z.append(z[:8].contiguous().view(-1, z.size(1)).cpu())
+                all_c.append(c[:8].contiguous().view(-1, c.size(1)).cpu())
                 all_zp.append(zp.cpu())
                 all_cp.append(cp.cpu())
 
@@ -209,10 +206,14 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
             metrics = dict(prediction_loss=total_prediction_loss, prediction_acc=total_pred_acc,
                            global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy,
                            local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy,
-                           net_loss=total_network_loss, ndb_score=ndb, ndb_js=js, **calc_mean_cov('z', all_z),
-                           **calc_mean_cov('c', all_c), **calc_mean_cov('zp', all_zp), **calc_mean_cov('cp', all_cp))
+                           net_loss=total_network_loss, ndb_score=ndb, ndb_js=js)
+            if test_mode:
+                print(metrics)
+            metrics.update(
+                {**calc_mean_cov('z', torch.cat(all_z, dim=0)), **calc_mean_cov('c', torch.cat(all_c, dim=0)),
+                 **calc_mean_cov('zp', torch.cat(all_zp, dim=0)), **calc_mean_cov('cp', torch.cat(all_cp, dim=0))})
             if real_stats is not None:
-                for name, all_name in zip(['z', 'c', 'zp', 'cp'], [all_z, all_c, all_zp, all_cp]):
+                for name in ['z', 'c', 'zp', 'cp']:
                     metrics.update({name + '_fid': FidCalculator.calc_fid(real_stats['normal'][seq_len][name + '_mean'],
                                                                           real_stats['normal'][seq_len][name + '_cov'],
                                                                           metrics[name + '_mean'],
@@ -227,28 +228,31 @@ def calculate_network_stats(x, net: Network, scale_up, scale_down, skip_depth, c
             stats[seq_len] = metrics
             if real_stats is None:  # we are the real_stats
                 if seq_len != max_seq_len:
-                    for name, all_name in zip(['z', 'c', 'zp', 'cp'], [all_z, all_c, all_zp, all_cp]):
+                    for name in ['z', 'c', 'zp', 'cp']:
                         stats[seq_len].update({name + '_fid_max_seq_len': FidCalculator.calc_fid(
                             stats[max_seq_len][name + '_mean'], stats[max_seq_len][name + '_cov'],
-                            metrics[name + '_mean'], metrics[name + '_cov'])})
+                            metrics[name + '_mean'], metrics[name + '_cov']), name + '_fid': 0.0})
                 else:
                     for name in ['z', 'c', 'zp', 'cp']:
-                        stats[seq_len].update({name + '_fid_max_seq_len': 0.0})
+                        stats[seq_len].update({name + '_fid_max_seq_len': 0.0, name + '_fid': 0.0})
     return stats
 
 
 def main(num_samples):
     # NOTE, this are model dependent and it's far better to read them from a yml file
-    skip_depth = 0
+    skip_depth = 6 if test_mode else 0
     progression_scale_up = EEGDataset.progression_scale_up
     progression_scale_down = EEGDataset.progression_scale_down
-    train_dataset, val_dataset = ThinEEGDataset.from_config(validation_ratio=hp.validation_ratio,
-                                                            num_channels=hp.num_channels, stride=hp.ds_stride)
+    train_dataset, val_dataset = ThinEEGDataset.from_config(validation_ratio=hp.validation_ratio, stride=hp.ds_stride,
+                                                            dir_path='./data/tuh1/', num_channels=hp.num_channels)
     real_ndb = None
     final_result = {}
-    for current_hp, model_address in zip([hp, prediction_hp, local_hp],
-                                         ['default_-7.531810902716695', 'prediction_-2.450593529493725',
-                                          'local_-0.5012809535156667']):
+    if test_mode:
+        models_zip = zip([hp], ['default_-7.531810902716695'])
+    else:
+        models_zip = zip([hp, prediction_hp, local_hp],
+                         ['default_-7.531810902716695', 'prediction_-2.450593529493725', 'local_-0.5012809535156667'])
+    for current_hp, model_address in models_zip:
         network = Network(train_dataset.num_channels, generate_long_sequence=current_hp.generate_long_sequence,
                           pooling=current_hp.pool_or_stride == 'pool', encoder_dropout=current_hp.encoder_dropout,
                           use_sinc_encoder=current_hp.use_sinc_encoder, use_shared_sinc=current_hp.use_shared_sinc,
@@ -261,28 +265,36 @@ def main(num_samples):
         network.load_state_dict(torch.load('./results/cpc_trained/' + model_address + '.pth', map_location='cpu'))
         network = cudize(network.eval())
         collected_results = []
-        for i in range(10):  # for stability checks
+        print('loaded', model_address)
+        for i in range(2 if test_mode else 10):  # for stability checks
+            if test_mode: print(model_address, 'run #{}'.format(i))
             real_stats, real_ndb = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                                    skip_depth, num_samples, 'normal', current_hp, real_ndb, None)
+            if test_mode: print('real stats calculated')
             val_stats, _ = calculate_stats(val_dataset, network, progression_scale_up, progression_scale_down,
                                            skip_depth, num_samples, 'validation', current_hp, real_ndb, real_stats)
+            if test_mode: print('val stats calculated')
             permuted_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                                 skip_depth, num_samples, 'permute', current_hp, real_ndb, real_stats)
+            if test_mode: print('permuted stats calculated')
             shifted_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                                skip_depth, num_samples, 'shift', current_hp, real_ndb, real_stats)
+            if test_mode: print('shifted stats calculated')
             concatenated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
                                                     progression_scale_down, skip_depth, num_samples, 'concat',
                                                     current_hp, real_ndb, real_stats)
+            if test_mode: print('concatenated stats calculated')
             tiny_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                             skip_depth, num_samples, 'tiny', current_hp, real_ndb, real_stats)
+            if test_mode: print('tiny stats calculated')
             zeroed_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                               skip_depth, num_samples, 'zero', current_hp, real_ndb, real_stats)
+            if test_mode: print('zeroed stats calculated')
             noised_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
                                               skip_depth, num_samples, 'noise', current_hp, real_ndb, real_stats)
-            collapsed_stats, _ = calculate_stats(train_dataset, network, progression_scale_up, progression_scale_down,
-                                                 skip_depth, num_samples, 'collapse', current_hp, real_ndb, real_stats)
-            collected_results.append({**real_stats, **val_stats, **permuted_stats, **shifted_stats, **collapsed_stats,
-                                      **concatenated_stats, **tiny_stats, **zeroed_stats, **noised_stats})
+            if test_mode: print('noised stats calculated')
+            collected_results.append(
+                {**real_stats, **shifted_stats, **concatenated_stats, **tiny_stats, **zeroed_stats, **noised_stats})
             # TODO (over time and different truncation threshold)
             # normal_generated_stats, _ = calculate_stats(train_dataset, network, progression_scale_up,
             #                                             progression_scale_down, skip_depth, num_samples, 'generated',
@@ -295,8 +307,8 @@ def main(num_samples):
             #                                                'truncation', current_hp, real_ndb, real_stats)
         # calc std for each stats ([{key(mode_n): {key(seq_len): {meter: value}}}])
         final_result[model_address] = {mode: {seq_len: {meter: (
-            np.mean([collected_results[j][mode][seq_len][meter] for j in range(10)]),
-            np.std([collected_results[j][mode][seq_len][meter] for j in range(10)])) for meter in
+            np.mean([collected_results[j][mode][seq_len][meter] for j in range(2 if test_mode else 10)]),
+            np.std([collected_results[j][mode][seq_len][meter] for j in range(2 if test_mode else 10)])) for meter in
             {'prediction_loss', 'prediction_acc', 'global_loss',
              'global_acc', 'local_loss', 'local_acc', 'c_fid_max_seq_len',
              'z_fid_max_seq_len', 'cp_fid_max_seq_len',
@@ -308,6 +320,8 @@ def main(num_samples):
 
 
 if __name__ == '__main__':
-    results = main(num_samples=1024 * 32)
-    save_pkl('./results/cpc_eval.pkl', results)
+    test_mode = True
+    results = main(num_samples=128 if test_mode else (1024 * 32))
+    if not test_mode:
+        save_pkl('./results/cpc_eval.pkl', results)
     print(results)

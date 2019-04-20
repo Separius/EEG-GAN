@@ -290,3 +290,13 @@ class Network(nn.Module):
         c = self.contextualizer(z)
         c_pooled = self.c_pooler(c)
         return z, c, z_pooled, c_pooled
+
+    def complete_forward(self, x):
+        z = self.encoder(x)
+        z_pooled = self.z_pooler(z)
+        c = self.contextualizer(z)
+        c_pooled = self.c_pooler(c)
+        prediction_loss, pred_acc = self.prediction_loss_network(c, z)
+        global_discriminator_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
+        local_discriminator_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
+        return prediction_loss, global_discriminator_loss, local_discriminator_loss, c_pooled, global_accuracy, local_accuracy, pred_acc, z, c, z_pooled

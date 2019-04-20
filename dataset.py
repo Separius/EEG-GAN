@@ -268,7 +268,7 @@ class ThinEEGDataset(Dataset):
             raise ValueError('This is the Thin Wrapper and can only load data')
 
     @classmethod
-    def from_config(cls, validation_ratio: float = 0, dir_path: str = './', number_of_files: int = 100000,
+    def from_config(cls, validation_ratio: float = 0, dir_path: str = '.', number_of_files: int = 100000,
                     start_sampling_freq: float = 1, end_sampling_freq: float = 60, start_seq_len: int = 32,
                     stride: float = 0.8, num_channels: int = 5, per_user_normalization: bool = True,
                     per_channel_normalization: bool = False):
@@ -287,7 +287,7 @@ class ThinEEGDataset(Dataset):
                 else:
                     given_data = (load_pkl(target_location + '.pkl'), np.load(target_location))
             else:
-                raise ValueError('Can\'t create dataset')
+                raise ValueError('Can\'t read ' + target_location)
             dataset = cls(given_data, end_sampling_freq, start_seq_len, stride)
             datasets[index] = dataset
         return datasets[0], datasets[1]

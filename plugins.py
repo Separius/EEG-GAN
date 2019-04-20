@@ -584,7 +584,7 @@ class FidCalculator(Plugin):
                     if self.calc_z:
                         all_z.append(z.view(-1, z.size(1)).cpu())
                     if self.calc_c:
-                        all_c.append(c.view(-1, z.size(1)).cpu())
+                        all_c.append(c.contiguous().view(-1, c.size(1)).cpu())
                     if self.calc_zp:
                         all_zp.append(zp.cpu())
                     if self.calc_cp:
