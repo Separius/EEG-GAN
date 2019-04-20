@@ -118,3 +118,12 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss
         gp_loss = gp_gain * (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
         d_loss = d_loss + gp_loss
     return d_loss
+
+
+def IIC(z, zt, C=10, EPS=0.0001):  # z is n*C(softmaxed) and zt is it's pair(shifted?)
+    P = (z.unsqueeze(2) * zt.unsqueeze(1)).sum(dim=0)
+    P = ((P + P.t()) / 2) / P.sum()
+    P[(P < EPS).data] = EPS
+    Pi = P.sum(dim=1).view(C, 1).expand(C, C)
+    Pj = P.sum(dim=0).view(1, C).expand(C, C)
+    return (P * (F.log(Pi) + F.log(Pj) - F.log(P))).sum()

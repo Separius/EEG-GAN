@@ -1,6 +1,9 @@
-from cpc_train import hp
-from ndb import NDB
-from cpc_network import Network
+# TODO make this a script that reads a trained network, calculates stats with it over real data + trains VIN
+# TODO and then makes graphs for each noise type
+# TODO and calculates pixel level metrics(num bins, ms_ssim, swd)
+from cpc.cpc_train import hp
+from metrics.ndb import NDB
+from cpc.cpc_network import Network
 from plugins import FidCalculator
 from dataset import ThinEEGDataset, EEGDataset
 from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, merge_pred_accs, save_pkl
@@ -95,10 +98,10 @@ def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
         for b in dataloader:
             bs = b.size(0)
             i += bs
-            samples['noise_1'].append(b + torch.randn_like(b) * 0.01)
+            samples['noise_1'].append(b * 0.99 + torch.randn_like(b) * 0.01)
             if not test_mode:
-                samples['noise_2'].append(b + torch.randn_like(b) * 0.05)
-                samples['noise_3'].append(b + torch.randn_like(b) * 0.2)
+                samples['noise_2'].append(b * 0.95 + torch.randn_like(b) * 0.05)
+                samples['noise_3'].append(b * 0.98 + torch.randn_like(b) * 0.2)
             if i >= num_samples:
                 break
     elif mode in ['concat']:

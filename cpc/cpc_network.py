@@ -7,7 +7,7 @@ from torch.nn.utils import spectral_norm
 from pytorch_pretrained_bert.modeling import BertLayer
 
 from utils import cudize
-from cpc_loss import KPredLoss, OneOneMI, SeqOneMI
+from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI
 
 
 class SincEncoder(nn.Module):

@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import timedelta
 from glob import glob
 from scipy import linalg
+from scipy.stats import truncnorm
 
 import matplotlib
 import numpy as np
@@ -13,12 +14,12 @@ import torch
 from imageio import imwrite
 from sklearn.utils.extmath import randomized_svd
 
-from ndb import NDB
+from metrics.ndb import NDB
 from torch_utils import Plugin, LossMonitor, Logger
 from trainer import Trainer
 from utils import generate_samples, cudize, EPSILON, resample_signal
-from cpc_network import Network as CpcNetwork
-from cpc_train import hp as cpc_hp
+from cpc.cpc_network import Network as CpcNetwork
+from cpc.cpc_train import hp as cpc_hp
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -245,6 +246,11 @@ class OutputGenerator(Plugin):
         self.max_freq = max_freq
         self.my_g_clone = None
         self.output_snapshot_ticks = output_snapshot_ticks
+
+    @staticmethod
+    def truncated_z_sample(batch_size, z_dim, truncation=0.5):
+        values = truncnorm.rvs(-2, 2, size=(batch_size, z_dim))
+        return truncation * values
 
     @staticmethod
     def flatten_params(model):
