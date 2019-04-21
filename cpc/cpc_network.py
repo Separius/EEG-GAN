@@ -3,7 +3,6 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import spectral_norm
 from pytorch_pretrained_bert.modeling import BertLayer
 
 from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI
@@ -66,68 +65,89 @@ class SincConv(nn.Module):
         return F.conv1d(x_p, self.filters, bias=None)
 
 
-class PriorDiscriminator(nn.Module):
-    def __init__(self, latent_size, prior='uniform'):
+class ResidualEncoder(nn.Module):
+    class ResidualBlock(nn.Module):
+        def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+            super().__init__()
+            self.conv1 = ResidualEncoder.conv(in_channels, out_channels, stride)
+            self.bn1 = nn.BatchNorm1d(out_channels)
+            self.relu = nn.ReLU()
+            self.conv2 = ResidualEncoder.conv(out_channels, out_channels)
+            self.bn2 = nn.BatchNorm1d(out_channels)
+            self.downsample = downsample
+
+        def forward(self, x):
+            residual = x
+            out = self.conv1(x)
+            out = self.bn1(out)
+            out = self.relu(out)
+            out = self.conv2(out)
+            out = self.bn2(out)
+            if self.downsample:
+                residual = self.downsample(x)
+            out += residual
+            out = self.relu(out)
+            return out
+
+    @staticmethod
+    def conv(in_channels, out_channels, stride=1):
+        return nn.Conv1d(in_channels, out_channels, kernel_size=5,
+                         stride=stride, padding=2, bias=False)
+
+    def __init__(self, input_channels=5, _=0):
         super().__init__()
-        prior = prior.lower()
-        assert prior in {'uniform', 'gaussian'}
-        self.latent_size = latent_size
-        self.prior = prior
-        self.network = nn.Sequential(spectral_norm(nn.Linear(latent_size, latent_size * 8)), nn.ReLU(),
-                                     spectral_norm(nn.Linear(latent_size * 8, latent_size * 2)), nn.ReLU(),
-                                     spectral_norm(nn.Linear(latent_size * 2, 1)))
+        self.in_channels = 16
+        conv = self.conv(input_channels, self.in_channels)
+        bn = nn.BatchNorm1d(self.in_channels)
+        relu = nn.ReLU()
+        # generates 32 codes of size 128
+        layers = [
+            self.make_layer(self.in_channels, 1),
+            self.make_layer(32, 2, 5),
+            self.make_layer(64, 1, 2),
+            self.make_layer(128, 1, 2),
+            nn.AvgPool1d(3),
+        ]
+        self.z_size = 128
+        self.network = nn.Sequential(conv, bn, relu, *layers)
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def make_layer(self, out_channels, blocks, stride=1):
+        downsample = None
+        if (stride != 1) or (self.in_channels != out_channels):
+            downsample = nn.Sequential(
+                self.conv(self.in_channels, out_channels, stride=stride),
+                nn.BatchNorm1d(out_channels))
+        layers = [self.ResidualBlock(self.in_channels, out_channels, stride, downsample)]
+        self.in_channels = out_channels
+        for i in range(1, blocks):
+            layers.append(self.ResidualBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
 
     def forward(self, x):
-        assert x.size(1) == self.latent_size
-        x = x.view(-1, self.latent_size)
         return self.network(x)
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, input_channels=5, long=True, use_pooling=False, activation='relu',
-                 dropout=0.1, use_sinc=False, shared_sinc=True, tiny=False):
+    def __init__(self, input_channels=5, dropout=0.1):
         super().__init__()
-        # TODO add residual connections?
-        activation = activation.lower()
-        if long:  # generates 32 codes of size 128
-            down_ratios = [5, 4, 3]
-            channel_sizes = [32, 64, 128]
-        else:  # generates 16 codes of size 128
-            down_ratios = [5, 4, 3, 2]
-            channel_sizes = [32, 64, 128, 128]
-        if tiny:
-            channel_sizes = [cs // 2 for cs in channel_sizes]
+        down_ratios = [5, 4, 3]  # generates 32 codes of size 128
+        channel_sizes = [32, 64, 128]
         kernel_sizes = [2 * dr - 1 for dr in down_ratios]
         self.z_size = channel_sizes[-1]
-        is_glu = False
-        activation = activation.lower()
-        if activation == 'relu':
-            act = nn.ReLU()
-        elif activation == 'lrelu':
-            act = nn.LeakyReLU(0.2)
-        elif activation == 'selu':
-            act = nn.SELU()
-        elif activation == 'glu':
-            act = nn.GLU(dim=1)
-            is_glu = True
-        else:
-            raise ValueError('invalid activation')
+        act = nn.ReLU()
         net = []
-        if use_sinc:
-            net.append(SincEncoder(input_channels, shared_sinc))
-            multiplier = 2 if shared_sinc else 1
-            net.append(nn.Conv1d(input_channels * multiplier * 8, input_channels * multiplier * 2, 1))
-            net.append(nn.ReLU())
-            input_channels = input_channels * multiplier * 2
         last_layer = len(down_ratios) - 1
         for i, (dr, cs, ks) in enumerate(zip(down_ratios, channel_sizes, kernel_sizes)):
-            net.append(nn.Conv1d(input_channels, cs * (2 if is_glu else 1), ks,
-                                 stride=1 if use_pooling else dr, padding=(ks - 1) // 2))
+            net.append(nn.Conv1d(input_channels, cs, ks, stride=dr, padding=(ks - 1) // 2))
             net.append(act)
             if dropout != 0.0 and i != last_layer:
                 net.append(nn.Dropout(dropout))
-            if use_pooling:
-                net.append(nn.MaxPool1d(dr))
             if i != last_layer:
                 net.append(nn.BatchNorm1d(cs))
             input_channels = cs
@@ -242,40 +262,52 @@ class Transformer(nn.Module):
 
 
 class Network(nn.Module):
-    def __init__(self, input_channels, generate_long_sequence=True, pooling=False, encoder_dropout=0.1,
-                 use_sinc_encoder=False, use_shared_sinc=True, bidirectional=False, contextualizer_num_layers=1,
+    def __init__(self, input_channels, encoder_dropout=0.1, bidirectional=False, contextualizer_num_layers=1,
                  contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
-                 encoder_activation='relu', tiny_encoder=True, have_global=True, have_local=True, cross_entropy=True):
+                 have_global=True, have_local=True, residual_encoder=False, rnn_hidden_multiplier=2,
+                 global_mode='mlp', local_mode='mlp', num_z_iic_classes=0, num_c_iic_classes=0):
         super().__init__()
-        encoder = ConvEncoder(input_channels=input_channels, long=generate_long_sequence, use_pooling=pooling,
-                              activation=encoder_activation, dropout=encoder_dropout, use_sinc=use_sinc_encoder,
-                              shared_sinc=use_shared_sinc, tiny=tiny_encoder)
+        if residual_encoder:
+            encoder = ResidualEncoder(input_channels)
+        else:
+            encoder = ConvEncoder(input_channels, encoder_dropout)
         if have_global:
             z_pooler = PNormPooling(encoder.z_size)
         else:
             z_pooler = None
+        if num_z_iic_classes != 0:
+            self.z_iic = nn.Sequential(
+                nn.Linear(z_pooler.pool_size if z_pooler is not None else encoder.z_size, num_z_iic_classes),
+                nn.Softmax(-1))
+        else:
+            self.z_iic = None
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
-                                         num_heads=4, max_seq_len=32 if generate_long_sequence else 16,
-                                         num_layers=contextualizer_num_layers, dropout=contextualizer_dropout)
+                                         num_heads=4, max_seq_len=32, num_layers=contextualizer_num_layers,
+                                         dropout=contextualizer_dropout)
         else:
-            contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=2 * encoder.z_size,
+            contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=rnn_hidden_multiplier * encoder.z_size,
                                      bidirectional=bidirectional, num_layers=contextualizer_num_layers,
                                      dropout=contextualizer_dropout, cell_type='GRU')
         if have_global or have_local:
             c_pooler = PNormPooling(contextualizer.c_size)
         else:
             c_pooler = None
+        if num_z_iic_classes != 0:
+            self.c_iic = nn.Sequential(
+                nn.Linear(c_pooler.pool_size if c_pooler is not None else contextualizer.c_size, num_c_iic_classes),
+                nn.Softmax(-1))
+        else:
+            self.c_iic = None
         prediction_loss_network = KPredLoss(contextualizer.c_size, encoder.z_size, k=prediction_k,
-                                            cross_entropy=cross_entropy, auto_is_bidirectional=bidirectional,
-                                            look_both=not causal_prediction)
+                                            auto_is_bidirectional=bidirectional, look_both=not causal_prediction)
         if have_global:
-            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size,
+            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size, mode=global_mode,
                                             hidden_size=min(c_pooler.pool_size, z_pooler.pool_size) * 2)
         else:
             c_pooled_mi_z_pooled = None
         if have_local:
-            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size,
+            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size, mode=local_mode,
                                      hidden_size=min(c_pooler.pool_size, encoder.z_size) * 2)
         else:
             c_pooled_mi_z = None
@@ -288,17 +320,33 @@ class Network(nn.Module):
         self.c_pooled_mi_z_pooled = c_pooled_mi_z_pooled
         self.c_pooled_mi_z = c_pooled_mi_z
 
-    def forward(self, x, return_all=False):
+    def forward(self, x, return_all=False, input_is_long=False, no_loss=False):
+        if not input_is_long:
+            return self.half_forward(x, return_all, no_loss)
+        seq_len = int(x.size(2) * 2 / 3)
+        # obtain x1, x2, and then calculate iic + acc
+
+    def half_forward(self, x, return_all, no_loss):
         z = self.encoder(x)
         if self.z_pooler is not None:
             z_pooled = self.z_pooler(z)
         else:
             z_pooled = z.mean(dim=2)
+        if self.z_iic is not None:
+            z_iic = self.z_iic(z_pooled)
+        else:
+            z_iic = None
         c = self.contextualizer(z)
         if self.c_pooler is not None:
             c_pooled = self.c_pooler(c)
         else:
             c_pooled = c.mean(dim=2)
+        if self.c_iic is not None:
+            c_iic = self.c_iic(c_pooled)
+        else:
+            c_iic = None
+        if no_loss:
+            return z, c, z_pooled, c_pooled, z_iic, c_iic
         prediction_loss, pred_acc = self.prediction_loss_network(c, z)
         if self.c_pooled_mi_z_pooled is not None:
             global_discriminator_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
@@ -311,18 +359,5 @@ class Network(nn.Module):
         return_values = prediction_loss, global_discriminator_loss, local_discriminator_loss, \
                         global_accuracy, local_accuracy, pred_acc
         if return_all:
-            return return_values, z, c, z_pooled, c_pooled
+            return return_values, z, c, z_pooled, c_pooled, z_iic, c_iic
         return return_values
-
-    def inference_forward(self, x):
-        z = self.encoder(x)
-        if self.z_pooler is not None:
-            z_pooled = self.z_pooler(z)
-        else:
-            z_pooled = z.mean(dim=2)
-        c = self.contextualizer(z)
-        if self.c_pooler is not None:
-            c_pooled = self.c_pooler(c)
-        else:
-            c_pooled = c.mean(dim=2)
-        return z, c, z_pooled, c_pooled

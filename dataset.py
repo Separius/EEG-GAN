@@ -15,8 +15,8 @@ DATASET_VERSION = 7
 !pip install imageio
 !pip install gdown
 #val=0, stride=1(1.5), num_channels=17, start=1
-!gdown --id 1Kc2RKfzZyYHYYvyCSFSFh9eCiukJXYbb
-!gdown --id 1zrenK8Js16HoQphO6dpu35MoA8bwAlVB
+!gdown --id 1Lp5e9vHPeFaVyccT48H0wbGSblrC81Gu
+!gdown --id 17QIjg0lkvedcmmpo1YP79OeTpt7TuYNI
 '''
 
 

@@ -46,10 +46,9 @@ hp = AttrDict(
 
 def main(summary):
     # TODO make these function
-    # TODO better encoder (residual) + better sizes(constant? + z > c)
+    # TODO add IIC heads
     # TODO better(cross entropy based) loss for global?
     # TODO better(cross entropy based) loss for local??
-    # TODO have two flags for the cross entropy in prediction
     train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio, validation_seed=hp.seed,
                                                         dir_path='./data/prepared_eegs_mat_th5', data_sampling_freq=220,
                                                         start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32,
