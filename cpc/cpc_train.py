@@ -1,13 +1,12 @@
 from utils import cudize, num_params, dict_add, divide_dict, merge_pred_accs, AttrDict
 from cpc.cpc_network import Network
-from dataset import ThinEEGDataset
+from dataset import EEGDataset
 
 import torch
-import numpy as np
 from torch.optim import Adam
+from torch.utils.data import DataLoader
 from pytorch_pretrained_bert import BertAdam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, SubsetRandomSampler
 
 hp = AttrDict(
     generate_long_sequence=True,  # 32 vs 16
@@ -47,28 +46,16 @@ hp = AttrDict(
 
 def main(summary):
     # TODO make these function
-    # TODO better encoder (residual)
+    # TODO better encoder (residual) + better sizes(constant? + z > c)
     # TODO better(cross entropy based) loss for global?
     # TODO better(cross entropy based) loss for local??
     # TODO have two flags for the cross entropy in prediction
-    train_dataset, val_dataset = ThinEEGDataset.from_config(validation_ratio=hp.validation_ratio,
-                                                            num_channels=hp.num_channels, stride=hp.ds_stride)
-    if hp.validation_ratio == 0:
-        indices = np.arange(len(train_dataset))
-        np.random.seed(hp.seed)
-        np.random.shuffle(indices)
-        train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=True,
-                                      sampler=SubsetRandomSampler(indices[:int(len(indices) * 9 / 10)]))
-        val_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=False,
-                                    sampler=SubsetRandomSampler(indices[-int(len(indices) * 9 / 10):]))
-        print('dataset_size', train_dataset.shape)
-    else:
-        train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size,
-                                      num_workers=0, drop_last=True, shuffle=True)
-        val_dataloader = DataLoader(val_dataset, batch_size=hp.batch_size,
-                                    num_workers=0, drop_last=False, shuffle=False)
-        print('train_size', train_dataset.shape)
-        print('val_size', val_dataset.shape)
+    train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio, validation_seed=hp.seed,
+                                                        dir_path='./data/prepared_eegs_mat_th5', data_sampling_freq=220,
+                                                        start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32,
+                                                        num_channels=17, return_long=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=False)
     network = cudize(Network(train_dataset.num_channels, generate_long_sequence=hp.generate_long_sequence,
                              pooling=hp.pool_or_stride == 'pool', encoder_dropout=hp.encoder_dropout,
                              use_sinc_encoder=hp.use_sinc_encoder, use_shared_sinc=hp.use_shared_sinc,
@@ -108,7 +95,7 @@ def main(summary):
             total_count = 0
             with torch.set_grad_enabled(training):
                 for batch in data_loader:
-                    x = cudize(batch)
+                    x = cudize(batch['x'])
                     prediction_loss, global_discriminator_loss, local_discriminator_loss, global_accuracy, local_accuracy, pred_accuracy = network(
                         x)
                     global_accuracy_one, global_accuracy_two = global_accuracy

@@ -15,7 +15,8 @@ DATASET_VERSION = 7
 !pip install imageio
 !pip install gdown
 #val=0, stride=1(1.5), num_channels=17, start=1
-!gdown --id 1Vw4sQDRyAEjnl1lH77D8PVkba954BvGG
+!gdown --id 1Kc2RKfzZyYHYYvyCSFSFh9eCiukJXYbb
+!gdown --id 1zrenK8Js16HoQphO6dpu35MoA8bwAlVB
 '''
 
 
@@ -39,16 +40,17 @@ class EEGDataset(Dataset):
         self.alpha = 1.0
         self.dir_path = dir_path
         self.end_sampling_freq = end_sampling_freq
-        seq_len = start_seq_len * end_sampling_freq / start_sampling_freq
+        seq_len = start_seq_len * end_sampling_freq / start_sampling_freq * 1.5
         assert seq_len == int(seq_len), 'seq_len must be an int'
         seq_len = int(seq_len)
         self.seq_len = seq_len
         self.initial_kernel_size = start_seq_len
-        self.stride = int(seq_len * 1.5)
+        self.stride = seq_len
         self.max_dataset_depth = len(self.progression_scale_up)
         self.num_channels = num_channels if self.picked_channels is None else len(self.picked_channels)
         self.return_long = return_long
         if given_data is not None:
+            self.seq_len = int(start_seq_len * end_sampling_freq / start_sampling_freq)
             self.data_pointers = given_data[0]
             self.datas = given_data[1]
             return
@@ -104,7 +106,7 @@ class EEGDataset(Dataset):
         self.data_pointers = [(i, j) for i, s in enumerate(sizes) for j in range(s)]
 
     @classmethod
-    def from_config(cls, validation_ratio, validation_seed: float, dir_path, data_sampling_freq,
+    def from_config(cls, validation_ratio, validation_seed, dir_path, data_sampling_freq,
                     start_sampling_freq, end_sampling_freq, start_seq_len, num_channels, return_long):
         assert end_sampling_freq <= data_sampling_freq
         target_location = os.path.join(dir_path, '{}c_{}v_{}ss_{}es_{}l.npz'.format(num_channels, DATASET_VERSION,
@@ -150,7 +152,7 @@ class EEGDataset(Dataset):
     def load_file(self, item):
         i, k = self.data_pointers[item]
         if self.return_long:
-            return self.datas[i][:, k * self.stride:k * self.stride + self.stride]
+            return self.datas[i][:, k * self.stride:(k + 1) * self.stride]
         else:
             rand_shift = np.random.randint(self.stride - self.seq_len)
             return self.datas[i][:, k * self.stride + rand_shift:k * self.stride + rand_shift + self.seq_len]
