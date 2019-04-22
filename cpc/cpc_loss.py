@@ -210,7 +210,7 @@ class KPredLoss(nn.Module):
             second_loss = self.calc_cross_entropy_loss(u, 2, t)
         else:
             second_loss = self.calc_one_way_loss_t(u, t, torch.zeros(u.size(1), u.size(2)).to(u), 0)
-        return first_loss + second_loss, (acc1, acc2)
+        return first_loss + second_loss, (acc1 + acc2) / 2
 
     def calc_both_way_loss_b(self, c_flat, z_flat, weight):
         b = z_flat.size(0)
@@ -229,7 +229,7 @@ class KPredLoss(nn.Module):
             second_loss = self.calc_cross_entropy_loss(u, 1, b)
         else:
             second_loss = self.calc_one_way_loss_b(u, b, torch.zeros(u.size(1), u.size(2)).to(u), 0)
-        return first_loss + second_loss, (acc1, acc2)
+        return first_loss + second_loss, (acc1 + acc2) / 2
 
     def calc_four_way_loss(self, c_flat, z_flat, weight):
         t_loss, t_acc = self.calc_both_way_loss_t(c_flat, z_flat, weight)
@@ -244,16 +244,16 @@ class KPredLoss(nn.Module):
         targets = torch.arange(u.size(0)).to(u.device)
         acc = (u.argmax(1) == targets).sum().item() / u.size(0)
         f_loss = F.cross_entropy(u, targets)
-        return f_loss, (acc, acc), (acc, acc)
+        return f_loss, acc, acc
 
     def forward(self, c, z):
         if self.k == 0:
-            return torch.tensor(0.0).to(c), 0.0
+            return torch.tensor(0.0).to(c), {}
         B, c_size, T = c.size()
         if self.split_c:
             c_size = c_size // 2
         total_loss = 0.0
-        accs = []
+        accs = {}
         for i in range(self.k):
             c_flat = c[:, :c_size, :-(i + 1)]
             z_flat = z[..., (i + 1):]
@@ -261,8 +261,7 @@ class KPredLoss(nn.Module):
                 f_loss, t_acc, b_acc = self.calc_full_cross_entropy_loss(c_flat, z_flat, self.forward_weights[i])
             else:
                 f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.forward_weights[i])
-            accs.append(t_acc)
-            accs.append(b_acc)
+            accs['f_{}'.format(i)] = (t_acc + b_acc) / 2
             total_loss = total_loss + f_loss
             if self.bidirectional:
                 c_flat = c[:, -c_size:, (i + 1):]
@@ -271,8 +270,7 @@ class KPredLoss(nn.Module):
                     f_loss, t_acc, b_acc = self.calc_full_cross_entropy_loss(c_flat, z_flat, self.forward_weights[i])
                 else:
                     f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.backward_weights[i])
-                accs.append(t_acc)
-                accs.append(b_acc)
+                accs['b_{}'.format(i)] = (t_acc + b_acc) / 2
                 total_loss = total_loss + f_loss
         return total_loss, sum(accs) / len(accs)
 
