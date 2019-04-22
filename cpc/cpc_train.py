@@ -9,34 +9,29 @@ from pytorch_pretrained_bert import BertAdam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 hp = AttrDict(
-    generate_long_sequence=True,  # 32 vs 16
-    pool_or_stride='stride',  # max pooling tends to overfit
-    use_shared_sinc=True,
-    seed=12658,  # used when val=0
+    validation_seed=12658,
+    validation_ratio=0.1,
     prediction_k=4,
     cross_entropy=True,
-    validation_ratio=0,
-    ds_stride=1,
-    num_channels=17,
-    use_sinc_encoder=False,
     causal_prediction=True,
     use_transformer=False,
-
+    residual_encoder=False,  # I like to set it to True
+    rnn_hidden_multiplier=2,  # I like to set it to 1
+    global_mode='mlp',  # I like to set it to bilinear and remove this hyper param
+    local_mode='mlp',  # I like to set it to bilinear and remove this hyper param
+    num_z_iic_classes=0,
+    num_c_iic_classes=0,
     use_scheduler=True,
     use_bert_adam=False,
-
     bidirectional=False,
-
     prediction_loss_weight=3.0,
     global_loss_weight=1.0,
     local_loss_weight=2.0,
-
+    z_iic_loss_weight=0.0,
+    c_iic_loss_weight=0.0,
     contextualizer_num_layers=1,
     contextualizer_dropout=0,
     encoder_dropout=0.2,  # used to be 0.1
-    encoder_activation='relu',  # glu or relu
-    tiny_encoder=False,
-
     batch_size=128,
     lr=2e-3,
     epochs=31,
@@ -45,25 +40,26 @@ hp = AttrDict(
 
 
 def main(summary):
-    # TODO make these function
-    # TODO add IIC heads
-    # TODO better(cross entropy based) loss for global?
-    # TODO better(cross entropy based) loss for local??
-    train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio, validation_seed=hp.seed,
+    have_iic = (hp.z_iic_loss_weight != 0.0) or (hp.c_iic_loss_weight != 0.0)
+    train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio,
+                                                        validation_seed=hp.validation_seed,
                                                         dir_path='./data/prepared_eegs_mat_th5', data_sampling_freq=220,
                                                         start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32,
-                                                        num_channels=17, return_long=True)
-    train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=False)
-    network = cudize(Network(train_dataset.num_channels, generate_long_sequence=hp.generate_long_sequence,
-                             pooling=hp.pool_or_stride == 'pool', encoder_dropout=hp.encoder_dropout,
-                             use_sinc_encoder=hp.use_sinc_encoder, use_shared_sinc=hp.use_shared_sinc,
-                             bidirectional=hp.bidirectional, contextualizer_num_layers=hp.contextualizer_num_layers,
-                             contextualizer_dropout=hp.contextualizer_dropout, use_transformer=hp.use_transformer,
-                             causal_prediction=hp.causal_prediction, have_global=(hp.global_loss_weight != 0.0),
-                             prediction_k=hp.prediction_k * (hp.prediction_loss_weight != 0.0),
-                             encoder_activation=hp.encoder_activation, tiny_encoder=hp.tiny_encoder,
-                             have_local=(hp.local_loss_weight != 0.0), cross_entropy=hp.cross_entropy))
+                                                        num_channels=17, return_long=have_iic)
+    real_bs = hp.batch_size // (2 if have_iic else 1)
+    train_dataloader = DataLoader(train_dataset, batch_size=real_bs, num_workers=0, drop_last=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=real_bs, num_workers=0, drop_last=False, pin_memory=True)
+    network = cudize(
+        Network(train_dataset.num_channels, encoder_dropout=hp.encoder_dropout, bidirectional=hp.bidirectional,
+                contextualizer_num_layers=hp.contextualizer_num_layers,
+                contextualizer_dropout=hp.contextualizer_dropout, use_transformer=hp.use_transformer,
+                causal_prediction=hp.causal_prediction,
+                prediction_k=hp.prediction_k * (hp.prediction_loss_weight != 0.0),
+                have_global=(hp.global_loss_weight != 0.0), have_local=(hp.local_loss_weight != 0.0),
+                residual_encoder=hp.residual_encoder, rnn_hidden_multiplier=hp.rnn_hidden_multiplier,
+                global_mode=hp.global_mode, local_mode=hp.local_mode,
+                num_z_iic_classes=hp.num_z_iic_classes * (hp.z_iic_loss_weight != 0.0),
+                num_c_iic_classes=hp.num_c_iic_classes * (hp.c_iic_loss_weight != 0.0)))
     num_parameters = num_params(network)
     print('num_parameters', num_parameters)
     if hp.use_bert_adam:
@@ -84,58 +80,64 @@ def main(summary):
                 network.eval()
             total_network_loss = 0.0
             total_prediction_loss = 0.0
-            total_global_discriminator_loss = 0.0
-            total_local_discriminator_loss = 0.0
-            total_global_accuracy_one = 0.0
-            total_global_accuracy_two = 0.0
-            total_local_accuracy_one = 0.0
-            total_local_accuracy_two = 0.0
-            total_pred_acc = {}
+            total_global_loss = 0.0
+            total_local_loss = 0.0
+            total_iic_z_loss = 0.0
+            total_iic_c_loss = 0.0
+            total_global_accuracy = 0.0
+            total_local_accuracy = 0.0
+            total_k_pred_acc = {}
+            total_pred_acc = 0.0
+            total_iic_z_acc = 0.0
+            total_iic_c_acc = 0.0
             total_count = 0
             with torch.set_grad_enabled(training):
                 for batch in data_loader:
                     x = cudize(batch['x'])
-                    prediction_loss, global_discriminator_loss, local_discriminator_loss, global_accuracy, local_accuracy, pred_accuracy = network(
-                        x)
-                    global_accuracy_one, global_accuracy_two = global_accuracy
-                    local_accuracy_one, local_accuracy_two = local_accuracy
-                    network_loss = hp.prediction_loss_weight * prediction_loss + hp.global_loss_weight * global_discriminator_loss + hp.local_loss_weight * local_discriminator_loss
-                    this_batch_size = x.size(0)
-                    total_count += this_batch_size
-                    total_network_loss += network_loss.item() * this_batch_size
-                    total_prediction_loss += prediction_loss.item() * this_batch_size
-                    total_global_discriminator_loss += global_discriminator_loss.item() * this_batch_size
-                    total_local_discriminator_loss += local_discriminator_loss.item() * this_batch_size
-                    total_global_accuracy_one += global_accuracy_one * this_batch_size
-                    total_global_accuracy_two += global_accuracy_two * this_batch_size
-                    total_local_accuracy_one += local_accuracy_one * this_batch_size
-                    total_local_accuracy_two += local_accuracy_two * this_batch_size
-                    dict_add(total_pred_acc, pred_accuracy, this_batch_size)
+                    network_return = network.forward(x, input_is_long=have_iic, no_loss=False)
+                    network_loss = hp.prediction_loss_weight * network_return.losses.prediction_
+                    network_loss = network_loss + hp.global_loss_weight * network_return.losses.global_
+                    network_loss = network_loss + hp.local_loss_weight * network_return.losses.local_
+                    network_loss = network_loss + hp.z_iic_loss_weight * network_return.losses.z_iic_
+                    network_loss = network_loss + hp.c_iic_loss_weight * network_return.losses.c_iic_
+
+                    bs = x.size(0)
+                    total_count += bs
+                    total_network_loss += network_loss.item() * bs
+                    total_prediction_loss += network_return.losses.prediction_.item() * bs
+                    total_global_loss += network_return.losses.global_.item() * bs
+                    total_local_loss += network_return.losses.local_.item() * bs
+                    total_iic_z_loss += network_return.losses.z_iic_.item() * bs
+                    total_iic_c_loss += network_return.losses.c_iic_.item() * bs
+
+                    total_global_accuracy += network_return.accuracies.global_ * bs
+                    total_local_accuracy += network_return.accuracies.local_ * bs
+                    total_iic_z_acc += network_return.accuracies.z_iic_ * bs
+                    total_iic_c_acc += network_return.accuracies.c_iic_ * bs
+                    dict_add(total_k_pred_acc, network_return.accuracies.prediction_, bs)
+                    len_pred = len(network_return.accuracies.prediction_)
+                    if len_pred > 0:
+                        total_pred_acc += sum(network_return.accuracies.prediction_.values()) / len_pred * bs
+
                     if training:
                         network_optimizer.zero_grad()
                         network_loss.backward()
                         network_optimizer.step()
-            total_global_accuracy_one /= total_count
-            total_global_accuracy_two /= total_count
-            total_local_accuracy_one /= total_count
-            total_local_accuracy_two /= total_count
-            divide_dict(total_pred_acc, total_count)
 
-            total_prediction_loss /= total_count
-            total_pred_acc = merge_pred_accs(total_pred_acc, network.prediction_loss_network.k,
-                                             network.prediction_loss_network.bidirectional)
-            total_global_discriminator_loss /= total_count
-            total_global_accuracy = (total_global_accuracy_one + total_global_accuracy_two) / 2
-            total_local_discriminator_loss /= total_count
-            total_local_accuracy = (total_local_accuracy_one + total_local_accuracy_two) / 2
-            total_network_loss /= total_count
             metrics = dict(net_loss=total_network_loss)
-            if network.prediction_loss_network.k > 0:
-                metrics.update(dict(prediction_loss=total_prediction_loss, prediction_acc=total_pred_acc))
+            if network.prediction_loss_network.k > 0 and hp.prediction_loss_weight != 0:
+                metrics.update(dict(avg_prediction_acc=total_pred_acc, prediction_loss=total_prediction_loss,
+                                    k_prediction_acc=total_k_pred_acc))
             if hp.global_loss_weight != 0:
-                metrics.update(dict(global_loss=total_global_discriminator_loss, global_acc=total_global_accuracy))
+                metrics.update(dict(global_loss=total_global_loss, global_acc=total_global_accuracy))
             if hp.local_loss_weight != 0:
-                metrics.update(dict(local_loss=total_local_discriminator_loss, local_acc=total_local_accuracy))
+                metrics.update(dict(local_loss=total_local_loss, local_acc=total_local_accuracy))
+            if hp.hp.z_iic_loss_weight != 0:
+                metrics.update(dict(z_iic_loss=total_iic_z_loss, z_iic_acc=total_iic_z_acc))
+            if hp.hp.c_iic_loss_weight != 0:
+                metrics.update(dict(c_iic_loss=total_iic_c_loss, c_iic_acc=total_iic_c_acc))
+            divide_dict(metrics, total_count)
+
             if not training and hp.use_scheduler:
                 scheduler.step(metrics['net_loss'])
             if summary:
