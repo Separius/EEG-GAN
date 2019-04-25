@@ -45,13 +45,11 @@ class MyResNet(nn.Module):
 
     def __init__(self, block, layers, zero_init_residual=False):
         super().__init__()
-        in_planes = 32
+        in_planes = 16
         self.inplanes = in_planes
-        self.conv1 = nn.Conv2d(3, in_planes, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = nn.Conv2d(3, in_planes, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(in_planes)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, in_planes, layers[0])
         self.layer2 = self._make_layer(block, in_planes * 2, layers[1], stride=2)
         self.layer3 = self._make_layer(block, in_planes * 4, layers[2], stride=2)
@@ -94,7 +92,6 @@ class MyResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -257,7 +254,7 @@ def get_us_acc(network, train_dataloader, val_dataloader, device, k, have_z_iic,
 
 
 def main():
-    batch_size = 32
+    batch_size = 128
     use_bert_adam = False
     lr = 5e-4
     weight_decay = 0.005
@@ -267,10 +264,10 @@ def main():
     global_loss_weight = 1.0
     local_loss_weight = 3.0
     z_iic_loss_weight = 4.0
-    c_iic_loss_weight = 8.0
+    c_iic_loss_weight = 0.0
     prediction_k = 8
     summary = False
-    my_iic = False
+    my_iic = True
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     network = CifarNetwork(have_global=(global_loss_weight != 0.0), have_local=(local_loss_weight != 0.0),
@@ -369,9 +366,10 @@ def main():
                 best_val_loss = metrics['net_loss']
                 print('update best to', best_val_loss)
                 torch.save(network.state_dict(), 'best_network.pth')
-                print(json.dumps(get_us_acc(network, train_dataloader, val_dataloader, device, 10,
-                                            have_z_iic=(z_iic_loss_weight != 0.0),
-                                            have_c_iic=(c_iic_loss_weight != 0.0)), indent=4))
+                if epoch != 0:
+                    print(json.dumps(get_us_acc(network, train_dataloader, val_dataloader, device, 10,
+                                                have_z_iic=(z_iic_loss_weight != 0.0),
+                                                have_c_iic=(c_iic_loss_weight != 0.0)), indent=4))
     network.load_state_dict(torch.load('best_network.pth'))
     network.eval()
     print(json.dumps(

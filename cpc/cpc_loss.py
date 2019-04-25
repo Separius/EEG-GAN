@@ -306,8 +306,12 @@ def myIIC(x_out, x_tf_out, eps=0.0001):  # x_out is n*C(softmaxed) and zt is it'
     _, k = x_out.size()
     p_i_j = _compute_joint(x_out, x_tf_out)
     assert (p_i_j.size() == (k, k))
-    p_i_j[(p_i_j < eps).data] = eps
-    return F.kl_div(p_i_j, target=torch.eye(k).to(x_out) / k, reduction='mean')
+    # p_i_j[(p_i_j < eps).data] = eps
+    target_dist = torch.eye(k).to(x_out) / k
+    # mean_dist = (p_i_j + target_dist) / 2.0
+    # return (F.kl_div(p_i_j, target=mean_dist, reduction='mean') + F.kl_div(target_dist, target=mean_dist,
+    #                                                                        reduction='mean')) / 2
+    return - (target_dist * torch.log(p_i_j)).sum()
 
 
 def _original_match(flat_preds, flat_targets, preds_k, targets_k):
