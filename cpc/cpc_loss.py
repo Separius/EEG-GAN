@@ -2,7 +2,9 @@ import math
 import torch
 import numpy as np
 import torch.nn as nn
+from sklearn import metrics
 import torch.nn.functional as F
+from sklearn.utils.linear_assignment_ import linear_assignment
 
 
 def log_sum_exp(x, axis=None):
@@ -63,8 +65,8 @@ def calc_one_way_loss(u, positive_mask, mean_dim, measure):
 
 
 def calc_slice_accuracy(u, bs):
-    return (u.argmax(dim=0).cpu() == torch.arange(bs)).sum().item() / bs, (
-            u.argmax(dim=1).cpu() == torch.arange(bs)).sum().item() / bs
+    return ((u.argmax(dim=0).cpu() == torch.arange(bs)).sum().item() / bs + (
+            u.argmax(dim=1).cpu() == torch.arange(bs)).sum().item() / bs) / 2
 
 
 def calc_accuracy(u):
@@ -75,7 +77,7 @@ def calc_accuracy(u):
     elif nd == 3:
         t = u.size(2)
         res = [calc_slice_accuracy(u[..., i], bs) for i in range(t)]
-        return (sum([r[0] for r in res]) / t + sum([r[1] for r in res]) / t) / 2
+        return sum([r for r in res]) / t
 
 
 class OneOneMI(nn.Module):
@@ -275,10 +277,84 @@ class KPredLoss(nn.Module):
         return total_loss, accs
 
 
-def IIC(z, zt, num_classes=10, eps=0.0001):  # z is n*C(softmaxed) and zt is it's pair
-    P = (z.unsqueeze(2) * zt.unsqueeze(1)).sum(dim=0)
-    P = ((P + P.t()) / 2) / P.sum()
-    P[(P < eps).data] = eps
-    Pi = P.sum(dim=1).view(num_classes, 1).expand(num_classes, num_classes)
-    Pj = P.sum(dim=0).view(1, num_classes).expand(num_classes, num_classes)
-    return (P * (torch.log(Pi) + torch.log(Pj) - torch.log(P))).sum()
+def _compute_joint(x_out, x_tf_out):
+    # produces variable that requires grad (since args require grad)
+    bn, k = x_out.size()
+    assert (x_tf_out.size(0) == bn and x_tf_out.size(1) == k)
+    p_i_j = x_out.unsqueeze(2) * x_tf_out.unsqueeze(1)  # bn, k, k
+    p_i_j = p_i_j.sum(dim=0)  # k, k
+    p_i_j = (p_i_j + p_i_j.t()) / 2.  # symmetrise
+    p_i_j = p_i_j / p_i_j.sum()  # normalise
+    return p_i_j
+
+
+def IIC(x_out, x_tf_out, eps=0.0001):  # x_out is n*C(softmaxed) and zt is it's pair
+    _, k = x_out.size()
+    p_i_j = _compute_joint(x_out, x_tf_out)
+    assert (p_i_j.size() == (k, k))
+    p_i = p_i_j.sum(dim=1).view(k, 1).expand(k, k)
+    p_j = p_i_j.sum(dim=0).view(1, k).expand(k, k)  # but should be same, symmetric
+    p_i_j[(p_i_j < eps).data] = eps
+    p_j[(p_j < eps).data] = eps
+    p_i[(p_i < eps).data] = eps
+    loss = - p_i_j * (torch.log(p_i_j) - torch.log(p_j) - torch.log(p_i))
+    loss = loss.sum()
+    return loss
+
+
+def _original_match(flat_preds, flat_targets, preds_k, targets_k):
+    # map each output channel to the best matching ground truth (many to one)
+    out_to_gts = {}
+    out_to_gts_scores = {}
+    for out_c in range(preds_k):
+        for gt_c in range(targets_k):
+            # the amount of out_c at all the gt_c samples
+            tp_score = int(((flat_preds == out_c) * (flat_targets == gt_c)).sum())
+            if (out_c not in out_to_gts) or (tp_score > out_to_gts_scores[out_c]):
+                out_to_gts[out_c] = gt_c
+                out_to_gts_scores[out_c] = tp_score
+    return list(out_to_gts.items())
+
+
+def _hungarian_match(flat_preds, flat_targets, num_k):
+    num_samples = flat_targets.shape[0]
+    num_correct = np.zeros((num_k, num_k))
+    for c1 in range(num_k):
+        for c2 in range(num_k):
+            # elementwise, so each sample contributes once
+            votes = int(((flat_preds == c1) * (flat_targets == c2)).sum())
+            num_correct[c1, c2] = votes
+    # num_correct is small
+    return list(linear_assignment(num_samples - num_correct))
+
+
+def _acc(preds, targets):
+    return (preds == targets).mean()
+
+
+def _nmi(preds, targets):
+    return metrics.normalized_mutual_info_score(targets, preds)
+
+
+def _ari(preds, targets):
+    return metrics.adjusted_rand_score(targets, preds)
+
+
+def calc_iic_stats(train_preds, val_preds, train_targets, val_targets, k):
+    match_hun = _hungarian_match(train_preds, train_targets, k)
+    print(match_hun)
+    assert False
+    match_ori = _original_match(train_preds, train_targets, preds_k=k, targets_k=k)
+    acc = {}
+    for i, match in enumerate([match_hun, match_ori, match_hun, match_ori]):
+        preds = train_preds if i < 2 else val_preds
+        reordered_preds = np.zeros_like(preds)
+        for pred_i, target_i in match:
+            reordered_preds[preds == pred_i] = target_i
+        mode = 'train' if i < 2 else 'validation'
+        targets = train_targets if i < 2 else val_targets
+        if i % 2 == 0:
+            acc[mode + '_hungarian'] = _acc(reordered_preds, targets)
+        elif i % 2 == 1:
+            acc[mode + '_original'] = _acc(reordered_preds, targets)
+    return acc

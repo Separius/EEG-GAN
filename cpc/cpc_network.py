@@ -336,12 +336,12 @@ class Network(nn.Module):
         self.c_pooled_mi_z = c_pooled_mi_z
 
     @staticmethod
-    def calculate_iic_stats(l1, l2, num_classes, device):
+    def calculate_iic_stats(l1, l2, device):
         if l1 is None:
             iic_loss = torch.tensor(0.0).to(device)
             iic_accuracy = 0.0
         else:
-            iic_loss = IIC(l1, l2, num_classes)
+            iic_loss = IIC(l1, l2)
             iic_accuracy = (l1.argmax(dim=1) == l2.argmax(dim=1)).sum().item() / l1.size(0)
         return iic_loss, iic_accuracy
 
@@ -361,10 +361,8 @@ class Network(nn.Module):
             [x[i, :, batch_starts[2 * i + 1]:batch_starts[2 * i + 1] + seq_len] for i in range(batch_size)], dim=0)
         x1_res = self.half_forward(x_1, no_loss)
         x2_res = self.half_forward(x_2, no_loss)
-        iic_loss_z, iic_accuracy_z = self.calculate_iic_stats(x1_res.latents.z_iic, x2_res.latents.z_iic,
-                                                              self.num_z_iic_classes, x)
-        iic_loss_c, iic_accuracy_c = self.calculate_iic_stats(x1_res.latents.c_iic, x2_res.latents.c_iic,
-                                                              self.num_c_iic_classes, x)
+        iic_loss_z, iic_accuracy_z = self.calculate_iic_stats(x1_res.latents.z_iic, x2_res.latents.z_iic, x)
+        iic_loss_c, iic_accuracy_c = self.calculate_iic_stats(x1_res.latents.c_iic, x2_res.latents.c_iic, x)
         return NetworkOutput(losses=NetworkLosses((x1_res.losses.global_ + x2_res.losses.global_) / 2,
                                                   (x1_res.losses.local_ + x2_res.losses.local_) / 2,
                                                   (x1_res.losses.prediction_ + x2_res.losses.prediction_) / 2,

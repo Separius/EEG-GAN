@@ -1,6 +1,7 @@
 import json
-from utils import cudize, num_params, dict_add, divide_dict, merge_pred_accs, AttrDict
+from utils import cudize, num_params, dict_add, divide_dict, AttrDict
 from cpc.cpc_network import Network
+from cpc.cpc_loss import calc_iic_stats
 from dataset import EEGDataset
 
 import torch
