@@ -368,3 +368,37 @@ def calc_iic_stats(train_preds, val_preds, train_targets, val_targets, k):
         elif i % 2 == 1:
             acc[mode + '_original'] = _acc(reordered_preds, targets)
     return acc
+
+
+def mutual_information(joint, marginal, mine_net):
+    mean_t = mine_net(joint).mean()
+    mean_et = torch.exp(mine_net(marginal)).mean()
+    mi_lb = mean_t - torch.log(mean_et)
+    return mi_lb, mean_t, mean_et
+
+
+def learn_mine(batch, mine_net, mine_net_optim, ma_et=1.0, ma_rate=0.01, biased=False):
+    joint, marginal = batch  # batch is a tuple of (joint, marginal)
+    mi_lb, mean_t, mean_et = mutual_information(joint, marginal, mine_net)
+    ma_et = (1.0 - ma_rate) * ma_et + ma_rate * mean_et.item()
+    if not biased:
+        loss = -(mean_t - mean_et / ma_et)
+    else:
+        loss = - mi_lb
+    mine_net_optim.zero_grad()
+    loss.backward()
+    mine_net_optim.step()
+    return mi_lb, ma_et
+
+
+def sample_batch(data, batch_size=100, sample_mode='joint'):
+    if sample_mode == 'joint':
+        index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = data[index]
+    else:
+        joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = np.concatenate([data[joint_index][:, 0].reshape(-1, 1),
+                                data[marginal_index][:, 1].reshape(-1, 1)],
+                               axis=1)
+    return batch
