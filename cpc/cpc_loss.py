@@ -302,6 +302,14 @@ def IIC(x_out, x_tf_out, eps=0.0001):  # x_out is n*C(softmaxed) and zt is it's 
     return loss
 
 
+def myIIC(x_out, x_tf_out, eps=0.0001):  # x_out is n*C(softmaxed) and zt is it's pair
+    _, k = x_out.size()
+    p_i_j = _compute_joint(x_out, x_tf_out)
+    assert (p_i_j.size() == (k, k))
+    p_i_j[(p_i_j < eps).data] = eps
+    return F.kl_div(p_i_j, target=torch.eye(k).to(x_out) / k, reduction='mean')
+
+
 def _original_match(flat_preds, flat_targets, preds_k, targets_k):
     # map each output channel to the best matching ground truth (many to one)
     out_to_gts = {}
@@ -342,8 +350,6 @@ def _ari(preds, targets):
 
 def calc_iic_stats(train_preds, val_preds, train_targets, val_targets, k):
     match_hun = _hungarian_match(train_preds, train_targets, k)
-    print(match_hun)
-    assert False
     match_ori = _original_match(train_preds, train_targets, preds_k=k, targets_k=k)
     acc = {}
     for i, match in enumerate([match_hun, match_ori, match_hun, match_ori]):

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from collections import namedtuple
 from pytorch_pretrained_bert.modeling import BertLayer
 
-from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI, IIC
+from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI, IIC, myIIC
 
 
 class SincEncoder(nn.Module):
@@ -336,12 +336,12 @@ class Network(nn.Module):
         self.c_pooled_mi_z = c_pooled_mi_z
 
     @staticmethod
-    def calculate_iic_stats(l1, l2, device):
+    def calculate_iic_stats(l1, l2, device, my_iic=False):
         if l1 is None:
             iic_loss = torch.tensor(0.0).to(device)
             iic_accuracy = 0.0
         else:
-            iic_loss = IIC(l1, l2)
+            iic_loss = myIIC(l1, l2) if my_iic else IIC(l1, l2)
             iic_accuracy = (l1.argmax(dim=1) == l2.argmax(dim=1)).sum().item() / l1.size(0)
         return iic_loss, iic_accuracy
 

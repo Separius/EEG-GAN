@@ -108,6 +108,7 @@ class CifarNetwork(nn.Module):
     def __init__(self, have_global, have_local, have_z_iic, have_c_iic,
                  prediction_k=5, contextualizer_num_layers=1, my_iic=False):
         super().__init__()
+        self.my_iic = my_iic
         encoder = MyResNet(BasicBlock, [2, 2, 2, 1], zero_init_residual=True)
         z_pooler = PNormPooling(encoder.z_size, be_mean_pool=not have_global)
         if have_z_iic:
@@ -196,8 +197,10 @@ class CifarNetwork(nn.Module):
             return x1_res
         with torch.no_grad():
             x2_res = self.half_forward(xp, no_loss)
-        iic_loss_z, iic_accuracy_z = Network.calculate_iic_stats(x1_res.latents.z_iic, x2_res.latents.z_iic, x)
-        iic_loss_c, iic_accuracy_c = Network.calculate_iic_stats(x1_res.latents.c_iic, x2_res.latents.c_iic, x)
+        iic_loss_z, iic_accuracy_z = Network.calculate_iic_stats(x1_res.latents.z_iic, x2_res.latents.z_iic, x,
+                                                                 self.my_iic)
+        iic_loss_c, iic_accuracy_c = Network.calculate_iic_stats(x1_res.latents.c_iic, x2_res.latents.c_iic, x,
+                                                                 self.my_iic)
         return NetworkOutput(losses=NetworkLosses((x1_res.losses.global_ + x2_res.losses.global_) / 2,
                                                   (x1_res.losses.local_ + x2_res.losses.local_) / 2,
                                                   (x1_res.losses.prediction_ + x2_res.losses.prediction_) / 2,
@@ -267,11 +270,12 @@ def main():
     c_iic_loss_weight = 8.0
     prediction_k = 8
     summary = False
+    my_iic = False
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     network = CifarNetwork(have_global=(global_loss_weight != 0.0), have_local=(local_loss_weight != 0.0),
                            have_z_iic=(z_iic_loss_weight != 0.0), have_c_iic=(c_iic_loss_weight != 0.0),
-                           prediction_k=prediction_k, contextualizer_num_layers=1).to(device)
+                           prediction_k=prediction_k, contextualizer_num_layers=1, my_iic=my_iic).to(device)
     train_dataloader = DataLoader(GridCifar10(train=True), batch_size=batch_size, shuffle=True, drop_last=True)
     val_dataloader = DataLoader(GridCifar10(train=False), batch_size=batch_size, shuffle=True, drop_last=True)
     num_parameters = num_params(network)
