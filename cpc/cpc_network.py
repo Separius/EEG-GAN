@@ -159,8 +159,12 @@ class ConvEncoder(nn.Module):
 
 
 class PNormPooling(nn.Module):
-    def __init__(self, input_size, batch_norm=True, mlp_sizes=None, p=None):
+    def __init__(self, input_size, batch_norm=True, mlp_sizes=None, p=None, be_mean_pool=False):
         super().__init__()
+        if be_mean_pool:
+            self.pool_size = input_size
+            self.is_pool = True
+        self.is_pool = False
         if p is None:
             p = [1.0, float('+inf')]
         if mlp_sizes is None:
@@ -179,6 +183,8 @@ class PNormPooling(nn.Module):
         self.network = nn.Sequential(*network)
 
     def forward(self, x):
+        if self.is_pool:
+            return x.mean(dim=2)
         return self.network(torch.cat([torch.norm(x, p, 2) for p in self.p], dim=1))
 
 
@@ -396,11 +402,11 @@ class Network(nn.Module):
         if self.c_pooled_mi_z_pooled is not None:
             global_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
         else:
-            global_loss, global_accuracy = torch.tensor(0.0).to(c_pooled), [0.0, 0.0]
+            global_loss, global_accuracy = torch.tensor(0.0).to(c_pooled), 0.0
         if self.c_pooled_mi_z is not None:
             local_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
         else:
-            local_loss, local_accuracy = torch.tensor(0.0).to(c_pooled), [0.0, 0.0]
+            local_loss, local_accuracy = torch.tensor(0.0).to(c_pooled), 0.0
         return NetworkOutput(losses=NetworkLosses(global_loss, local_loss, prediction_loss, torch.tensor(0.0).to(x),
                                                   torch.tensor(0.0).to(x)),
                              accuracies=NetworkAccuracies(global_accuracy, local_accuracy, pred_acc, 0.0, 0.0),

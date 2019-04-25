@@ -147,7 +147,7 @@ class SeqOneMI(nn.Module):
             seq_expanded = seq.unsqueeze(0).expand(batch_size, -1, -1, -1)
             u = self.network(torch.cat([code_expanded, seq_expanded], dim=2).permute(0, 2, 1, 3)).squeeze()
         if self.measure == 'FULL_CE':
-            targets = torch.arange(u.size(0)).to(u.device).expand(-1, u.size(2))  # BT
+            targets = torch.arange(u.size(0)).to(u.device).unsqueeze(1).expand(-1, u.size(2))  # BT
             acc = (u.argmax(1) == targets).sum().item() / (u.size(0) * u.size(2))
             return F.cross_entropy(u, targets), acc
         positive_mask = torch.eye(u.size(0)).to(u)
@@ -272,7 +272,7 @@ class KPredLoss(nn.Module):
                     f_loss, t_acc, b_acc = self.calc_four_way_loss(c_flat, z_flat, self.backward_weights[i])
                 accs['b_{}'.format(i)] = (t_acc + b_acc) / 2
                 total_loss = total_loss + f_loss
-        return total_loss, sum(accs) / len(accs)
+        return total_loss, accs
 
 
 def IIC(z, zt, num_classes=10, eps=0.0001):  # z is n*C(softmaxed) and zt is it's pair
@@ -281,4 +281,4 @@ def IIC(z, zt, num_classes=10, eps=0.0001):  # z is n*C(softmaxed) and zt is it'
     P[(P < eps).data] = eps
     Pi = P.sum(dim=1).view(num_classes, 1).expand(num_classes, num_classes)
     Pj = P.sum(dim=0).view(1, num_classes).expand(num_classes, num_classes)
-    return (P * (F.log(Pi) + F.log(Pj) - F.log(P))).sum()
+    return (P * (torch.log(Pi) + torch.log(Pj) - torch.log(P))).sum()

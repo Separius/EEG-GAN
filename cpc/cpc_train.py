@@ -1,3 +1,4 @@
+import json
 from utils import cudize, num_params, dict_add, divide_dict, merge_pred_accs, AttrDict
 from cpc.cpc_network import Network
 from dataset import EEGDataset
@@ -143,7 +144,8 @@ def main(summary):
             if summary:
                 print('train' if training else 'validation', epoch, metrics['net_loss'])
             else:
-                print('train' if training else 'validation', epoch, metrics)
+                print('train' if training else 'validation', epoch)
+                print(json.dumps(metrics, indent=4))
             if not training and (metrics['net_loss'] < best_val_loss):
                 best_val_loss = metrics['net_loss']
                 print('update best to', best_val_loss)

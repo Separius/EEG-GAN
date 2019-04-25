@@ -254,35 +254,17 @@ def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
 def dict_add(base, new, multiplier=1.0):
     for k, v in new.items():
         if k not in base:
-            base[k] = [multiplier * vv for vv in v]
+            base[k] = multiplier * v
         else:
-            base[k] = [multiplier * vv + vvv for vv, vvv in zip(v, base[k])]
+            base[k] += multiplier * v
 
 
 def divide_dict(base, size):
     for k, v in base.items():
-        base[k] = [vv / size for vv in v]
-
-
-def merge_pred_accs(all_pred_acc, K, bidir):
-    if K <= 0:
-        return 0.0
-    # 'f/b_k_t/b': [0.04077060931899642, 0.03391017025089606]
-    acc_k_b = {k + 1: [] for k in range(K)}
-    acc_k_t = {k + 1: [] for k in range(K)}
-    for k in range(K):
-        acc_k_b[k + 1].append(sum(all_pred_acc['f_{}_b'.format(k + 1)]) / 2)
-        if bidir:
-            acc_k_b[k + 1].append(sum(all_pred_acc['b_{}_b'.format(k + 1)]) / 2)
-        acc_k_t[k + 1].append(sum(all_pred_acc['f_{}_t'.format(k + 1)]) / 2)
-        if bidir:
-            acc_k_t[k + 1].append(sum(all_pred_acc['b_{}_t'.format(k + 1)]) / 2)
-    acc_k_b = {k: sum(v) / len(v) for k, v in acc_k_b.items()}
-    acc_k_t = {k: sum(v) / len(v) for k, v in acc_k_t.items()}
-    v = sum(acc_k_b.values()) / len(acc_k_b)
-    v += sum(acc_k_t.values()) / len(acc_k_t)
-    v /= 2
-    return v
+        if isinstance(v, dict):
+            base[k] = {kk: vv/size for kk, vv in v.items()}
+        else:
+            base[k] = v / size
 
 
 class AttrDict(dict):

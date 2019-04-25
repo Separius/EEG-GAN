@@ -1,0 +1,12 @@
+https://github.com/ajbrock/BigGAN-PyTorch/blob/master/layers.py => singular value monitoring
+
+The training procedure is as follows: from a 256x256 image we extract a 7x7 grid of 64x64 cropswith 32 pixels overlap. Simple data augmentation proved helpful on both the 256x256 images and the64x64 crops. The 256x256 images are randomly cropped from a 300x300 image, horizontally flippedwith a probability of 50% and converted to greyscale. For each of the 64x64 crops we randomly takea 60x60 subcrop and pad them back to a 64x64 image.Each crop is then encoded by the ResNet-v2-101 encoder. We use the outputs from the third residualblock, and spatially mean-pool to get a single 1024-d vector per 64x64 patch.  This results in a7x7x1024 tensor. Next, we use a PixelCNN-style autoregressive model [19] (a convolutional row-GRU PixelRNN [39] gave similar results) to make predictions about the latent activations in followingrows top-to-bottom, visualized in Figure 4. We predict up to five rows from the 7x7 grid, and weapply the contrastive loss for each patch in the row. We used Adam optimizer with a learning rate of2e-4 and trained on 32 GPUs each with a batch size of 16.
+
+https://github.com/DuaneNielsen/DeepInfomaxPytorch
+https://github.com/rdevon/DIM
+https://github.com/AlexiaJM/RelativisticGAN
+https://github.com/xu-ji/IIC
+https://github.com/xuqiantong/GAN-Metrics
+https://github.com/pfnet-research/chainer-gan-lib
+
+Since it is presently the state-of-the-art model on the conditional ImageNet synthesis task, we havereimplemented the Self-Attention GAN (Zhang et al., 2018) as a baseline.  After reproducing theresults reported by Zhang et al. (2018) (with the learning rate of1e−4), we fine-tuned a trainedSAGAN with a much lower learning rate (1e−7) for both generator and discriminator. This improvedboth the Inception Score and FID significantly as can be seen in the Improved-SAGAN column inTable 2. Plots of Inception score and FID during training are given in Figure 5(A).Since SAGAN uses a hinge loss and DRS requires a sigmoid output, we added a fully-connectedlayer “on top of” the trained discriminator and trained it to distinguish real images from fake onesusing the binary cross-entropy loss. We trained this extra layer with 10,000 generated samples fromthe model and 10,000 examples from ImageNet.
