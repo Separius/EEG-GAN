@@ -250,7 +250,7 @@ class KPredLoss(nn.Module):
 
     def forward(self, c, z):
         if self.k == 0:
-            return torch.tensor(0.0).to(c), {}
+            return torch.tensor(0.0).to(z), {}
         B, c_size, T = c.size()
         if self.split_c:
             c_size = c_size // 2

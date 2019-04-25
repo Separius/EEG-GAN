@@ -114,25 +114,33 @@ class CifarNetwork(nn.Module):
             self.z_iic = nn.Sequential(nn.Linear(z_pooler.pool_size, 10), nn.Softmax(-1))
         else:
             self.z_iic = None
-        contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=encoder.z_size // 2,
-                                 bidirectional=False, num_layers=contextualizer_num_layers,
-                                 dropout=0 if contextualizer_num_layers == 1 else 0.1, cell_type='GRU')
-        c_pooler = PNormPooling(contextualizer.c_size, be_mean_pool=not (have_local or have_global))
+        if not have_global and not have_local and not have_c_iic:
+            contextualizer = None
+            c_pooler = None
+            c_pooler_pool_size = 0
+            contextualizer_c_size = 0
+        else:
+            contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=encoder.z_size // 2,
+                                     bidirectional=False, num_layers=contextualizer_num_layers,
+                                     dropout=0 if contextualizer_num_layers == 1 else 0.1, cell_type='GRU')
+            c_pooler = PNormPooling(contextualizer.c_size, be_mean_pool=not (have_local or have_global))
+            c_pooler_pool_size = c_pooler.pool_size
+            contextualizer_c_size = contextualizer.c_size
         if have_c_iic:
-            self.c_iic = nn.Sequential(nn.Linear(c_pooler.pool_size, 10), nn.Softmax(-1))
+            self.c_iic = nn.Sequential(nn.Linear(c_pooler_pool_size, 10), nn.Softmax(-1))
         else:
             self.c_iic = None
 
-        prediction_loss_network = KPredLoss(contextualizer.c_size, encoder.z_size, k=prediction_k,
+        prediction_loss_network = KPredLoss(contextualizer_c_size, encoder.z_size, k=prediction_k,
                                             auto_is_bidirectional=False, look_both=False)
         if have_global:
-            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size, mode='bilinear',
-                                            hidden_size=min(c_pooler.pool_size, z_pooler.pool_size) * 2)
+            c_pooled_mi_z_pooled = OneOneMI(c_pooler_pool_size, z_pooler.pool_size, mode='bilinear',
+                                            hidden_size=min(c_pooler_pool_size, z_pooler.pool_size) * 2)
         else:
             c_pooled_mi_z_pooled = None
         if have_local:
-            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size, mode='bilinear',
-                                     hidden_size=min(c_pooler.pool_size, encoder.z_size) * 2)
+            c_pooled_mi_z = SeqOneMI(c_pooler_pool_size, encoder.z_size, mode='bilinear',
+                                     hidden_size=min(c_pooler_pool_size, encoder.z_size) * 2)
         else:
             c_pooled_mi_z = None
 
@@ -155,8 +163,12 @@ class CifarNetwork(nn.Module):
             z_iic = self.z_iic(z_pooled)
         else:
             z_iic = None
-        c = self.contextualizer(z)
-        c_pooled = self.c_pooler(c)
+        if self.contextualizer is not None:
+            c = self.contextualizer(z)
+            c_pooled = self.c_pooler(c)
+        else:
+            c = None
+            c_pooled = None
         if self.c_iic is not None:
             c_iic = self.c_iic(c_pooled)
         else:
@@ -168,13 +180,13 @@ class CifarNetwork(nn.Module):
         if self.c_pooled_mi_z_pooled is not None:
             global_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
         else:
-            global_loss, global_accuracy = torch.tensor(0.0).to(c_pooled), 0.0
+            global_loss, global_accuracy = torch.tensor(0.0).to(x), 0.0
         if self.c_pooled_mi_z is not None:
             local_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
         else:
-            local_loss, local_accuracy = torch.tensor(0.0).to(c_pooled), 0.0
-        return NetworkOutput(losses=NetworkLosses(global_loss, local_loss, prediction_loss, torch.tensor(0.0).to(x),
-                                                  torch.tensor(0.0).to(x)),
+            local_loss, local_accuracy = torch.tensor(0.0).to(x), 0.0
+        return NetworkOutput(losses=NetworkLosses(global_loss, local_loss, prediction_loss,
+                                                  torch.tensor(0.0).to(x), torch.tensor(0.0).to(x)),
                              accuracies=NetworkAccuracies(global_accuracy, local_accuracy, pred_acc, 0.0, 0.0),
                              latents=NetworkLatents(z, c, z_pooled, c_pooled, z_iic, c_iic))
 
@@ -198,7 +210,7 @@ class CifarNetwork(nn.Module):
                                  iic_accuracy_z, iic_accuracy_c), latents=x1_res.latents)
 
 
-def get_us_acc(network, train_dataloader, val_dataloader, device, k):
+def get_us_acc(network, train_dataloader, val_dataloader, device, k, have_z_iic, have_c_iic):
     with torch.no_grad():
         for j, dl in enumerate([train_dataloader, val_dataloader]):
             preds_z = []
@@ -209,20 +221,35 @@ def get_us_acc(network, train_dataloader, val_dataloader, device, k):
                 x = x.to(device)
                 xp = xp.to(device)
                 network_return = network.forward(x, xp, no_loss=True)
-                preds_z.append(network_return.latents.z_iic.argmax(dim=1).cpu().numpy())
-                preds_c.append(network_return.latents.c_iic.argmax(dim=1).cpu().numpy())
+                if have_z_iic:
+                    preds_z.append(network_return.latents.z_iic.argmax(dim=1).cpu().numpy())
+                if have_c_iic:
+                    preds_c.append(network_return.latents.c_iic.argmax(dim=1).cpu().numpy())
                 targets.append(target.numpy())
             if j == 0:
                 targets_train = np.concatenate(targets, axis=0)
-                preds_z_train = np.concatenate(preds_z, axis=0)
-                preds_c_train = np.concatenate(preds_c, axis=0)
+                if have_z_iic:
+                    preds_z_train = np.concatenate(preds_z, axis=0)
+                if have_c_iic:
+                    preds_c_train = np.concatenate(preds_c, axis=0)
             else:
                 targets_val = np.concatenate(targets, axis=0)
-                preds_z_val = np.concatenate(preds_z, axis=0)
-                preds_c_val = np.concatenate(preds_c, axis=0)
-    res = {'z_' + k: v for k, v in calc_iic_stats(preds_z_train, preds_z_val, targets_train, targets_val, k).items()}
-    res.update(
-        {'c_' + k: v for k, v in calc_iic_stats(preds_c_train, preds_c_val, targets_train, targets_val, k).items()})
+                if have_z_iic:
+                    preds_z_val = np.concatenate(preds_z, axis=0)
+                if have_c_iic:
+                    preds_c_val = np.concatenate(preds_c, axis=0)
+    if have_z_iic:
+        res = {'z_' + k: v for k, v in
+               calc_iic_stats(preds_z_train, preds_z_val, targets_train, targets_val, k).items()}
+        if have_c_iic:
+            res.update({'c_' + k: v for k, v in
+                        calc_iic_stats(preds_c_train, preds_c_val, targets_train, targets_val, k).items()})
+    else:
+        res = {'c_' + k: v for k, v in
+               calc_iic_stats(preds_c_train, preds_c_val, targets_train, targets_val, k).items()}
+        if have_z_iic:
+            res.update({'z_' + k: v for k, v in
+                        calc_iic_stats(preds_z_train, preds_z_val, targets_train, targets_val, k).items()})
     return res
 
 
@@ -338,10 +365,14 @@ def main():
                 best_val_loss = metrics['net_loss']
                 print('update best to', best_val_loss)
                 torch.save(network.state_dict(), 'best_network.pth')
-                print(json.dumps(get_us_acc(network, train_dataloader, val_dataloader, device, 10), indent=4))
+                print(json.dumps(get_us_acc(network, train_dataloader, val_dataloader, device, 10,
+                                            have_z_iic=(z_iic_loss_weight != 0.0),
+                                            have_c_iic=(c_iic_loss_weight != 0.0)), indent=4))
     network.load_state_dict(torch.load('best_network.pth'))
     network.eval()
-    print(json.dumps(get_us_acc(network, train_dataloader, val_dataloader, device, 10), indent=4))
+    print(json.dumps(
+        get_us_acc(network, train_dataloader, val_dataloader, device, 10, have_z_iic=(z_iic_loss_weight != 0.0),
+                   have_c_iic=(c_iic_loss_weight != 0.0)), indent=4))
 
 
 if __name__ == '__main__':
