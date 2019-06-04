@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 
+from cpc.cpc_network import SincEncoder
 from utils import pixel_norm, resample_signal
 from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, PassChannelResidual, ConcatResidual
 
@@ -16,7 +18,8 @@ class UnetGBlock(nn.Module):
         self.ch_in = ch_in
         self.enc_ch_out = inner_layer.ch_in if inner_layer is not None else (ch_in + ch_out)
         self.encoder = DBlock(ch_in, self.enc_ch_out, ch_rgb_in, k_size, initial_kernel_size, is_residual, deep,
-                              group_size=-1, temporal_groups_per_window=1, conv_disc=False, **enc_layer_settings)
+                              group_size=-1, temporal_groups_per_window=1, conv_disc=False, sinc_ks=False,
+                              **enc_layer_settings)
         self.signal_freq = signal_freq
         self.inner_freq = inner_freq
         self.middle = inner_layer
@@ -383,7 +386,7 @@ class Generator(nn.Module):
 
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None, is_residual=False,
-                 deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, **layer_settings):
+                 deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, sinc_ks=0, **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.net = []
@@ -404,8 +407,14 @@ class DBlock(nn.Module):
         self.net = nn.Sequential(*self.net)
         reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
                                       init=layer_settings['init'])
-        self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
-                                   **reduced_layer_settings)
+        if sinc_ks == 0:
+            self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
+                                       **reduced_layer_settings)
+        else:
+            assert sinc_ks % ch_rgb == 0, 'sinc_ks must be divisible by ch_rgb'
+            # TODO read sample_rate from input
+            self.fromRGB = SincEncoder(ch_rgb, is_shared=False, kernel_size=sinc_ks, num_kernels=sinc_ks // ch_rgb,
+                                       sample_rate=60.0, min_low_hz=0.01, min_band_hz=1.0)
         if deep:
             self.residual = ConcatResidual(ch_in, ch_out, **reduced_layer_settings)
         else:
@@ -430,7 +439,7 @@ class Discriminator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                  equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
-                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False):
+                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False, sinc_ks=0):
         """
         NOTE we only support global conidtioning(not temporal) for now
         :param initial_kernel_size:
@@ -472,7 +481,8 @@ class Discriminator(nn.Module):
         layer_settings = dict(equalized=equalized, spectral=spectral, init=init, act_alpha=act_alpha,
                               do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
         block_settings = dict(ch_rgb=num_rgb_channels, k_size=kernel_size, is_residual=residual, conv_disc=conv_only,
-                              group_size=group_size, temporal_groups_per_window=temporal_groups_per_window, deep=deep)
+                              group_size=group_size, temporal_groups_per_window=temporal_groups_per_window, deep=deep,
+                              sinc_ks=sinc_ks)
 
         last_block = DBlock(nf(1), nf(0), initial_kernel_size=initial_kernel_size, **block_settings, **layer_settings)
         dummy = []  # to make SA layers registered
@@ -535,6 +545,70 @@ class Discriminator(nn.Module):
         else:
             cond_loss = 0.0
         return o + cond_loss, h, all_attention_maps
+
+
+class MultiDiscriminator(nn.Module):
+    def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                 self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                 equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
+                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False, sinc_ks=121,
+                 all_sinc_weight=0.0, all_time_weight=1.0, shared_sinc_weight=1.0, shared_time_weight=1.0,
+                 one_sec_weight=1.0):
+        super().__init__()
+        self.all_sinc_weight = all_sinc_weight if sinc_ks > 0 else 0.0
+        self.all_time_weight = all_time_weight
+        self.shared_sinc_weight = shared_sinc_weight if sinc_ks > 0 else 0.0
+        self.shared_time_weight = shared_time_weight
+        self.one_sec_weight = one_sec_weight
+        all_params = [initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                      self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                      equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm, group_size,
+                      temporal_groups_per_window, conv_only, input_to_all_layers]
+        # TODO write alpha and depth setters
+        if all_sinc_weight != 0:
+            self.all_sinc_net = Discriminator(*all_params, sinc_ks)
+        if all_time_weight != 0:
+            self.all_time_net = Discriminator(*all_params, 0)
+        shared_params = [1, fmap_base // 2, fmap_max // 2, fmap_min // 2, kernel_size,
+                         self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                         equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm]
+        shared_k_params = dict(group_size=group_size, temporal_groups_per_window=temporal_groups_per_window,
+                               conv_only=conv_only, input_to_all_layers=input_to_all_layers)
+        if shared_sinc_weight != 0:
+            self.shared_sinc_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params,
+                                                 sinc_ks=sinc_ks)
+        if shared_time_weight != 0:
+            self.shared_time_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params, sinc_ks=0)
+        if one_sec_weight != 0:
+            psunp = np.array(progression_scale_up)
+            psdnp = np.array(progression_scale_down)
+            self.signal_lens = [np.sum(psunp[:i] / psdnp[:i]) for i in range(len(progression_scale_up) + 1)]
+            self.one_sec_net = Discriminator(1, *shared_params, group_size=0, temporal_groups_per_window=0,
+                                             conv_only=conv_only, input_to_all_layers=input_to_all_layers, sinc_ks=0)
+
+    def forward(self, x):
+        o = 0.0
+        if self.all_sinc_weight != 0:
+            o = o + self.all_sinc_weight * self.all_sinc_net(x)[0]
+        if self.all_time_weight != 0:
+            o = o + self.all_time_weight * self.all_time_net(x)[0]
+        if self.shared_sinc_weight != 0:
+            o = o + self.shared_sinc_weight * self.shared_sinc_net(x)[0]
+        if self.shared_time_weight != 0:
+            o = o + self.shared_time_weight * self.shared_time_net(x)[0]
+        if self.one_sec_weight != 0:
+            if isinstance(x, dict):
+                x, y = x['x'], x.get('y', None)
+            elif isinstance(x, tuple):
+                x, y = x
+            else:
+                y = None
+            stride = self.signal_lens[self.depth]
+            x = torch.cat([x[:, :, i * stride:(i + 1) * stride] for i in range(x.size(2) // stride)], dim=0)
+            if y is not None:
+                y = torch.repeat(y, x.size(2) // stride, 0)
+            o = o + self.one_sec_weight * self.one_sec_weight((x, y))[0]
+        return o
 
 
 def main():
