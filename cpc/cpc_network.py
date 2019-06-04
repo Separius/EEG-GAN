@@ -6,12 +6,12 @@ import torch.nn.functional as F
 from collections import namedtuple
 from pytorch_pretrained_bert.modeling import BertLayer
 
-from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI, IIC, myIIC
+from cpc.cpc_loss import KPredLoss, OneOneMI, SeqOneMI
 
 
 class SincEncoder(nn.Module):
     def __init__(self, num_channels, is_shared=True, kernel_size=121,
-                 num_kernels=16, sample_rate=60.0, min_low_hz=0.0, min_band_hz=1.0):
+                 num_kernels=16, sample_rate=60.0, min_low_hz=0.01, min_band_hz=1.0):
         super().__init__()
         self.is_shared = is_shared
         if is_shared:
@@ -166,6 +166,7 @@ class PNormPooling(nn.Module):
         if be_mean_pool:
             self.pool_size = input_size
             self.is_pool = True
+            return
         self.is_pool = False
         if p is None:
             p = [1.0, float('+inf')]
@@ -270,35 +271,25 @@ class Transformer(nn.Module):
         return torch.cat([forward_output, backward_output], dim=1)
 
 
-NetworkLosses = namedtuple('NetworkLosses', ['global_', 'local_', 'prediction_', 'z_iic_', 'c_iic_'])
-NetworkAccuracies = namedtuple('NetworkAccuracies', ['global_', 'local_', 'prediction_', 'z_iic_', 'c_iic_'])
-NetworkLatents = namedtuple('NetworkLatents', ['z', 'c', 'z_p', 'c_p', 'z_iic', 'c_iic'])
+NetworkLosses = namedtuple('NetworkLosses', ['global_', 'local_', 'prediction_'])
+NetworkAccuracies = namedtuple('NetworkAccuracies', ['global_', 'local_', 'prediction_'])
+NetworkLatents = namedtuple('NetworkLatents', ['z', 'c', 'z_p', 'c_p'])
 NetworkOutput = namedtuple('NetworkOutput', ['losses', 'accuracies', 'latents'])
 
 
+# TODO add classification head and SincMode for the encoder
 class Network(nn.Module):
     def __init__(self, input_channels, encoder_dropout=0.1, bidirectional=False, contextualizer_num_layers=1,
                  contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
                  have_global=True, have_local=True, residual_encoder=False, rnn_hidden_multiplier=2,
-                 global_mode='mlp', local_mode='mlp', num_z_iic_classes=0, num_c_iic_classes=0,
-                 encoder_down_ratios=None, encoder_channel_sizes=None):
+                 global_mode='mlp', local_mode='mlp', encoder_down_ratios=None, encoder_channel_sizes=None):
         super().__init__()
         if residual_encoder:
             encoder = ResidualEncoder(input_channels)
         else:
             encoder = ConvEncoder(input_channels, encoder_dropout, down_ratios=encoder_down_ratios,
                                   channel_sizes=encoder_channel_sizes)
-        if have_global:
-            z_pooler = PNormPooling(encoder.z_size)
-        else:
-            z_pooler = None
-        if num_z_iic_classes != 0:
-            self.z_iic = nn.Sequential(
-                nn.Linear(z_pooler.pool_size if z_pooler is not None else encoder.z_size, num_z_iic_classes),
-                nn.Softmax(-1))
-        else:
-            self.z_iic = None
-        self.num_z_iic_classes = num_z_iic_classes
+        z_pooler = PNormPooling(encoder.z_size, be_mean_pool=not have_global)
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
                                          num_heads=4, max_seq_len=32, num_layers=contextualizer_num_layers,
@@ -307,17 +298,7 @@ class Network(nn.Module):
             contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=rnn_hidden_multiplier * encoder.z_size,
                                      bidirectional=bidirectional, num_layers=contextualizer_num_layers,
                                      dropout=contextualizer_dropout, cell_type='GRU')
-        if have_global or have_local:
-            c_pooler = PNormPooling(contextualizer.c_size)
-        else:
-            c_pooler = None
-        if num_z_iic_classes != 0:
-            self.c_iic = nn.Sequential(
-                nn.Linear(c_pooler.pool_size if c_pooler is not None else contextualizer.c_size, num_c_iic_classes),
-                nn.Softmax(-1))
-        else:
-            self.c_iic = None
-        self.num_c_iic_classes = num_c_iic_classes
+        c_pooler = PNormPooling(contextualizer.c_size, not have_global and not have_local)
         prediction_loss_network = KPredLoss(contextualizer.c_size, encoder.z_size, k=prediction_k,
                                             auto_is_bidirectional=bidirectional, look_both=not causal_prediction)
         if have_global:
@@ -339,67 +320,13 @@ class Network(nn.Module):
         self.c_pooled_mi_z_pooled = c_pooled_mi_z_pooled
         self.c_pooled_mi_z = c_pooled_mi_z
 
-    @staticmethod
-    def calculate_iic_stats(l1, l2, device, my_iic=False):
-        if l1 is None:
-            iic_loss = torch.tensor(0.0).to(device)
-            iic_accuracy = 0.0
-        else:
-            iic_loss = myIIC(l1, l2) if my_iic else IIC(l1, l2)
-            iic_accuracy = (l1.argmax(dim=1) == l2.argmax(dim=1)).sum().item() / l1.size(0)
-        return iic_loss, iic_accuracy
-
-    def forward(self, x, input_is_long=False, no_loss=False):
-        if not input_is_long:
-            return self.half_forward(x, no_loss)
-        batch_size, num_channels, long_seq_len = x.size()
-        seq_len = int(long_seq_len * 2 / 3)
-        if no_loss:
-            start = (long_seq_len - seq_len) // 2
-            return self.half_forward(x[..., start:start + seq_len], no_loss)
-        # NOTE you can also do this: https://stackoverflow.com/a/55787074/2796084
-        batch_starts = torch.randint(long_seq_len - seq_len, (2 * batch_size,))
-        x_1 = torch.stack([x[i, :, batch_starts[2 * i]:batch_starts[2 * i] + seq_len] for i in range(batch_size)],
-                          dim=0)
-        x_2 = torch.stack(
-            [x[i, :, batch_starts[2 * i + 1]:batch_starts[2 * i + 1] + seq_len] for i in range(batch_size)], dim=0)
-        x1_res = self.half_forward(x_1, no_loss)
-        x2_res = self.half_forward(x_2, no_loss)
-        iic_loss_z, iic_accuracy_z = self.calculate_iic_stats(x1_res.latents.z_iic, x2_res.latents.z_iic, x)
-        iic_loss_c, iic_accuracy_c = self.calculate_iic_stats(x1_res.latents.c_iic, x2_res.latents.c_iic, x)
-        return NetworkOutput(losses=NetworkLosses((x1_res.losses.global_ + x2_res.losses.global_) / 2,
-                                                  (x1_res.losses.local_ + x2_res.losses.local_) / 2,
-                                                  (x1_res.losses.prediction_ + x2_res.losses.prediction_) / 2,
-                                                  iic_loss_z, iic_loss_c),
-                             accuracies=NetworkAccuracies(
-                                 (x1_res.accuracies.global_ + x2_res.accuracies.global_) / 2,
-                                 (x1_res.accuracies.local_ + x2_res.accuracies.local_) / 2,
-                                 {k: (v + x2_res.accuracies.prediction_[k]) / 2
-                                  for k, v in x1_res.accuracies.prediction_.items()},
-                                 iic_accuracy_z, iic_accuracy_c), latents=x1_res.latents)
-
-    def half_forward(self, x, no_loss):
+    def forward(self, x, no_loss):
         z = self.encoder(x)
-        if self.z_pooler is not None:
-            z_pooled = self.z_pooler(z)
-        else:
-            z_pooled = z.mean(dim=2)
-        if self.z_iic is not None:
-            z_iic = self.z_iic(z_pooled)
-        else:
-            z_iic = None
+        z_pooled = self.z_pooler(z)
         c = self.contextualizer(z)
-        if self.c_pooler is not None:
-            c_pooled = self.c_pooler(c)
-        else:
-            c_pooled = c.mean(dim=2)
-        if self.c_iic is not None:
-            c_iic = self.c_iic(c_pooled)
-        else:
-            c_iic = None
+        c_pooled = self.c_pooler(c)
         if no_loss:
-            return NetworkOutput(losses=None, accuracies=None,
-                                 latents=NetworkLatents(z, c, z_pooled, c_pooled, z_iic, c_iic))
+            return NetworkOutput(losses=None, accuracies=None, latents=NetworkLatents(z, c, z_pooled, c_pooled))
         prediction_loss, pred_acc = self.prediction_loss_network(c, z)
         if self.c_pooled_mi_z_pooled is not None:
             global_loss, global_accuracy = self.c_pooled_mi_z_pooled(c_pooled, z_pooled)
@@ -409,7 +336,6 @@ class Network(nn.Module):
             local_loss, local_accuracy = self.c_pooled_mi_z(c_pooled, z)
         else:
             local_loss, local_accuracy = torch.tensor(0.0).to(c_pooled), 0.0
-        return NetworkOutput(losses=NetworkLosses(global_loss, local_loss, prediction_loss, torch.tensor(0.0).to(x),
-                                                  torch.tensor(0.0).to(x)),
-                             accuracies=NetworkAccuracies(global_accuracy, local_accuracy, pred_acc, 0.0, 0.0),
-                             latents=NetworkLatents(z, c, z_pooled, c_pooled, z_iic, c_iic))
+        return NetworkOutput(losses=NetworkLosses(global_loss, local_loss, prediction_loss),
+                             accuracies=NetworkAccuracies(global_accuracy, local_accuracy, pred_acc),
+                             latents=NetworkLatents(z, c, z_pooled, c_pooled))

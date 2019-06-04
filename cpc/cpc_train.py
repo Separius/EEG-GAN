@@ -1,14 +1,14 @@
 import json
-from utils import cudize, num_params, dict_add, divide_dict, AttrDict
-from cpc.cpc_network import Network
-from cpc.cpc_loss import calc_iic_stats
-from dataset import EEGDataset
-
 import torch
+from tqdm import trange
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from pytorch_pretrained_bert import BertAdam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+from dataset import EEGDataset
+from cpc.cpc_network import Network
+from utils import cudize, num_params, dict_add, divide_dict, AttrDict
 
 hp = AttrDict(
     validation_seed=12658,
@@ -21,16 +21,12 @@ hp = AttrDict(
     rnn_hidden_multiplier=2,  # I like to set it to 1
     global_mode='mlp',  # I like to set it to bilinear and remove this hyper param
     local_mode='mlp',  # I like to set it to bilinear and remove this hyper param
-    num_z_iic_classes=0,
-    num_c_iic_classes=0,
     use_scheduler=True,
     use_bert_adam=False,
     bidirectional=False,
     prediction_loss_weight=3.0,
     global_loss_weight=1.0,
     local_loss_weight=2.0,
-    z_iic_loss_weight=0.0,
-    c_iic_loss_weight=0.0,
     contextualizer_num_layers=1,
     contextualizer_dropout=0,
     encoder_dropout=0.2,  # used to be 0.1
@@ -42,15 +38,13 @@ hp = AttrDict(
 
 
 def main(summary):
-    have_iic = (hp.z_iic_loss_weight != 0.0) or (hp.c_iic_loss_weight != 0.0)
     train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio,
                                                         validation_seed=hp.validation_seed,
                                                         dir_path='./data/prepared_eegs_mat_th5', data_sampling_freq=220,
                                                         start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32,
-                                                        num_channels=17, return_long=have_iic)
-    real_bs = hp.batch_size // (2 if have_iic else 1)
-    train_dataloader = DataLoader(train_dataset, batch_size=real_bs, num_workers=0, drop_last=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=real_bs, num_workers=0, drop_last=False, pin_memory=True)
+                                                        num_channels=17, return_long=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=False, pin_memory=True)
     network = cudize(
         Network(train_dataset.num_channels, encoder_dropout=hp.encoder_dropout, bidirectional=hp.bidirectional,
                 contextualizer_num_layers=hp.contextualizer_num_layers,
@@ -59,9 +53,7 @@ def main(summary):
                 prediction_k=hp.prediction_k * (hp.prediction_loss_weight != 0.0),
                 have_global=(hp.global_loss_weight != 0.0), have_local=(hp.local_loss_weight != 0.0),
                 residual_encoder=hp.residual_encoder, rnn_hidden_multiplier=hp.rnn_hidden_multiplier,
-                global_mode=hp.global_mode, local_mode=hp.local_mode,
-                num_z_iic_classes=hp.num_z_iic_classes * (hp.z_iic_loss_weight != 0.0),
-                num_c_iic_classes=hp.num_c_iic_classes * (hp.c_iic_loss_weight != 0.0)))
+                global_mode=hp.global_mode, local_mode=hp.local_mode))
     num_parameters = num_params(network)
     print('num_parameters', num_parameters)
     if hp.use_bert_adam:
@@ -72,7 +64,7 @@ def main(summary):
     if hp.use_scheduler:
         scheduler = ReduceLROnPlateau(network_optimizer, patience=3, verbose=True)
     best_val_loss = float('inf')
-    for epoch in range(hp.epochs):
+    for epoch in trange(hp.epochs):
         for training, data_loader in zip((False, True), (val_dataloader, train_dataloader)):
             if training:
                 if epoch == hp.epochs - 1:
@@ -90,18 +82,14 @@ def main(summary):
             total_local_accuracy = 0.0
             total_k_pred_acc = {}
             total_pred_acc = 0.0
-            total_iic_z_acc = 0.0
-            total_iic_c_acc = 0.0
             total_count = 0
             with torch.set_grad_enabled(training):
                 for batch in data_loader:
                     x = cudize(batch['x'])
-                    network_return = network.forward(x, input_is_long=have_iic, no_loss=False)
+                    network_return = network.forward(x, no_loss=False)
                     network_loss = hp.prediction_loss_weight * network_return.losses.prediction_
                     network_loss = network_loss + hp.global_loss_weight * network_return.losses.global_
                     network_loss = network_loss + hp.local_loss_weight * network_return.losses.local_
-                    network_loss = network_loss + hp.z_iic_loss_weight * network_return.losses.z_iic_
-                    network_loss = network_loss + hp.c_iic_loss_weight * network_return.losses.c_iic_
 
                     bs = x.size(0)
                     total_count += bs
@@ -109,13 +97,9 @@ def main(summary):
                     total_prediction_loss += network_return.losses.prediction_.item() * bs
                     total_global_loss += network_return.losses.global_.item() * bs
                     total_local_loss += network_return.losses.local_.item() * bs
-                    total_iic_z_loss += network_return.losses.z_iic_.item() * bs
-                    total_iic_c_loss += network_return.losses.c_iic_.item() * bs
 
                     total_global_accuracy += network_return.accuracies.global_ * bs
                     total_local_accuracy += network_return.accuracies.local_ * bs
-                    total_iic_z_acc += network_return.accuracies.z_iic_ * bs
-                    total_iic_c_acc += network_return.accuracies.c_iic_ * bs
                     dict_add(total_k_pred_acc, network_return.accuracies.prediction_, bs)
                     len_pred = len(network_return.accuracies.prediction_)
                     if len_pred > 0:
@@ -134,10 +118,6 @@ def main(summary):
                 metrics.update(dict(global_loss=total_global_loss, global_acc=total_global_accuracy))
             if hp.local_loss_weight != 0:
                 metrics.update(dict(local_loss=total_local_loss, local_acc=total_local_accuracy))
-            if hp.hp.z_iic_loss_weight != 0:
-                metrics.update(dict(z_iic_loss=total_iic_z_loss, z_iic_acc=total_iic_z_acc))
-            if hp.hp.c_iic_loss_weight != 0:
-                metrics.update(dict(c_iic_loss=total_iic_c_loss, c_iic_acc=total_iic_c_acc))
             divide_dict(metrics, total_count)
 
             if not training and hp.use_scheduler:

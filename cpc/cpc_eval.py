@@ -1,17 +1,18 @@
+# TODO rewrite this script all together and somehow make it faster? => maybe compute the real stats only once(per CPC network)
 # TODO make this a script that reads a trained network, calculates stats with it over real data + trains VIN
 # TODO and then makes graphs for each noise type
 # TODO and calculates pixel level metrics(num bins, ms_ssim, swd)
-from cpc.cpc_train import hp
-from metrics.ndb import NDB
-from cpc.cpc_network import Network
-from plugins import FidCalculator
-from dataset import ThinEEGDataset, EEGDataset
-from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, merge_pred_accs, save_pkl
-
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+
+from metrics.ndb import NDB
+from cpc.cpc_train import hp
+from dataset import EEGDataset
+from plugins import FidCalculator
+from cpc.cpc_network import Network
+from utils import cudize, AttrDict, resample_signal, dict_add, divide_dict, save_pkl
 
 
 def calc_mean_cov(name, x):
@@ -35,6 +36,8 @@ local_hp = AttrDict(generate_long_sequence=True, pool_or_stride='stride', use_sh
                     weight_decay=0.01)
 
 
+# TODO possible noises: downsample(only a subset of channels or time), permute
+# TODO time shift, zero_out, add gaussian noise, salt and pepper, drift(add with periodic)
 def calculate_stats(dataset, net, scale_up, scale_down, skip_depth,
                     num_samples, mode, current_hp, real_ndb, real_stats):
     samples = {'normal': [], 'permute_0': [], 'permute_1': [], 'permute_2': [], 'permute_3': [], 'shift_0': [],
