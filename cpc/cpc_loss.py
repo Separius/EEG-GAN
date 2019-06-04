@@ -391,14 +391,7 @@ def learn_mine(batch, mine_net, mine_net_optim, ma_et=1.0, ma_rate=0.01, biased=
     return mi_lb, ma_et
 
 
-def sample_batch(data, batch_size=100, sample_mode='joint'):
-    if sample_mode == 'joint':
-        index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
-        batch = data[index]
-    else:
-        joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
-        marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
-        batch = np.concatenate([data[joint_index][:, 0].reshape(-1, 1),
-                                data[marginal_index][:, 1].reshape(-1, 1)],
-                               axis=1)
-    return batch
+def sample_batch(data, batch_size=128):
+    joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+    marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+    return data[joint_index], data[marginal_index]

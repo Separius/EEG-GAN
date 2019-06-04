@@ -94,17 +94,13 @@ EfficientLossMonitor:
   monitor_patience: 5
 
 EEGDataset:
-  validation_ratio: 0.1 # set to 0.0 to disable
-  dir_path: './data/tuh1'
-  data_sampling_freq: 80
+  dir_path: './data/prepared_eegs_mat_th5/'
+  data_sampling_freq: 220
   start_sampling_freq: 1
   end_sampling_freq: 60
   start_seq_len: 32
-  stride: 0.5
-  num_channels: 5
-  number_of_files: 100000
-  per_channel_normalization: false
-  per_user_normalization: true
+  num_channels: 17
+  return_long: false
 
 WatchSingularValues:
   one_divided_two: 10.0

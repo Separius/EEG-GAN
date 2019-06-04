@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from scipy.io import loadmat
 from torch.utils.data import Dataset
-from torch.utils.data.dataloader import default_collate
+from torch.utils.data._utils.collate import default_collate
 
 from utils import load_pkl, save_pkl, resample_signal, cudize, random_latents
 
@@ -21,6 +21,7 @@ DATASET_VERSION = 7
 
 
 # our channels are CHNL = { 'F3', 'F4', 'O1', 'O2', 'CZ' }
+# for super res, get F3, O1, CZ and generate F4 and O2
 # bio_sampling_freq: 1 -> 4 -> 8 -> 16 -> 24 -> 32 -> 40 -> 60
 class EEGDataset(Dataset):
     # for 60(sampling), starting from 1 hz(sampling) [32 samples at the beginning]
@@ -33,7 +34,7 @@ class EEGDataset(Dataset):
 
     picked_channels = [3, 5, 9, 15, 16]
 
-    def __init__(self, given_data=None, dir_path='./data/prepared_eegs_mat_th5/', data_sampling_freq=220,
+    def __init__(self, given_data, dir_path='./data/prepared_eegs_mat_th5/', data_sampling_freq=220,
                  start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32, num_channels=17, return_long=False):
         super().__init__()
         self.model_depth = len(self.progression_scale_up)
@@ -197,7 +198,6 @@ def get_collate_fake(latent_size, z_distribution, collate_real):
     def collate_fake(batch):
         batch = collate_real(batch)  # extract condition(features)
         batch['z'] = random_latents(batch['x'].size(0), latent_size, z_distribution)
-        del batch['x']
         return batch
 
     return collate_fake

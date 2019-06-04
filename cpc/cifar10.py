@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
-from sklearn.metrics import confusion_matrix
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 from torchvision.transforms import Compose, Normalize, Pad, RandomCrop, ToTensor, RandomHorizontalFlip
 

@@ -135,10 +135,12 @@ class ResidualEncoder(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, input_channels=5, dropout=0.1):
+    def __init__(self, input_channels=5, dropout=0.1, down_ratios=None, channel_sizes=None):
         super().__init__()
-        down_ratios = [5, 4, 3]  # generates 32 codes of size 128
-        channel_sizes = [32, 64, 128]
+        if down_ratios is None:
+            down_ratios = [5, 4, 3]  # generates 32 codes of size 128
+        if channel_sizes is None:
+            channel_sizes = [32, 64, 128]
         kernel_sizes = [2 * dr - 1 for dr in down_ratios]
         self.z_size = channel_sizes[-1]
         act = nn.ReLU()
@@ -278,12 +280,14 @@ class Network(nn.Module):
     def __init__(self, input_channels, encoder_dropout=0.1, bidirectional=False, contextualizer_num_layers=1,
                  contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
                  have_global=True, have_local=True, residual_encoder=False, rnn_hidden_multiplier=2,
-                 global_mode='mlp', local_mode='mlp', num_z_iic_classes=0, num_c_iic_classes=0):
+                 global_mode='mlp', local_mode='mlp', num_z_iic_classes=0, num_c_iic_classes=0,
+                 encoder_down_ratios=None, encoder_channel_sizes=None):
         super().__init__()
         if residual_encoder:
             encoder = ResidualEncoder(input_channels)
         else:
-            encoder = ConvEncoder(input_channels, encoder_dropout)
+            encoder = ConvEncoder(input_channels, encoder_dropout, down_ratios=encoder_down_ratios,
+                                  channel_sizes=encoder_channel_sizes)
         if have_global:
             z_pooler = PNormPooling(encoder.z_size)
         else:
