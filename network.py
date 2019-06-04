@@ -1,9 +1,134 @@
 import torch
+import numpy as np
 from torch import nn
 from torch.nn.utils import spectral_norm
 
 from utils import pixel_norm, resample_signal
 from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, PassChannelResidual, ConcatResidual
+
+
+class UnetGBlock(nn.Module):
+    def __init__(self, ch_in, ch_out, ch_rgb_in, ch_rgb_out, signal_freq, inner_freq, dec_layer_settings,
+                 enc_layer_settings, inner_layer=None, k_size=3, initial_kernel_size=None, is_residual=False,
+                 no_tanh=False, deep=False, per_channel_noise=False, to_rgb_mode='pggan'):
+        super().__init__()
+        self.ch_out = ch_out
+        self.ch_in = ch_in
+        self.enc_ch_out = inner_layer.ch_in if inner_layer is not None else (ch_in + ch_out)
+        self.encoder = DBlock(ch_in, self.enc_ch_out, ch_rgb_in, k_size, initial_kernel_size, is_residual, deep,
+                              group_size=-1, temporal_groups_per_window=1, conv_disc=False, **enc_layer_settings)
+        self.signal_freq = signal_freq
+        self.inner_freq = inner_freq
+        self.middle = inner_layer
+        self.dec_ch_in = self.enc_ch_out + (inner_layer.ch_out if inner_layer is not None else 0)
+        self.decoder = GBlock(self.dec_ch_in, ch_out, ch_rgb_out, k_size, initial_kernel_size, is_residual,
+                              no_tanh, deep, per_channel_noise, to_rgb_mode, **dec_layer_settings)
+
+    def forward(self, x, alpha, is_first=False, y=None, z=None):
+        if is_first:
+            encoded = self.encoder.fromRGB(x)
+        else:
+            encoded = x
+        encoded = self.encoder(encoded)
+        if self.middle is not None:
+            middle_in = resample_signal(encoded, self.signal_freq, self.inner_freq)
+            if is_first and alpha != 1.0:
+                middle_in = alpha * middle_in + (1.0 - alpha) * self.middle.encoder.fromRGB(x)
+            middle_out = self.middle(middle_in, y=y, z=z)
+            inner = resample_signal(middle_out, self.inner_freq, self.signal_freq)
+            encoded = torch.cat([encoded, inner], dim=1)
+        decoded = self.decoder(encoded)
+        if is_first:
+            if self.middle is None or alpha == 1.0:
+                return self.decoder.toRGB(decoded)
+            return self.decoder.toRGB(decoded) * alpha + (1.0 - alpha) * self.middle.decoder.toRGB(middle_out)
+        return decoded
+
+
+class UnetGenerator(nn.Module):
+    def __init__(self, ch_rgb_in, ch_rgb_out, latent_size, z_to_bn, equalized, spectral, init, act_alpha, dropout,
+                 num_classes, act_norm, separable, progression_scale_up, progression_scale_down, z_distribution,
+                 normalize_latents, fmap_base, fmap_min, fmap_max, shared_embedding_size, k_size=3,
+                 initial_kernel_size=None, split_z=False, is_residual=False, no_tanh=False, deep=False,
+                 per_channel_noise=False, to_rgb_mode='pggan', rgb_generation_mode='pggan', input_to_all_layers=False):
+        super().__init__()
+        R = len(progression_scale_up)
+        assert len(progression_scale_up) == len(progression_scale_down)
+        self.progression_scale_up = progression_scale_up
+        self.progression_scale_down = progression_scale_down
+        self.depth = 0
+        self.alpha = 1.0
+        if deep:
+            split_z = False
+        self.split_z = split_z
+        self.z_distribution = z_distribution
+        self.initial_kernel_size = initial_kernel_size
+        self.normalize_latents = normalize_latents
+        self.z_to_bn = z_to_bn
+
+        def nf(stage):
+            return min(max(int(fmap_base / (2.0 ** stage)), fmap_min), fmap_max)
+
+        if latent_size is None:
+            latent_size = nf(0)
+        self.input_latent_size = latent_size
+        if num_classes != 0:
+            if shared_embedding_size > 0:
+                self.y_encoder = GeneralConv(num_classes, shared_embedding_size, kernel_size=1,
+                                             equalized=False, act_alpha=act_alpha, spectral=False, bias=False)
+                num_classes = shared_embedding_size
+            else:
+                self.y_encoder = nn.Sequential()
+        else:
+            self.y_encoder = None
+        if split_z:
+            latent_size //= R + 2  # we also give part of the z to the first layer
+        self.latent_size = latent_size
+        inner = None
+        self.blocks = nn.ModuleList()
+        decoder_layer_settings = dict(z_to_bn_size=latent_size if z_to_bn else 0, equalized=equalized,
+                                      spectral=spectral, init=init, act_alpha=act_alpha, do=dropout,
+                                      num_classes=num_classes, act_norm=act_norm, bias=True, separable=separable)
+        encoder_layer_settings = dict(equalized=equalized, spectral=spectral, init=init, act_alpha=act_alpha,
+                                      do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
+        psunp = np.array(progression_scale_up)
+        psdnp = np.array(progression_scale_down)
+        signal_lens = [0] + [initial_kernel_size * np.sum(psunp[:i] / psdnp[:i]) for i in
+                             range(len(progression_scale_up) + 1)]
+        for i in range(R + 1):
+            inner = UnetGBlock(nf(i), nf(i), ch_rgb_in, ch_rgb_out,
+                               signal_lens[i], signal_lens[i - 1],
+                               decoder_layer_settings,
+                               encoder_layer_settings, inner, k_size,
+                               initial_kernel_size if i == 0 else None, is_residual, no_tanh, deep,
+                               per_channel_noise, to_rgb_mode)
+            self.blocks.append(inner)
+        self.max_depth = len(self.blocks)
+        self.deep = deep
+        assert rgb_generation_mode == 'pggan', 'We do not support non pggan image generation in the UGenerator, yet!'
+        self.rgb_generation_mode = rgb_generation_mode
+        assert input_to_all_layers == False, 'We do not support non pggan image generation in the UGenerator, yet!'
+        self.input_to_all_layers = input_to_all_layers
+
+    def forward(self, z):
+        if isinstance(z, dict):
+            x, z, y = z['x'], z['z'], z.get('y', None)
+        elif isinstance(z, tuple):
+            x, z, y = z
+        else:
+            raise ValueError('invalid input')
+        if y is not None:
+            if y.ndimension() == 2:
+                y = y.unsqueeze(2)
+            if self.y_encoder is not None:
+                y = self.y_encoder(y)
+            else:
+                y = None
+        if self.normalize_latents:
+            z = pixel_norm(z)
+        if z.ndimension() == 2:
+            z = z.unsqueeze(2)
+        return self.blocks[self.depth](x, self.alpha, is_first=True, y=y, z=z)
 
 
 class GBlock(nn.Module):
@@ -29,8 +154,8 @@ class GBlock(nn.Module):
                 self.c4_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
             else:
                 self.c3_noise_weight, self.c4_noise_weight = None, None
-        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['equalized'],
-                                      init=layer_settings['equalized'])
+        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
+                                      init=layer_settings['init'])
         if to_rgb_mode == 'pggan':
             to_rgb = GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **reduced_layer_settings)
         elif to_rgb_mode in {'sngan', 'sagan'}:
@@ -262,11 +387,12 @@ class DBlock(nn.Module):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.net = []
-        if is_last:
+        if is_last and group_size >= 0:
             self.net.append(MinibatchStddev(group_size, temporal_groups_per_window, initial_kernel_size))
         hidden_size = (ch_out // 4) if deep else ch_in
         self.net.append(
-            GeneralConv(ch_in + (1 if is_last else 0), hidden_size, kernel_size=k_size, **layer_settings))
+            GeneralConv(ch_in + (1 if is_last and group_size >= 0 else 0),
+                        hidden_size, kernel_size=k_size, **layer_settings))
         if deep:
             self.net.append(
                 GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings))
@@ -276,8 +402,8 @@ class DBlock(nn.Module):
         self.net.append(GeneralConv(hidden_size, ch_out, kernel_size=initial_kernel_size if is_linear_last else k_size,
                                     pad=0 if is_linear_last else None, **layer_settings))
         self.net = nn.Sequential(*self.net)
-        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['equalized'],
-                                      init=layer_settings['equalized'])
+        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
+                                      init=layer_settings['init'])
         self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
                                    **reduced_layer_settings)
         if deep:
@@ -291,9 +417,7 @@ class DBlock(nn.Module):
                 self.residual = None
         self.deep = deep
 
-    def forward(self, x, first=False):
-        if first:
-            x = self.fromRGB(x)
+    def forward(self, x):
         h = self.net(x)
         if self.deep:
             return self.residual(h, x)
@@ -463,4 +587,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    pass

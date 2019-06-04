@@ -218,7 +218,7 @@ def expand3d(signal):
     return signal
 
 
-def resample_signal(signal, signal_freq, desired_freq, pytorch=False):
+def resample_signal(signal, signal_freq, desired_freq, pytorch=True):
     if isinstance(signal, np.ndarray):
         new_signal = torch.from_numpy(signal)
     else:

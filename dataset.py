@@ -68,7 +68,7 @@ class EEGDataset(Dataset):
             if is_matlab:
                 try:
                     tmp = loadmat(all_files[i])['eeg_signal']
-                    tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
+                    tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq, False)
                     size = int(np.ceil((tmp.shape[1] - seq_len + 1) / self.stride))
                 except:
                     size = 0
@@ -87,7 +87,7 @@ class EEGDataset(Dataset):
                     with open('{}_{}.txt'.format(all_files[i][:-6], j + 1)) as f:
                         tmp = list(map(float, f.read().split()))
                         tmp = np.array(tmp, dtype=np.float32)
-                        tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq)
+                        tmp = resample_signal(tmp, data_sampling_freq, end_sampling_freq, False)
                         if kk == 0:
                             size = int(np.ceil((len(tmp) - seq_len + 1) / self.stride))
                             if size <= 0:
