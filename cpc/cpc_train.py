@@ -15,45 +15,38 @@ hp = AttrDict(
     validation_ratio=0.1,
     prediction_k=4,
     cross_entropy=True,
-    causal_prediction=True,
     use_transformer=False,
     residual_encoder=False,  # I like to set it to True
-    rnn_hidden_multiplier=2,  # I like to set it to 1
-    global_mode='mlp',  # I like to set it to bilinear and remove this hyper param
-    local_mode='mlp',  # I like to set it to bilinear and remove this hyper param
     use_scheduler=True,
     use_bert_adam=False,
-    bidirectional=False,
     prediction_loss_weight=3.0,
     global_loss_weight=1.0,
     local_loss_weight=2.0,
     contextualizer_num_layers=1,
     contextualizer_dropout=0,
-    encoder_dropout=0.2,  # used to be 0.1
     batch_size=128,
     lr=2e-3,
     epochs=31,
     weight_decay=0.005,
+    sinc_encoder=False,
 )
 
 
 def main(summary):
     train_dataset, val_dataset = EEGDataset.from_config(validation_ratio=hp.validation_ratio,
                                                         validation_seed=hp.validation_seed,
-                                                        dir_path='./data/prepared_eegs_mat_th5', data_sampling_freq=220,
-                                                        start_sampling_freq=1, end_sampling_freq=60, start_seq_len=32,
+                                                        dir_path='./data/prepared_eegs_mat_th5',
+                                                        data_sampling_freq=220, start_sampling_freq=1,
+                                                        end_sampling_freq=60, start_seq_len=32,
                                                         num_channels=17, return_long=False)
     train_dataloader = DataLoader(train_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=True)
     val_dataloader = DataLoader(val_dataset, batch_size=hp.batch_size, num_workers=0, drop_last=False, pin_memory=True)
     network = cudize(
-        Network(train_dataset.num_channels, encoder_dropout=hp.encoder_dropout, bidirectional=hp.bidirectional,
-                contextualizer_num_layers=hp.contextualizer_num_layers,
+        Network(train_dataset.num_channels, bidirectional=False, contextualizer_num_layers=hp.contextualizer_num_layers,
                 contextualizer_dropout=hp.contextualizer_dropout, use_transformer=hp.use_transformer,
-                causal_prediction=hp.causal_prediction,
                 prediction_k=hp.prediction_k * (hp.prediction_loss_weight != 0.0),
                 have_global=(hp.global_loss_weight != 0.0), have_local=(hp.local_loss_weight != 0.0),
-                residual_encoder=hp.residual_encoder, rnn_hidden_multiplier=hp.rnn_hidden_multiplier,
-                global_mode=hp.global_mode, local_mode=hp.local_mode))
+                residual_encoder=hp.residual_encoder, sinc_encoder=hp.sinc_encoder))
     num_parameters = num_params(network)
     print('num_parameters', num_parameters)
     if hp.use_bert_adam:
@@ -76,8 +69,6 @@ def main(summary):
             total_prediction_loss = 0.0
             total_global_loss = 0.0
             total_local_loss = 0.0
-            total_iic_z_loss = 0.0
-            total_iic_c_loss = 0.0
             total_global_accuracy = 0.0
             total_local_accuracy = 0.0
             total_k_pred_acc = {}
@@ -86,7 +77,7 @@ def main(summary):
             with torch.set_grad_enabled(training):
                 for batch in data_loader:
                     x = cudize(batch['x'])
-                    network_return = network.forward(x, no_loss=False)
+                    network_return = network.forward(x)
                     network_loss = hp.prediction_loss_weight * network_return.losses.prediction_
                     network_loss = network_loss + hp.global_loss_weight * network_return.losses.global_
                     network_loss = network_loss + hp.local_loss_weight * network_return.losses.local_

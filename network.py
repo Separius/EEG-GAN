@@ -139,36 +139,35 @@ class GBlock(nn.Module):
         super().__init__()
         is_first = initial_kernel_size is not None
         first_k_size = initial_kernel_size if is_first else k_size
-        hidden_size = (ch_in // 4) if deep else ch_out
-        self.c1 = GeneralConv(ch_in, hidden_size, kernel_size=first_k_size,
-                              pad=initial_kernel_size - 1 if is_first else None, **layer_settings)
-        self.c2 = GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings)
+        hidden_size = max((ch_in // 4) if deep else ch_out, 4)
+        self.convs = nn.ModuleList([GeneralConv(ch_in, hidden_size, kernel_size=first_k_size,
+                                                pad=initial_kernel_size - 1 if is_first else None, **layer_settings),
+                                    GeneralConv(hidden_size, hidden_size if deep else ch_out, kernel_size=k_size,
+                                                **layer_settings)])
         if per_channel_noise:
-            self.c1_noise_weight = nn.Parameter(torch.zeros(1, hidden_size, 1))
-            self.c2_noise_weight = nn.Parameter(torch.zeros(1, hidden_size, 1))
+            self.noises = nn.ParameterList([nn.Parameter(torch.zeros(1, hidden_size, 1)),
+                                            nn.Parameter(torch.zeros(1, hidden_size if deep else ch_out, 1))])
         else:
-            self.c1_noise_weight, self.c2_noise_weight = None, None
+            self.noises = None
         if deep:
-            self.c3 = GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings)
-            self.c4 = GeneralConv(hidden_size, ch_out, kernel_size=k_size, **layer_settings)
+            self.convs.append(GeneralConv(hidden_size, hidden_size, kernel_size=k_size, **layer_settings))
+            self.convs.append(GeneralConv(hidden_size, ch_out, kernel_size=k_size, **layer_settings))
             if per_channel_noise:
-                self.c3_noise_weight = nn.Parameter(torch.zeros(1, hidden_size, 1))
-                self.c4_noise_weight = nn.Parameter(torch.zeros(1, ch_out, 1))
-            else:
-                self.c3_noise_weight, self.c4_noise_weight = None, None
-        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
-                                      init=layer_settings['init'])
+                self.noises.append(nn.Parameter(torch.zeros(1, hidden_size, 1)))
+                self.noises.append(nn.Parameter(torch.zeros(1, ch_out, 1)))
+        to_rgb_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
+                                     init=layer_settings['init'])
         if to_rgb_mode == 'pggan':
-            to_rgb = GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **reduced_layer_settings)
+            to_rgb = GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **to_rgb_layer_settings)
         elif to_rgb_mode in {'sngan', 'sagan'}:
             to_rgb = GeneralConv(ch_out, ch_rgb if to_rgb_mode == 'sngan' else ch_out,
-                                 kernel_size=3, act_alpha=0.2, **reduced_layer_settings)
+                                 kernel_size=3, act_alpha=0.2, **to_rgb_layer_settings)
             if to_rgb_mode == 'sagan':
                 to_rgb = nn.Sequential(
-                    GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **reduced_layer_settings), to_rgb)
+                    to_rgb, GeneralConv(ch_out, ch_rgb, kernel_size=1, act_alpha=-1, **to_rgb_layer_settings))
         elif to_rgb_mode == 'biggan':
             to_rgb = nn.Sequential(nn.BatchNorm1d(ch_out), nn.ReLU(),
-                                   GeneralConv(ch_out, ch_rgb, kernel_size=3, act_alpha=-1, **reduced_layer_settings))
+                                   GeneralConv(ch_out, ch_rgb, kernel_size=3, act_alpha=-1, **to_rgb_layer_settings))
         else:
             raise ValueError()
         if no_tanh:
@@ -179,22 +178,26 @@ class GBlock(nn.Module):
             self.residual = PassChannelResidual()
         else:
             if not is_first and is_residual:
-                self.residual = nn.Sequential() if ch_in == ch_out else \
-                    GeneralConv(ch_in, ch_out, 1, act_alpha=-1, **reduced_layer_settings)
+                self.residual = nn.Identity() if ch_in == ch_out else \
+                    GeneralConv(ch_in, ch_out, 1, act_alpha=-1, **to_rgb_layer_settings)
             else:
                 self.residual = None
         self.deep = deep
 
     @staticmethod
-    def get_per_channel_noise(noise_weight):
-        return None if noise_weight is None else torch.randn(*noise_weight.size()) * noise_weight
+    def get_per_channel_noise(noise_weight, batch_size):
+        return None if noise_weight is None else torch.randn(batch_size, *noise_weight.size()[1:]) * noise_weight
+
+    def apply_conv(self, x, y, z, index):
+        noise_weight = self.noises[index] if self.noises is not None else None
+        return self.convs[index](x, y=y, z=z, conv_noise=self.get_per_channel_noise(noise_weight, x.size(0)))
 
     def forward(self, x, y=None, z=None, last=False):
-        h = self.c1(x, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c1_noise_weight))
-        h = self.c2(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c2_noise_weight))
+        h = self.apply_conv(x, y, z, 0)
+        h = self.apply_conv(h, y, z, 1)
         if self.deep:
-            h = self.c3(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c3_noise_weight))
-            h = self.c4(h, y=y, z=z, conv_noise=self.get_per_channel_noise(self.c4_noise_weight))
+            h = self.apply_conv(h, y, z, 2)
+            h = self.apply_conv(h, y, z, 3)
             h = self.residual(h, x)
         elif self.residual is not None:
             h = h + self.residual(x)

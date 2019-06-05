@@ -7,7 +7,6 @@ Generator with all options
 UnetGenerator with all options
 Discriminator with all options
 MultiDiscriminator with all options
-CPC net all options
 CPC train
 MINE for CPC net evaluation
 K-means Clustering of CPC codes

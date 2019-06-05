@@ -94,9 +94,14 @@ class ResidualEncoder(nn.Sequential):
     def conv(in_channels, out_channels, stride=1):
         return nn.Conv1d(in_channels, out_channels, kernel_size=5, stride=stride, padding=2, bias=False)
 
-    def __init__(self, input_channels=5):
-        self.in_channels = 16
-        conv = self.conv(input_channels, self.in_channels)
+    def __init__(self, input_channels=5, sinc_encoder=False):
+        if sinc_encoder:
+            self.in_channels = 4 * input_channels
+            conv = SincEncoder(input_channels, is_shared=True, kernel_size=121,
+                               num_kernels=self.in_channels // input_channels)
+        else:
+            self.in_channels = 16
+            conv = self.conv(input_channels, self.in_channels)
         bn = nn.BatchNorm1d(self.in_channels)
         relu = nn.ReLU()
         # generates 32 codes of size 128
@@ -130,7 +135,9 @@ class ResidualEncoder(nn.Sequential):
 
 
 class ConvEncoder(nn.Sequential):
-    def __init__(self, input_channels=5, dropout=0.1, down_ratios=None, channel_sizes=None, bn=True):
+    def __init__(self, input_channels=5, dropout=0.1, down_ratios=None,
+                 channel_sizes=None, bn=True, sinc_encoder=False):
+        assert not sinc_encoder, 'conv encoder does not support sinc encoder'
         if down_ratios is None:
             down_ratios = [5, 4, 3]  # generates 32 codes of size 128
         if channel_sizes is None:
@@ -271,12 +278,12 @@ NetworkOutput = namedtuple('NetworkOutput', ['losses', 'accuracies', 'latents'])
 class Network(nn.Module):
     def __init__(self, input_channels, bidirectional=False, contextualizer_num_layers=1,
                  contextualizer_dropout=0, use_transformer=False, prediction_k=4, have_global=True, have_local=True,
-                 residual_encoder=False, global_mode='bilinear', local_mode='bilinear'):
+                 residual_encoder=False, global_mode='bilinear', local_mode='bilinear', sinc_encoder=False):
         super().__init__()
         if residual_encoder:
-            encoder = ResidualEncoder(input_channels)
+            encoder = ResidualEncoder(input_channels, sinc_encoder=sinc_encoder)
         else:
-            encoder = ConvEncoder(input_channels)
+            encoder = ConvEncoder(input_channels, sinc_encoder=sinc_encoder)
         z_pooler = PNormPooling(encoder.z_size, be_mean_pool=not have_global)
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
@@ -306,7 +313,7 @@ class Network(nn.Module):
         self.c_pooled_mi_z_pooled = c_pooled_mi_z_pooled
         self.c_pooled_mi_z = c_pooled_mi_z
 
-    def forward(self, x, no_loss):
+    def forward(self, x, no_loss=False):
         z = self.encoder(x)
         z_pooled = self.z_pooler(z)
         c = self.contextualizer(z)

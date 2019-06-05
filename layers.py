@@ -120,11 +120,11 @@ class ConditionalBatchNorm(nn.Module):
         else:
             if self.mode == 'CSM':
                 z = expand3d(z)
-                cond = torch.cat([resample_signal(z, z.size(2), y.size(2), pytorch=True), y], dim=1)
+                cond = torch.cat([resample_signal(z, z.size(2), y.size(2)), y], dim=1)
             else:  # 'SM'
                 cond = expand3d(z)
         embed = self.embed(cond)  # B, num_features*2, Ty
-        embed = resample_signal(embed, embed.shape[2], out.shape[2], pytorch=True)
+        embed = resample_signal(embed, embed.shape[2], out.shape[2])
         gamma, beta = embed.chunk(2, dim=1)
         return out + gamma * out + beta  # trick to make sure gamma is 1.0 at the beginning of the training
 
@@ -213,9 +213,8 @@ class PassChannelResidual(nn.Module):
         super().__init__()
 
     def forward(self, x, y):
-        if x.size(1) >= y.size(1):
-            x[:, :y.size(1)] = x[:, :y.size(1)] + y
-            return x
+        if x.size(1) > y.size(1):
+            return x + torch.cat([y, torch.zeros(y.size(0), x.size(1) - y.size(1), y.size(2), y.size(3)).to(y)], dim=1)
         return y[:, :x.size(1)] + x
 
 
