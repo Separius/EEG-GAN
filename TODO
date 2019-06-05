@@ -1,12 +1,30 @@
 https://github.com/ajbrock/BigGAN-PyTorch/blob/master/layers.py => singular value monitoring
-
-The training procedure is as follows: from a 256x256 image we extract a 7x7 grid of 64x64 cropswith 32 pixels overlap. Simple data augmentation proved helpful on both the 256x256 images and the64x64 crops. The 256x256 images are randomly cropped from a 300x300 image, horizontally flippedwith a probability of 50% and converted to greyscale. For each of the 64x64 crops we randomly takea 60x60 subcrop and pad them back to a 64x64 image.Each crop is then encoded by the ResNet-v2-101 encoder. We use the outputs from the third residualblock, and spatially mean-pool to get a single 1024-d vector per 64x64 patch.  This results in a7x7x1024 tensor. Next, we use a PixelCNN-style autoregressive model [19] (a convolutional row-GRU PixelRNN [39] gave similar results) to make predictions about the latent activations in followingrows top-to-bottom, visualized in Figure 4. We predict up to five rows from the 7x7 grid, and weapply the contrastive loss for each patch in the row. We used Adam optimizer with a learning rate of2e-4 and trained on 32 GPUs each with a batch size of 16.
-
-https://github.com/DuaneNielsen/DeepInfomaxPytorch
-https://github.com/rdevon/DIM
-https://github.com/AlexiaJM/RelativisticGAN
-https://github.com/xu-ji/IIC
-https://github.com/xuqiantong/GAN-Metrics
-https://github.com/pfnet-research/chainer-gan-lib
-
-Since it is presently the state-of-the-art model on the conditional ImageNet synthesis task, we have reimplemented the Self-Attention GAN (Zhang et al., 2018) as a baseline.  After reproducing theresults reported by Zhang et al. (2018) (with the learning rate of1e−4), we fine-tuned a trainedSAGAN with a much lower learning rate (1e−7) for both generator and discriminator. This improved both the Inception Score and FID significantly as can be seen in the Improved-SAGAN column in Table 2. Plots of Inception score and FID during training are given in Figure 5(A).Since SAGAN uses a hinge loss and DRS requires a sigmoid output, we added a fully-connectedlayer “on top of” the trained discriminator and trained it to distinguish real images from fake onesusing the binary cross-entropy loss. We trained this extra layer with 10,000 generated samples fromthe model and 10,000 examples from ImageNet.
+https://github.com/xuqiantong/GAN-Metrics for MMD + 1-NN
+FineTune a trained GAN with 1/1000 learning rate (for both G and D)
+(only)Sigmoid output tuning with 10K real and 10K fake samples
+DRS and Hamiltonian Rejection Sampling
+Generator with all options
+UnetGenerator with all options
+Discriminator with all options
+MultiDiscriminator with all options
+CPC net all options
+CPC train
+MINE for CPC net evaluation
+K-means Clustering of CPC codes
+Eval metrics (FID(make sure about np vs torch), VIS, MMD, 1-NN test) * (Trained, Untrained)
+Eval metrics (NDB, SWD, MS_SSIM)
+Adam Warmup from BigGan?
+Z usage in the Unet Generator
+Dataset noise injection (gaussian, time shift, down sample, swap channels, zero out, add with periodic, salt&pepper)
+Calc meters on new generator(or real data)
+Plot generations(the one for last presentation was fine) + Slurp + Truncation + KNN
+Train Vanilla!
+Train SuperRes!
+BioBert as Global Condition
+add Comet
+add Requirements.txt and setup script(download drive file and pretrained CPC net and stats)
+CNN only in G and D
+Add self attention to the Unet Generator
+Larger Batch Size
+Gradient visualization of D
+Attention Visualization

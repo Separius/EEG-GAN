@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from torch import nn
-import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 
 from cpc.cpc_network import SincEncoder
@@ -110,7 +109,7 @@ class UnetGenerator(nn.Module):
         self.deep = deep
         assert rgb_generation_mode == 'pggan', 'We do not support non pggan image generation in the UGenerator, yet!'
         self.rgb_generation_mode = rgb_generation_mode
-        assert input_to_all_layers == False, 'We do not support non pggan image generation in the UGenerator, yet!'
+        assert not input_to_all_layers, 'We do not support non pggan image generation in the UGenerator, yet!'
         self.input_to_all_layers = input_to_all_layers
 
     def forward(self, z):
@@ -593,9 +592,9 @@ class MultiDiscriminator(nn.Module):
         if self.all_time_weight != 0:
             o = o + self.all_time_weight * self.all_time_net(x)[0]
         if self.shared_sinc_weight != 0:
-            o = o + self.shared_sinc_weight * self.shared_sinc_net(x)[0]
+            o = o + self.shared_sinc_weight * self.shared_sinc_net(x.view(-1, 1, x.size(2)))[0]
         if self.shared_time_weight != 0:
-            o = o + self.shared_time_weight * self.shared_time_net(x)[0]
+            o = o + self.shared_time_weight * self.shared_time_net(x.view(-1, 1, x.size(2)))[0]
         if self.one_sec_weight != 0:
             if isinstance(x, dict):
                 x, y = x['x'], x.get('y', None)
