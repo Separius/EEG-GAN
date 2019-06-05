@@ -11,14 +11,18 @@ from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, Pass
 class UnetGBlock(nn.Module):
     def __init__(self, ch_in, ch_out, ch_rgb_in, ch_rgb_out, signal_freq, inner_freq, dec_layer_settings,
                  enc_layer_settings, inner_layer=None, k_size=3, initial_kernel_size=None, is_residual=False,
-                 no_tanh=False, deep=False, per_channel_noise=False, to_rgb_mode='pggan'):
+                 no_tanh=False, deep=False, per_channel_noise=False, to_rgb_mode='pggan', input_to_all_layers=False,
+                 sinc_ks=0, conv_only=False, enc_sa=None, dec_sa=None, split_z_size=0):
         super().__init__()
+        self.split_z_size = split_z_size
         self.ch_out = ch_out
         self.ch_in = ch_in
+        self.enc_sa = enc_sa
+        self.dec_sa = dec_sa
+        self.input_to_all_layers = input_to_all_layers
         self.enc_ch_out = inner_layer.ch_in if inner_layer is not None else (ch_in + ch_out)
         self.encoder = DBlock(ch_in, self.enc_ch_out, ch_rgb_in, k_size, initial_kernel_size, is_residual, deep,
-                              group_size=-1, temporal_groups_per_window=1, conv_disc=False, sinc_ks=False,
-                              **enc_layer_settings)
+                              group_size=-1, conv_disc=conv_only, sinc_ks=sinc_ks, **enc_layer_settings)
         self.signal_freq = signal_freq
         self.inner_freq = inner_freq
         self.middle = inner_layer
@@ -26,34 +30,45 @@ class UnetGBlock(nn.Module):
         self.decoder = GBlock(self.dec_ch_in, ch_out, ch_rgb_out, k_size, initial_kernel_size, is_residual,
                               no_tanh, deep, per_channel_noise, to_rgb_mode, **dec_layer_settings)
 
-    def forward(self, x, alpha, is_first=False, y=None, z=None):
+    def forward(self, rgb_in, encoded, all_rgbs, alpha=1.0, is_first=False, y=None, z=None):
         if is_first:
-            encoded = self.encoder.from_rgb(x)
-        else:
-            encoded = x
+            encoded = self.encoder.from_rgb(rgb_in)
+        elif self.input_to_all_layers:
+            encoded = (self.encoder.from_rgb(rgb_in) * self.alpha + encoded) / (1.0 + self.alpha)
         encoded = self.encoder(encoded)
         if self.middle is not None:
+            if self.enc_sa is not None:
+                encoded = self.enc_sa(encoded)
             middle_in = resample_signal(encoded, self.signal_freq, self.inner_freq)
+            new_rgb = resample_signal(rgb_in, self.signal_freq, self.inner_freq)
             if is_first and alpha != 1.0:
-                middle_in = alpha * middle_in + (1.0 - alpha) * self.middle.encoder.fromRGB(x)
-            middle_out = self.middle(middle_in, y=y, z=z)
+                middle_in = alpha * middle_in + (1.0 - alpha) * self.middle.encoder.from_rgb(new_rgb)
+            middle_out = self.middle(new_rgb, middle_in, all_rgbs, y=y, z=z[self.split_z_size:])
             inner = resample_signal(middle_out, self.inner_freq, self.signal_freq)
-            encoded = torch.cat([encoded, inner], dim=1)
-        decoded = self.decoder(encoded)
+            decoded = torch.cat([encoded, inner], dim=1)
+            if self.dec_sa is not None:
+                decoded = self.dec_sa(decoded)
+        else:
+            decoded = encoded
+        decoded = self.decoder(decoded, y=y, z=z)
         if is_first:
+            if all_rgbs is not None:
+                all_rgbs.append(self.decoder.to_rgb(decoded))
             if self.middle is None or alpha == 1.0:
                 return self.decoder.to_rgb(decoded)
-            return self.decoder.to_rgb(decoded) * alpha + (1.0 - alpha) * self.middle.decoder.toRGB(middle_out)
+            return self.decoder.to_rgb(decoded) * alpha + (1.0 - alpha) * self.middle.decoder.to_rgb(inner)
+        if all_rgbs is not None:
+            all_rgbs.append(self.decoder.to_rgb(decoded))
         return decoded
 
 
 class UnetGenerator(nn.Module):
-    # TODO add rgb_generation_mode, input_to_all_layers, conv_only, z to generators(split), SA
     def __init__(self, ch_rgb_in, ch_rgb_out, latent_size, z_to_bn, equalized, spectral, init, act_alpha, dropout,
                  num_classes, act_norm, separable, progression_scale_up, progression_scale_down, z_distribution,
-                 normalize_latents, fmap_base, fmap_min, fmap_max, shared_embedding_size, k_size=3,
-                 initial_kernel_size=None, split_z=False, is_residual=False, no_tanh=False, deep=False,
-                 per_channel_noise=False, to_rgb_mode='pggan', rgb_generation_mode='pggan', input_to_all_layers=False):
+                 normalize_latents, fmap_base, fmap_min, fmap_max, shared_embedding_size, sa_layers, k_size=3,
+                 conv_only=False, initial_kernel_size=None, split_z=False, is_residual=False, no_tanh=False, deep=False,
+                 per_channel_noise=False, to_rgb_mode='pggan', rgb_generation_mode='pggan', input_to_all_layers=False,
+                 use_sinc=False):
         super().__init__()
         R = len(progression_scale_up)
         assert len(progression_scale_up) == len(progression_scale_down)
@@ -100,26 +115,22 @@ class UnetGenerator(nn.Module):
                              range(len(progression_scale_up) + 1)]
         for i in range(R + 1):
             inner = UnetGBlock(nf(i), nf(i), ch_rgb_in, ch_rgb_out,
-                               signal_lens[i], signal_lens[i - 1],
+                               signal_lens[i + 1], signal_lens[i],
                                decoder_layer_settings,
                                encoder_layer_settings, inner, k_size,
                                initial_kernel_size if i == 0 else None, is_residual, no_tanh, deep,
-                               per_channel_noise, to_rgb_mode)
+                               per_channel_noise, to_rgb_mode, input_to_all_layers,
+                               (signal_lens[i + 1] / initial_kernel_size) if use_sinc else 0, conv_only,
+                               SelfAttention(inner.ch_in if inner is not None else (nf(i) + nf(i)), spectral,
+                                             init) if i in sa_layers else None,
+                               SelfAttention(nf(i), spectral, init) if i in sa_layers else None, self.latent_size)
             self.blocks.append(inner)
         self.max_depth = len(self.blocks)
         self.deep = deep
-        assert rgb_generation_mode == 'pggan', 'We do not support non pggan image generation in the UGenerator, yet!'
         self.rgb_generation_mode = rgb_generation_mode
-        assert not input_to_all_layers, 'We do not support non pggan image generation in the UGenerator, yet!'
         self.input_to_all_layers = input_to_all_layers
 
-    def forward(self, z):
-        if isinstance(z, dict):
-            x, z, y = z['x'], z['z'], z.get('y', None)
-        elif isinstance(z, tuple):
-            x, z, y = z
-        else:
-            raise ValueError('invalid input')
+    def forward(self, x, y, z):
         if y is not None:
             if y.ndimension() == 2:
                 y = y.unsqueeze(2)
@@ -644,54 +655,8 @@ class MultiDiscriminator(nn.Module):
 
 
 def main():
-    initial_kernel_size = 8
-    num_rgb_channels = 3
-    fmap_base = 256
-    fmap_max = 256
-    fmap_min = 8
-    kernel_size = 3
-    self_attention_layers = []
-    progression_scale_up = [3, 4, 2]
-    progression_scale_down = [1, 3, 1]
-    residual = True
-    separable = True
-    equalized = True
-    spectral = False
-    init = 'orthogonal'
-    act_alpha = 0.2
-    num_classes = 0
-    deep = False
-    # z_distribution = 'normal'
-    # latent_size = 64
-    # no_tanh = False
-    # per_channel_noise = True
-    # to_rgb_mode = 'pggan'
-    # z_to_bn = True
-    # split_z = False
-    dropout = 0.2
-    act_norm = 'batch'
-    # conv_only = True
-    # shared_embedding_size = 32
-    # normalize_latents = True
-    # rgb_generation_mode = 'pggan'
-    group_size = 4
-    temporal_groups_per_window = 2
-    conv_only = True
-    input_to_all_layers = False
-    # g = Generator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
-    #               self_attention_layers, progression_scale_up, progression_scale_down, residual, separable, equalized,
-    #               spectral, init, act_alpha, num_classes, deep, z_distribution, latent_size, no_tanh, per_channel_noise,
-    #               to_rgb_mode, z_to_bn, split_z, dropout, act_norm, conv_only, shared_embedding_size, normalize_latents,
-    #               rgb_generation_mode)
-    d = Discriminator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
-                      self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
-                      equalized, spectral, init, act_alpha, num_classes, deep, dropout, act_norm,
-                      group_size, temporal_groups_per_window, conv_only, input_to_all_layers)
-    d.alpha = 1.0
-    d.depth = 3
-    print(d(torch.randn(4, num_rgb_channels, initial_kernel_size * 8)))
+    pass
 
 
 if __name__ == '__main__':
-    # main()
-    pass
+    main()
