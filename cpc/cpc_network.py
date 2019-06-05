@@ -66,7 +66,7 @@ class SincConv(nn.Module):
         return F.conv1d(x_p, self.filters, bias=None)
 
 
-class ResidualEncoder(nn.Module):
+class ResidualEncoder(nn.Sequential):
     class ResidualBlock(nn.Module):
         def __init__(self, in_channels, out_channels, stride=1, downsample=None):
             super().__init__()
@@ -92,11 +92,9 @@ class ResidualEncoder(nn.Module):
 
     @staticmethod
     def conv(in_channels, out_channels, stride=1):
-        return nn.Conv1d(in_channels, out_channels, kernel_size=5,
-                         stride=stride, padding=2, bias=False)
+        return nn.Conv1d(in_channels, out_channels, kernel_size=5, stride=stride, padding=2, bias=False)
 
-    def __init__(self, input_channels=5, _=0):
-        super().__init__()
+    def __init__(self, input_channels=5):
         self.in_channels = 16
         conv = self.conv(input_channels, self.in_channels)
         bn = nn.BatchNorm1d(self.in_channels)
@@ -110,7 +108,7 @@ class ResidualEncoder(nn.Module):
             nn.AvgPool1d(3),
         ]
         self.z_size = 128
-        self.network = nn.Sequential(conv, bn, relu, *layers)
+        super().__init__(conv, bn, relu, *layers)
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -130,13 +128,9 @@ class ResidualEncoder(nn.Module):
             layers.append(self.ResidualBlock(out_channels, out_channels))
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        return self.network(x)
 
-
-class ConvEncoder(nn.Module):
-    def __init__(self, input_channels=5, dropout=0.1, down_ratios=None, channel_sizes=None):
-        super().__init__()
+class ConvEncoder(nn.Sequential):
+    def __init__(self, input_channels=5, dropout=0.1, down_ratios=None, channel_sizes=None, bn=True):
         if down_ratios is None:
             down_ratios = [5, 4, 3]  # generates 32 codes of size 128
         if channel_sizes is None:
@@ -151,23 +145,19 @@ class ConvEncoder(nn.Module):
             net.append(act)
             if dropout != 0.0 and i != last_layer:
                 net.append(nn.Dropout(dropout))
-            if i != last_layer:
+            if i != last_layer and bn:
                 net.append(nn.BatchNorm1d(cs))
             input_channels = cs
-        self.network = nn.Sequential(*net)
-
-    def forward(self, x):
-        return self.network(x)
+        super().__init__(*net)
 
 
 class PNormPooling(nn.Module):
     def __init__(self, input_size, batch_norm=True, mlp_sizes=None, p=None, be_mean_pool=False):
         super().__init__()
+        self.is_pool = be_mean_pool
         if be_mean_pool:
             self.pool_size = input_size
-            self.is_pool = True
             return
-        self.is_pool = False
         if p is None:
             p = [1.0, float('+inf')]
         if mlp_sizes is None:
@@ -279,36 +269,32 @@ NetworkOutput = namedtuple('NetworkOutput', ['losses', 'accuracies', 'latents'])
 
 # TODO add classification head and SincMode for the encoder
 class Network(nn.Module):
-    def __init__(self, input_channels, encoder_dropout=0.1, bidirectional=False, contextualizer_num_layers=1,
-                 contextualizer_dropout=0, use_transformer=False, causal_prediction=True, prediction_k=4,
-                 have_global=True, have_local=True, residual_encoder=False, rnn_hidden_multiplier=2,
-                 global_mode='mlp', local_mode='mlp', encoder_down_ratios=None, encoder_channel_sizes=None):
+    def __init__(self, input_channels, bidirectional=False, contextualizer_num_layers=1,
+                 contextualizer_dropout=0, use_transformer=False, prediction_k=4, have_global=True, have_local=True,
+                 residual_encoder=False, global_mode='bilinear', local_mode='bilinear'):
         super().__init__()
         if residual_encoder:
             encoder = ResidualEncoder(input_channels)
         else:
-            encoder = ConvEncoder(input_channels, encoder_dropout, down_ratios=encoder_down_ratios,
-                                  channel_sizes=encoder_channel_sizes)
+            encoder = ConvEncoder(input_channels)
         z_pooler = PNormPooling(encoder.z_size, be_mean_pool=not have_global)
         if use_transformer:
             contextualizer = Transformer(input_size=encoder.z_size, causal=True, bidirectional=bidirectional,
                                          num_heads=4, max_seq_len=32, num_layers=contextualizer_num_layers,
                                          dropout=contextualizer_dropout)
         else:
-            contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=rnn_hidden_multiplier * encoder.z_size,
+            contextualizer = AutoRNN(input_size=encoder.z_size, hidden_size=encoder.z_size,
                                      bidirectional=bidirectional, num_layers=contextualizer_num_layers,
                                      dropout=contextualizer_dropout, cell_type='GRU')
         c_pooler = PNormPooling(contextualizer.c_size, not have_global and not have_local)
         prediction_loss_network = KPredLoss(contextualizer.c_size, encoder.z_size, k=prediction_k,
-                                            auto_is_bidirectional=bidirectional, look_both=not causal_prediction)
+                                            auto_is_bidirectional=bidirectional, look_both=False)
         if have_global:
-            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size, mode=global_mode,
-                                            hidden_size=min(c_pooler.pool_size, z_pooler.pool_size) * 2)
+            c_pooled_mi_z_pooled = OneOneMI(c_pooler.pool_size, z_pooler.pool_size, mode=global_mode)
         else:
             c_pooled_mi_z_pooled = None
         if have_local:
-            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size, mode=local_mode,
-                                     hidden_size=min(c_pooler.pool_size, encoder.z_size) * 2)
+            c_pooled_mi_z = SeqOneMI(c_pooler.pool_size, encoder.z_size, mode=local_mode)
         else:
             c_pooled_mi_z = None
 
