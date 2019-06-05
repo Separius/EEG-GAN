@@ -71,6 +71,8 @@ class MinibatchStddev(nn.Module):
         self.stride_size = self.kernel_size // temporal_groups_per_window
 
     def forward(self, x):  # B, C, T
+        if self.group_size < 0:
+            return x
         s = x.size()
         group_size = min(s[0], self.group_size)
         all_y = []

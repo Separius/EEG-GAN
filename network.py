@@ -28,7 +28,7 @@ class UnetGBlock(nn.Module):
 
     def forward(self, x, alpha, is_first=False, y=None, z=None):
         if is_first:
-            encoded = self.encoder.fromRGB(x)
+            encoded = self.encoder.from_rgb(x)
         else:
             encoded = x
         encoded = self.encoder(encoded)
@@ -42,12 +42,13 @@ class UnetGBlock(nn.Module):
         decoded = self.decoder(encoded)
         if is_first:
             if self.middle is None or alpha == 1.0:
-                return self.decoder.toRGB(decoded)
-            return self.decoder.toRGB(decoded) * alpha + (1.0 - alpha) * self.middle.decoder.toRGB(middle_out)
+                return self.decoder.to_rgb(decoded)
+            return self.decoder.to_rgb(decoded) * alpha + (1.0 - alpha) * self.middle.decoder.toRGB(middle_out)
         return decoded
 
 
 class UnetGenerator(nn.Module):
+    # TODO add rgb_generation_mode, input_to_all_layers, conv_only, z to generators(split), SA
     def __init__(self, ch_rgb_in, ch_rgb_out, latent_size, z_to_bn, equalized, spectral, init, act_alpha, dropout,
                  num_classes, act_norm, separable, progression_scale_up, progression_scale_down, z_distribution,
                  normalize_latents, fmap_base, fmap_min, fmap_max, shared_embedding_size, k_size=3,
@@ -171,9 +172,9 @@ class GBlock(nn.Module):
         else:
             raise ValueError()
         if no_tanh:
-            self.toRGB = to_rgb
+            self.to_rgb = to_rgb
         else:
-            self.toRGB = nn.Sequential(to_rgb, ScaledTanh())
+            self.to_rgb = nn.Sequential(to_rgb, ScaledTanh())
         if deep:
             self.residual = PassChannelResidual()
         else:
@@ -202,7 +203,7 @@ class GBlock(nn.Module):
         elif self.residual is not None:
             h = h + self.residual(x)
         if last:
-            return self.toRGB(h)
+            return self.to_rgb(h)
         return h
 
 
@@ -270,10 +271,10 @@ class Generator(nn.Module):
         if num_classes != 0:
             if shared_embedding_size > 0:
                 self.y_encoder = GeneralConv(num_classes, shared_embedding_size, kernel_size=1,
-                                             equalized=False, act_alpha=act_alpha, spectral=False, bias=False)
+                                             equalized=False, act_alpha=-1, spectral=False, bias=False)
                 num_classes = shared_embedding_size
             else:
-                self.y_encoder = nn.Sequential()
+                self.y_encoder = nn.Identity()
         else:
             self.y_encoder = None
         if split_z:
@@ -311,38 +312,32 @@ class Generator(nn.Module):
             h, attention_map = self.self_attention[l](h)
         else:
             attention_map = None
-        h = resample_signal(h, self.progression_scale_down[l], self.progression_scale_up[l], True)
+        h = resample_signal(h, self.progression_scale_down[l], self.progression_scale_up[l])
         return self.blocks[l](h, y, self._split_z(l, z), last=False), attention_map
 
     def _combine_rgbs(self, last_rgb, saved_rgbs):
+        if self.rgb_generation_mode == 'pggan':
+            return last_rgb
+        return_value = saved_rgbs[0]
+        for rgb in saved_rgbs[1:]:
+            return_value = resample_signal(return_value, return_value.size(2), rgb.size(2)) + rgb
         if self.rgb_generation_mode == 'residual':
-            return_value = saved_rgbs[0]
-            for rgb in saved_rgbs[1:]:
-                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2), True) + rgb
             if self.alpha == 1.0:
                 return return_value
             return return_value - (1.0 - self.alpha) * saved_rgbs[-1]
         elif self.rgb_generation_mode == 'mean':
-            return_value = saved_rgbs[0]
-            for rgb in saved_rgbs[1:]:
-                return_value = resample_signal(return_value, return_value.size(2), rgb.size(2), True) + rgb
             return_value = return_value / len(saved_rgbs)
             if self.alpha == 1.0:
                 return return_value
             return (return_value * len(saved_rgbs) - saved_rgbs[-1]) / (len(saved_rgbs) - 1) * (
                     1.0 - self.alpha) + return_value * self.alpha
-        return last_rgb
+        else:
+            raise ValueError('invalid rgb_generation_mode: {}'.format(self.rgb_generation_mode))
 
     def _wrap_output(self, last_rgb, all_rgbs, y):
         return {'x': self._combine_rgbs(last_rgb, all_rgbs), 'y': y}
 
-    def forward(self, z):
-        if isinstance(z, dict):
-            z, y = z['z'], z.get('y', None)
-        elif isinstance(z, tuple):
-            z, y = z
-        else:
-            y = None
+    def forward(self, z, y=None):
         if y is not None:
             if y.ndimension() == 2:
                 y = y.unsqueeze(2)
@@ -352,9 +347,11 @@ class Generator(nn.Module):
                 y = None
         if self.normalize_latents:
             z = pixel_norm(z)
+        if self.conv_only:
+            assert z.ndimension() == 3
         if z.ndimension() == 2:
             z = z.unsqueeze(2)
-        if self.split_z and not self.deep:
+        if self.split_z:
             h = z[:, :self.latent_size, :]
         else:
             h = z
@@ -367,7 +364,7 @@ class Generator(nn.Module):
             return self._wrap_output(h, saved_rgbs, y), {}
         h = self.block0(h, y, self._split_z(-1, z))
         if save_rgb:
-            saved_rgbs.append(self.block0.toRGB(h))
+            saved_rgbs.append(self.block0.to_rgb(h))
         all_attention_maps = {}
         for i in range(self.depth - 1):
             h, attention_map = self._do_layer(i, h, y, z)
@@ -375,26 +372,25 @@ class Generator(nn.Module):
                 saved_rgbs.append(self.blocks[i].toRGB(h))
             if attention_map is not None:
                 all_attention_maps[i] = attention_map
-        h = resample_signal(h, self.progression_scale_down[self.depth - 1], self.progression_scale_up[self.depth - 1],
-                            True)
+        h = resample_signal(h, self.progression_scale_down[self.depth - 1], self.progression_scale_up[self.depth - 1])
         ult = self.blocks[self.depth - 1](h, y, self._split_z(self.depth - 1, z), True)
         if save_rgb:
             saved_rgbs.append(ult)
         if self.alpha == 1.0:
             return self._wrap_output(ult, saved_rgbs, y), all_attention_maps
-        preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.toRGB(h)
+        preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.to_rgb(h)
         return self._wrap_output(preult_rgb * (1.0 - self.alpha) + ult * self.alpha, saved_rgbs, y), all_attention_maps
 
 
 class DBlock(nn.Module):
-    def __init__(self, ch_in, ch_out, ch_rgb, k_size=3, initial_kernel_size=None, is_residual=False,
+    def __init__(self, ch_in, ch_out, ch_rgb, sample_rate, k_size=3, initial_kernel_size=None, is_residual=False,
                  deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, sinc_ks=0, **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.net = []
         if is_last and group_size >= 0:
             self.net.append(MinibatchStddev(group_size, temporal_groups_per_window, initial_kernel_size))
-        hidden_size = (ch_out // 4) if deep else ch_in
+        hidden_size = max((ch_out // 4) if deep else ch_in, 4)
         self.net.append(
             GeneralConv(ch_in + (1 if is_last and group_size >= 0 else 0),
                         hidden_size, kernel_size=k_size, **layer_settings))
@@ -407,28 +403,29 @@ class DBlock(nn.Module):
         self.net.append(GeneralConv(hidden_size, ch_out, kernel_size=initial_kernel_size if is_linear_last else k_size,
                                     pad=0 if is_linear_last else None, **layer_settings))
         self.net = nn.Sequential(*self.net)
-        reduced_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
-                                      init=layer_settings['init'])
+        from_rgb_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
+                                       init=layer_settings['init'])
         if sinc_ks == 0:
-            self.fromRGB = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
-                                       **reduced_layer_settings)
+            self.from_rgb = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
+                                        **from_rgb_layer_settings)
         else:
-            assert sinc_ks % ch_rgb == 0, 'sinc_ks must be divisible by ch_rgb'
-            # TODO read sample_rate from input
-            self.fromRGB = SincEncoder(ch_rgb, is_shared=False, kernel_size=sinc_ks, num_kernels=sinc_ks // ch_rgb,
-                                       sample_rate=60.0, min_low_hz=0.01, min_band_hz=1.0)
+            assert ch_in % ch_rgb == 0, 'ch_in must be divisible by ch_rgb when sinc_ks != 0'
+            self.from_rgb = SincEncoder(ch_rgb, is_shared=False, kernel_size=sinc_ks, num_kernels=ch_in // ch_rgb,
+                                        sample_rate=sample_rate, min_low_hz=0.01, min_band_hz=1.0)
         if deep:
-            self.residual = ConcatResidual(ch_in, ch_out, **reduced_layer_settings)
+            self.residual = ConcatResidual(ch_in, ch_out, **from_rgb_layer_settings)
         else:
             if is_residual and (not is_last or conv_disc):
-                self.residual = nn.Sequential() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
-                                                                                    act_alpha=-1,
-                                                                                    **reduced_layer_settings)
+                self.residual = nn.Identity() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
+                                                                                  act_alpha=-1,
+                                                                                  **from_rgb_layer_settings)
             else:
                 self.residual = None
         self.deep = deep
 
-    def forward(self, x):
+    def forward(self, x, first=False):
+        if first:
+            x = self.from_rgb(x)
         h = self.net(x)
         if self.deep:
             return self.residual(h, x)
@@ -443,7 +440,7 @@ class Discriminator(nn.Module):
                  equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
                  group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False, sinc_ks=0):
         """
-        NOTE we only support global conidtioning(not temporal) for now
+        NOTE we only support global conditioning(not temporal) for now
         :param initial_kernel_size:
         :param num_rgb_channels:
         :param fmap_base:
@@ -485,8 +482,8 @@ class Discriminator(nn.Module):
         block_settings = dict(ch_rgb=num_rgb_channels, k_size=kernel_size, is_residual=residual, conv_disc=conv_only,
                               group_size=group_size, temporal_groups_per_window=temporal_groups_per_window, deep=deep,
                               sinc_ks=sinc_ks)
-
-        last_block = DBlock(nf(1), nf(0), initial_kernel_size=initial_kernel_size, **block_settings, **layer_settings)
+        last_block = DBlock(nf(1), nf(0), initial_kernel_size=initial_kernel_size,
+                            sample_rate=initial_kernel_size, **block_settings, **layer_settings)
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
@@ -494,9 +491,12 @@ class Discriminator(nn.Module):
             self.self_attention[layer] = dummy[-1]
         if len(dummy):
             self.dummy = nn.ModuleList(dummy)
+        psunp = np.array(progression_scale_up)
+        psdnp = np.array(progression_scale_down)
+        signal_lens = [initial_kernel_size * np.sum(psunp[:i] / psdnp[:i]) for i in range(R + 1)]
         self.blocks = nn.ModuleList(
-            [DBlock(nf(i + 2), nf(i + 1), **block_settings, **layer_settings) for i in range(R - 1, -1, -1)] + [
-                last_block])
+            [DBlock(nf(i + 2), nf(i + 1), sample_rate=signal_lens[i + 1], **block_settings, **layer_settings) for i in
+             range(R - 1, -1, -1)] + [last_block])
 
         if num_classes != 0:
             self.class_emb = nn.Linear(num_classes, nf(0), False)
@@ -508,20 +508,14 @@ class Discriminator(nn.Module):
                                   spectral=spectral, init=init)
         self.max_depth = len(self.blocks) - 1
 
-    def forward(self, x):
-        if isinstance(x, dict):
-            x, y = x['x'], x.get('y', None)
-        elif isinstance(x, tuple):
-            x, y = x
-        else:
-            y = None
+    def forward(self, x, y=None):
         h = self.blocks[-(self.depth + 1)](x, True)
         if self.depth > 0:
             h = resample_signal(h, self.progression_scale_up[self.depth - 1],
-                                self.progression_scale_down[self.depth - 1], True)
+                                self.progression_scale_down[self.depth - 1])
             if self.alpha < 1.0 or self.input_to_all_layers:
                 x_lowres = resample_signal(x, self.progression_scale_up[self.depth - 1],
-                                           self.progression_scale_down[self.depth - 1], True)
+                                           self.progression_scale_down[self.depth - 1])
                 preult_rgb = self.blocks[-self.depth].fromRGB(x_lowres)
                 if self.input_to_all_layers:
                     h = (h * self.alpha + preult_rgb) / (1.0 + self.alpha)
@@ -531,10 +525,10 @@ class Discriminator(nn.Module):
         for i in range(self.depth, 0, -1):
             h = self.blocks[-i](h)
             if i > 1:
-                h = resample_signal(h, self.progression_scale_up[i - 2], self.progression_scale_down[i - 2], True)
+                h = resample_signal(h, self.progression_scale_up[i - 2], self.progression_scale_down[i - 2])
                 if self.input_to_all_layers:
                     x_lowres = resample_signal(x_lowres, self.progression_scale_up[i - 2],
-                                               self.progression_scale_down[i - 2], True)
+                                               self.progression_scale_down[i - 2])
                     h = (h + self.blocks[-i + 1].fromRGB(x_lowres)) / 2.0
             if (i - 2) in self.self_attention:
                 h, attention_map = self.self_attention[i - 2](h)
@@ -543,7 +537,7 @@ class Discriminator(nn.Module):
         o = self.linear(h).mean(dim=2).squeeze()
         if y is not None:
             emb = self.class_emb(y)
-            cond_loss = (emb * h.squeeze()).sum(dim=1)
+            cond_loss = (emb.unsqueeze(2) * h).mean(dim=2).sum(dim=1)
         else:
             cond_loss = 0.0
         return o + cond_loss, h, all_attention_maps
@@ -566,12 +560,14 @@ class MultiDiscriminator(nn.Module):
                       self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                       equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm, group_size,
                       temporal_groups_per_window, conv_only, input_to_all_layers]
-        # TODO write alpha and depth setters
+        self._alpha = 1.0
+        self._depth = 0
         if all_sinc_weight != 0:
             self.all_sinc_net = Discriminator(*all_params, sinc_ks)
         if all_time_weight != 0:
             self.all_time_net = Discriminator(*all_params, 0)
-        shared_params = [1, fmap_base // 2, fmap_max // 2, fmap_min // 2, kernel_size,
+        num_rgb_channels = 1
+        shared_params = [num_rgb_channels, fmap_base // 2, fmap_max // 2, fmap_min // 2, kernel_size,
                          self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                          equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm]
         shared_k_params = dict(group_size=group_size, temporal_groups_per_window=temporal_groups_per_window,
@@ -585,31 +581,65 @@ class MultiDiscriminator(nn.Module):
             psunp = np.array(progression_scale_up)
             psdnp = np.array(progression_scale_down)
             self.signal_lens = [np.sum(psunp[:i] / psdnp[:i]) for i in range(len(progression_scale_up) + 1)]
-            self.one_sec_net = Discriminator(1, *shared_params, group_size=0, temporal_groups_per_window=0,
+            self.one_sec_net = Discriminator(1, *shared_params, group_size=-1, temporal_groups_per_window=0,
                                              conv_only=conv_only, input_to_all_layers=input_to_all_layers, sinc_ks=0)
 
-    def forward(self, x):
+    @property
+    def alpha(self):
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, alpha):
+        self._alpha = alpha
+        if self.all_sinc_weight != 0:
+            self.all_sinc_net.alpha = alpha
+        if self.all_time_weight != 0:
+            self.all_time_net.alpha = alpha
+        if self.shared_time_weight != 0:
+            self.shared_time_net.alpha = alpha
+        if self.shared_sinc_weight != 0:
+            self.shared_sinc_net.alpha = alpha
+        if self.one_sec_weight != 0:
+            self.one_sec_net.alpha = alpha
+
+    @property
+    def depth(self):
+        return self._depth
+
+    @depth.setter
+    def depth(self, depth):
+        self._alpha = depth
+        if self.all_sinc_weight != 0:
+            self.all_sinc_net.alpha = depth
+        if self.all_time_weight != 0:
+            self.all_time_net.alpha = depth
+        if self.shared_time_weight != 0:
+            self.shared_time_net.alpha = depth
+        if self.shared_sinc_weight != 0:
+            self.shared_sinc_net.alpha = depth
+        if self.one_sec_weight != 0:
+            self.one_sec_net.alpha = depth
+
+    def forward(self, x, y=None):
         o = 0.0
         if self.all_sinc_weight != 0:
-            o = o + self.all_sinc_weight * self.all_sinc_net(x)[0]
+            o = o + self.all_sinc_weight * self.all_sinc_net(x, y)[0]
         if self.all_time_weight != 0:
-            o = o + self.all_time_weight * self.all_time_net(x)[0]
+            o = o + self.all_time_weight * self.all_time_net(x, y)[0]
         if self.shared_sinc_weight != 0:
-            o = o + self.shared_sinc_weight * self.shared_sinc_net(x.view(-1, 1, x.size(2)))[0]
+            tmp = self.shared_sinc_net(x.view(-1, 1, x.size(2)),
+                                       torch.repeat_interleave(y, x.size(1), 0) if y is not None else None)[0]
+            o = o + self.shared_sinc_weight * tmp.view(x.size(0), -1).mean(dim=1)
         if self.shared_time_weight != 0:
-            o = o + self.shared_time_weight * self.shared_time_net(x.view(-1, 1, x.size(2)))[0]
+            tmp = self.shared_time_net(x.view(-1, 1, x.size(2)),
+                                       torch.repeat_interleave(y, x.size(1), 0) if y is not None else None)[0]
+            o = o + self.shared_time_weight * tmp.view(x.size(0), -1).mean(dim=1)
         if self.one_sec_weight != 0:
-            if isinstance(x, dict):
-                x, y = x['x'], x.get('y', None)
-            elif isinstance(x, tuple):
-                x, y = x
-            else:
-                y = None
             stride = self.signal_lens[self.depth]
             x = torch.cat([x[:, :, i * stride:(i + 1) * stride] for i in range(x.size(2) // stride)], dim=0)
             if y is not None:
                 y = torch.repeat(y, x.size(2) // stride, 0)
-            o = o + self.one_sec_weight * self.one_sec_weight((x, y))[0]
+            o = o + self.one_sec_weight * self.one_sec_net(x, y)[0]
         return o
 
 
