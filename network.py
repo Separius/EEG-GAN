@@ -453,7 +453,7 @@ class Discriminator(nn.Module):
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                  equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
                  group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False,
-                 sinc=False, initial_sampling_rate=1.0):
+                 initial_sampling_rate=1.0, sinc=False):
         """
         NOTE we only support global conditioning(not temporal) for now
         :param initial_kernel_size:
@@ -563,42 +563,42 @@ class MultiDiscriminator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                  equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
-                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False, sinc_ks=121,
+                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False,
                  all_sinc_weight=0.0, all_time_weight=1.0, shared_sinc_weight=1.0, shared_time_weight=1.0,
-                 one_sec_weight=1.0):
+                 one_sec_weight=1.0, initial_sampling_rate=1.0):
         super().__init__()
-        self.all_sinc_weight = all_sinc_weight if sinc_ks > 0 else 0.0
+        self.all_sinc_weight = all_sinc_weight
         self.all_time_weight = all_time_weight
-        self.shared_sinc_weight = shared_sinc_weight if sinc_ks > 0 else 0.0
+        self.shared_sinc_weight = shared_sinc_weight
         self.shared_time_weight = shared_time_weight
         self.one_sec_weight = one_sec_weight
         all_params = [initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                       self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                       equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm, group_size,
-                      temporal_groups_per_window, conv_only, input_to_all_layers]
+                      temporal_groups_per_window, conv_only, input_to_all_layers, initial_sampling_rate]
         self._alpha = 1.0
         self._depth = 0
         if all_sinc_weight != 0:
-            self.all_sinc_net = Discriminator(*all_params, sinc_ks)
+            self.all_sinc_net = Discriminator(*all_params, True)
         if all_time_weight != 0:
-            self.all_time_net = Discriminator(*all_params, 0)
-        num_rgb_channels = 1
-        shared_params = [num_rgb_channels, fmap_base // 2, fmap_max // 2, fmap_min // 2, kernel_size,
+            self.all_time_net = Discriminator(*all_params, False)
+        shared_params = [1, fmap_base // 2, fmap_max // 2, fmap_min // 2, kernel_size,
                          self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                          equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm]
         shared_k_params = dict(group_size=group_size, temporal_groups_per_window=temporal_groups_per_window,
-                               conv_only=conv_only, input_to_all_layers=input_to_all_layers)
+                               conv_only=conv_only, input_to_all_layers=input_to_all_layers,
+                               initial_sampling_rate=initial_sampling_rate)
         if shared_sinc_weight != 0:
-            self.shared_sinc_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params,
-                                                 sinc_ks=sinc_ks)
+            self.shared_sinc_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params, sinc=True)
         if shared_time_weight != 0:
-            self.shared_time_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params, sinc_ks=0)
+            self.shared_time_net = Discriminator(initial_kernel_size, *shared_params, **shared_k_params, sinc=False)
         if one_sec_weight != 0:
-            psunp = np.array(progression_scale_up)
-            psdnp = np.array(progression_scale_down)
-            self.signal_lens = [np.sum(psunp[:i] / psdnp[:i]) for i in range(len(progression_scale_up) + 1)]
-            self.one_sec_net = Discriminator(1, *shared_params, group_size=-1, temporal_groups_per_window=0,
-                                             conv_only=conv_only, input_to_all_layers=input_to_all_layers, sinc_ks=0)
+            self.signal_lens = (np.cumprod(np.array([1] + progression_scale_up)) / np.cumprod(
+                np.array([1] + progression_scale_down))).astype(np.int32)
+            self.one_sec_net = Discriminator(1, num_rgb_channels, *shared_params[1:], group_size=-1,
+                                             temporal_groups_per_window=0, conv_only=conv_only,
+                                             input_to_all_layers=input_to_all_layers,
+                                             initial_sampling_rate=initial_sampling_rate, sinc=False)
 
     @property
     def alpha(self):
@@ -652,10 +652,16 @@ class MultiDiscriminator(nn.Module):
             o = o + self.shared_time_weight * tmp.view(x.size(0), -1).mean(dim=1)
         if self.one_sec_weight != 0:
             stride = self.signal_lens[self.depth]
-            x = torch.cat([x[:, :, i * stride:(i + 1) * stride] for i in range(x.size(2) // stride)], dim=0)
+            B, _, T = x.size()
+            x = torch.cat([x[:, :, i * stride:(i + 1) * stride] for i in range(T // stride)], dim=0)
             if y is not None:
-                y = torch.repeat(y, x.size(2) // stride, 0)
-            o = o + self.one_sec_weight * self.one_sec_net(x, y)[0]
+                if y.dim() == 2:
+                    y = y.repeat(T // stride, 1)
+                else:
+                    y = y.repeat(T // stride, 1, 1)
+            r = self.one_sec_weight * self.one_sec_net(x, y)[0]
+            r = torch.stack([r[i * B:(i + 1) * B] for i in range(r.size(0) // B)]).mean(dim=0)
+            o = o + r
         return o
 
 
@@ -828,8 +834,8 @@ def test_discriminator():
         net = Discriminator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                             self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                             equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm,
-                            group_size, temporal_groups_per_window, conv_only, input_to_all_layers, sinc,
-                            initial_sampling_rate)
+                            group_size, temporal_groups_per_window, conv_only, input_to_all_layers,
+                            initial_sampling_rate, sinc)
         y = torch.randn(5, num_classes) if num_classes > 0 else None
         for d in range(3):
             for a in [0.0, 0.5, 1.0]:
@@ -843,12 +849,63 @@ def test_discriminator():
                 assert o.size() == (5,), o.size()
 
 
+def test_multi_discriminator():
+    initial_kernel_size = 8
+    num_rgb_channels = 4
+    fmap_base = 64
+    fmap_max = 64
+    fmap_min = 4
+    kernel_size = 3
+    progression_scale_up = [2, 3, 4]
+    progression_scale_down = [1, 2, 3]
+    residual = True
+    separable = False
+    equalized = True
+    init = 'xavier_uniform'
+    act_alpha = 0.2
+    deep = False
+    dropout = 0.2
+    spectral = True
+    initial_sr = 1
+
+    self_attention_layerss = [[], [0], [1], [2]]
+    num_classess = [0, 10]
+    act_norms = ['batch', 'pixel', None]
+    group_sizes = [-1, 5]
+    temporal_groups_per_windows = [1, 2]
+    conv_onlys = [True, False]
+    input_to_all_layerss = [True, False]
+    sincs = [True, False]
+    for self_attention_layers, num_classes, act_norm, group_size, temporal_groups_per_window, conv_only, input_to_all_layers in tqdm(
+            itertools.product(self_attention_layerss, num_classess, act_norms, group_sizes, temporal_groups_per_windows,
+                              conv_onlys, input_to_all_layerss), total=4 * 2 * 3 * 2 * 2 * 2 * 2):
+
+        net = MultiDiscriminator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                                 self_attention_layers, progression_scale_up, progression_scale_down, residual,
+                                 separable, equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm,
+                                 group_size, temporal_groups_per_window, conv_only, input_to_all_layers,
+                                 all_sinc_weight=1.0, all_time_weight=1.0, shared_sinc_weight=1.0,
+                                 shared_time_weight=1.0, one_sec_weight=1.0, initial_sampling_rate=initial_sr)
+        y = torch.randn(5, num_classes) if num_classes > 0 else None
+        for d in range(3):
+            for a in [0.0, 0.5, 1.0]:
+                if d == 0 and a != 1.0:
+                    continue
+                net.depth = d
+                net.alpha = a
+                x_in = torch.randn(5, num_rgb_channels,
+                                   {0: 1, 1: 2, 2: 3, 3: 4}[d] * (3 if conv_only else initial_kernel_size))
+                o = net(x_in, y)
+                assert o.size() == (5,), o.size()
+
+
 def main():
     with torch.no_grad():
         # test_gblock()
         # test_dblock()
         # test_generator()
-        test_discriminator()
+        # test_discriminator()
+        test_multi_discriminator()
 
 
 if __name__ == '__main__':
