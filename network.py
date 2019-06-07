@@ -10,33 +10,36 @@ from utils import pixel_norm, resample_signal
 from layers import GeneralConv, SelfAttention, MinibatchStddev, ScaledTanh, PassChannelResidual, ConcatResidual
 
 
-class UnetGBlock(nn.Module):
+class UnetBlock(nn.Module):
     def __init__(self, ch_in, ch_out, ch_rgb_in, ch_rgb_out, signal_freq, inner_freq, dec_layer_settings,
                  enc_layer_settings, inner_layer=None, k_size=3, initial_kernel_size=None, is_residual=False,
                  no_tanh=False, deep=False, per_channel_noise=False, to_rgb_mode='pggan', input_to_all_layers=False,
-                 sinc_ks=0, conv_only=False, enc_sa=None, dec_sa=None, split_z_size=0):
+                 sinc=False, conv_only=False, has_sa=False, split_z_size=0):
         super().__init__()
         self.split_z_size = split_z_size
         self.ch_out = ch_out
         self.ch_in = ch_in
-        self.enc_sa = enc_sa
-        self.dec_sa = dec_sa
+        self.dec_sa = SelfAttention(self.ch_out,
+                                    dec_layer_settings['spectral'], dec_layer_settings['init']) if has_sa else None
         self.input_to_all_layers = input_to_all_layers
         self.enc_ch_out = inner_layer.ch_in if inner_layer is not None else (ch_in + ch_out)
-        self.encoder = DBlock(ch_in, self.enc_ch_out, ch_rgb_in, k_size, initial_kernel_size, is_residual, deep,
-                              group_size=-1, conv_disc=conv_only, sinc_ks=sinc_ks, **enc_layer_settings)
+        self.enc_sa = SelfAttention(self.enc_ch_out,
+                                    enc_layer_settings['spectral'], enc_layer_settings['init']) if has_sa else None
+        self.encoder = DBlock(ch_in, self.enc_ch_out, ch_rgb_in, signal_freq, k_size, initial_kernel_size, is_residual,
+                              deep, group_size=-1, conv_disc=conv_only, sinc=sinc, **enc_layer_settings)
         self.signal_freq = signal_freq
         self.inner_freq = inner_freq
         self.middle = inner_layer
         self.dec_ch_in = self.enc_ch_out + (inner_layer.ch_out if inner_layer is not None else 0)
-        self.decoder = GBlock(self.dec_ch_in, ch_out, ch_rgb_out, k_size, initial_kernel_size, is_residual,
+        self.decoder = GBlock(self.dec_ch_in, ch_out, ch_rgb_out, k_size,
+                              initial_kernel_size if not conv_only else None, is_residual,
                               no_tanh, deep, per_channel_noise, to_rgb_mode, **dec_layer_settings)
 
     def forward(self, rgb_in, encoded, all_rgbs, alpha=1.0, is_first=False, y=None, z=None):
         if is_first:
             encoded = self.encoder.from_rgb(rgb_in)
         elif self.input_to_all_layers:
-            encoded = (self.encoder.from_rgb(rgb_in) * self.alpha + encoded) / (1.0 + self.alpha)
+            encoded = (self.encoder.from_rgb(rgb_in) + encoded) / 2.0
         encoded = self.encoder(encoded)
         if self.middle is not None:
             if self.enc_sa is not None:
@@ -45,14 +48,14 @@ class UnetGBlock(nn.Module):
             new_rgb = resample_signal(rgb_in, self.signal_freq, self.inner_freq)
             if is_first and alpha != 1.0:
                 middle_in = alpha * middle_in + (1.0 - alpha) * self.middle.encoder.from_rgb(new_rgb)
-            middle_out = self.middle(new_rgb, middle_in, all_rgbs, y=y, z=z[self.split_z_size:])
+            middle_out = self.middle(new_rgb, middle_in, all_rgbs, y=y, z=z if z is None else z[:, self.split_z_size:])
             inner = resample_signal(middle_out, self.inner_freq, self.signal_freq)
             decoded = torch.cat([encoded, inner], dim=1)
             if self.dec_sa is not None:
                 decoded = self.dec_sa(decoded)
         else:
             decoded = encoded
-        decoded = self.decoder(decoded, y=y, z=z)
+        decoded = self.decoder(decoded, y=y, z=z if self.split_z_size == 0 or z is None else z[:, :self.split_z_size])
         if is_first:
             if all_rgbs is not None:
                 all_rgbs.append(self.decoder.to_rgb(decoded))
@@ -64,7 +67,7 @@ class UnetGBlock(nn.Module):
         return decoded
 
 
-class UnetGenerator(nn.Module):
+class Unet(nn.Module):
     def __init__(self, ch_rgb_in, ch_rgb_out, latent_size, z_to_bn, equalized, spectral, init, act_alpha, dropout,
                  num_classes, act_norm, separable, progression_scale_up, progression_scale_down, z_distribution,
                  normalize_latents, fmap_base, fmap_min, fmap_max, shared_embedding_size, sa_layers, k_size=3,
@@ -116,16 +119,14 @@ class UnetGenerator(nn.Module):
         signal_lens = [0] + [initial_kernel_size * np.sum(psunp[:i] / psdnp[:i]) for i in
                              range(len(progression_scale_up) + 1)]
         for i in range(R + 1):
-            inner = UnetGBlock(nf(i), nf(i), ch_rgb_in, ch_rgb_out,
-                               signal_lens[i + 1], signal_lens[i],
-                               decoder_layer_settings,
-                               encoder_layer_settings, inner, k_size,
-                               initial_kernel_size if i == 0 else None, is_residual, no_tanh, deep,
-                               per_channel_noise, to_rgb_mode, input_to_all_layers,
-                               (signal_lens[i + 1] / initial_kernel_size) if use_sinc else 0, conv_only,
-                               SelfAttention(inner.ch_in if inner is not None else (nf(i) + nf(i)), spectral,
-                                             init) if i in sa_layers else None,
-                               SelfAttention(nf(i), spectral, init) if i in sa_layers else None, self.latent_size)
+            inner = UnetBlock(nf(i), nf(i), ch_rgb_in, ch_rgb_out,
+                              signal_lens[i + 1], signal_lens[i],
+                              decoder_layer_settings,
+                              encoder_layer_settings, inner, k_size,
+                              initial_kernel_size if i == 0 else None, is_residual, no_tanh, deep,
+                              per_channel_noise, to_rgb_mode, input_to_all_layers,
+                              (signal_lens[i + 1] / initial_kernel_size) if use_sinc else 0, conv_only,
+                              i in sa_layers, self.latent_size if split_z else 0)
             self.blocks.append(inner)
         self.max_depth = len(self.blocks)
         self.deep = deep
@@ -875,7 +876,6 @@ def test_multi_discriminator():
     temporal_groups_per_windows = [1, 2]
     conv_onlys = [True, False]
     input_to_all_layerss = [True, False]
-    sincs = [True, False]
     for self_attention_layers, num_classes, act_norm, group_size, temporal_groups_per_window, conv_only, input_to_all_layers in tqdm(
             itertools.product(self_attention_layerss, num_classess, act_norms, group_sizes, temporal_groups_per_windows,
                               conv_onlys, input_to_all_layerss), total=4 * 2 * 3 * 2 * 2 * 2 * 2):
@@ -899,13 +899,57 @@ def test_multi_discriminator():
                 assert o.size() == (5,), o.size()
 
 
+def test_unetblock():
+    ch_in = 32
+    ch_out = 32
+    ch_rgb_in = 3
+    ch_rgb_out = 5
+    signal_freq = 30
+    inner_freq = 20
+    ultra_inner = 10
+
+    inner_layer = None
+    initial_kernel_size = 8  # -> 12 -> 16
+    sinc = False
+
+    split_z_sizes = [0, 10]
+    z_to_bns = [True, False]
+    input_to_all_layerss = [False, True]
+    conv_onlys = [True, False]
+    act_norms = ['batch', 'pixel', None]
+    num_classess = [0, 10]
+    has_sas = [True, False]
+    for input_to_all_layers, conv_only, split_z_size, z_to_bn, act_norm, num_classes, has_sa in tqdm(
+            itertools.product(input_to_all_layerss, conv_onlys, split_z_sizes, z_to_bns, act_norms, num_classess,
+                              has_sas),
+            total=96 * 2):
+        # TODO set inner to not None and make sure z passing is correct
+        dec_layer_settings = dict(z_to_bn_size=split_z_size if z_to_bn else 0, equalized=True,
+                                  spectral=True, init='xavier_uniform', act_alpha=0.2, do=0.1,
+                                  num_classes=num_classes, act_norm=act_norm, bias=True, separable=False)
+        enc_layer_settings = dict(equalized=True, spectral=False, init='xavier_uniform', act_alpha=0.2,
+                                  do=0.1, num_classes=0, act_norm=act_norm, bias=True, separable=True)
+        net = UnetBlock(ch_in, ch_out, ch_rgb_in, ch_rgb_out, signal_freq, inner_freq, dec_layer_settings,
+                        enc_layer_settings, inner_layer, k_size=3, initial_kernel_size=initial_kernel_size,
+                        is_residual=False, no_tanh=False, deep=False, per_channel_noise=False, to_rgb_mode='pggan',
+                        input_to_all_layers=input_to_all_layers, sinc=sinc, conv_only=conv_only,
+                        has_sa=has_sa, split_z_size=split_z_size)
+        x = torch.randn(5, ch_rgb_in, 36 if conv_only else 12)
+        y = None if num_classes == 0 else torch.randn(5, num_classes)
+        z = torch.randn(5, 10) if z_to_bn else None
+        for a in [0.01, 0.5, 1.0]:
+            res = net(x, None, [], alpha=a, is_first=True, y=y, z=z)
+            assert res.size() == (5, ch_rgb_out, x.size(2)), res.size()
+
+
 def main():
     with torch.no_grad():
         # test_gblock()
         # test_dblock()
         # test_generator()
         # test_discriminator()
-        test_multi_discriminator()
+        # test_multi_discriminator()
+        test_unetblock()
 
 
 if __name__ == '__main__':
