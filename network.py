@@ -1,6 +1,8 @@
 import torch
+import itertools
 import numpy as np
 from torch import nn
+from tqdm import tqdm
 from torch.nn.utils import spectral_norm
 
 from cpc.cpc_network import SincEncoder
@@ -654,8 +656,91 @@ class MultiDiscriminator(nn.Module):
         return o
 
 
+def test_gblock():
+    ch_in = 64
+    ch_out = 32
+    ch_rgb = 3
+    k_size = 3
+    no_tanh = False
+    act_alpha = 0.2
+    dropout = 0.1
+
+    initial_kernel_sizes = [None, 32]
+    is_residuals = [False, True]
+    deeps = [False, True]
+    per_channel_noises = [False, True]
+    to_rgb_modes = ['pggan', 'sngan', 'sagan', 'biggan']
+    z_to_bns = [False, True]
+    equalizeds = [False, True]
+    spectrals = [False, True]
+    inits = ['kaiming_normal', 'xavier_uniform', 'orthogonal']
+    num_classess = [0, 10]
+    act_norms = ['batch', 'pixel', None]
+    separables = [False, True]
+    for initial_kernel_size, is_residual, deep, per_channel_noise, to_rgb_mode, z_to_bn, equalized, spectral, \
+        init, num_classes, act_norm, separable in tqdm(itertools.product(
+        initial_kernel_sizes, is_residuals, deeps, per_channel_noises, to_rgb_modes, z_to_bns, equalizeds,
+        spectrals, inits, num_classess, act_norms, separables), total=18432):
+        layer_settings = dict(z_to_bn_size=8 if z_to_bn else 0, equalized=equalized, spectral=spectral, init=init,
+                              act_alpha=act_alpha, do=dropout, num_classes=num_classes, act_norm=act_norm, bias=True,
+                              separable=separable)
+        current_conf = (initial_kernel_size, is_residual, deep, per_channel_noise, to_rgb_mode, z_to_bn,
+                        equalized, spectral, init, num_classes, act_norm, separable)
+        net = GBlock(ch_in, ch_out, ch_rgb, k_size, initial_kernel_size, is_residual,
+                     no_tanh, deep, per_channel_noise, to_rgb_mode, **layer_settings)
+        x = torch.randn(5, ch_in, 7 if initial_kernel_size is None else 1)
+        try:
+            o = net(x, y=None if num_classes == 0 else torch.randn(5, num_classes, 1),
+                    z=torch.randn(5, 8) if z_to_bn else None, last=False)
+        except:
+            print(current_conf)
+            raise
+        assert o.size() == (5, ch_out, 7 if initial_kernel_size is None else initial_kernel_size), current_conf
+
+
+def test_dblock():
+    ch_in = 32
+    ch_out = 64
+    ch_rgb = 3
+    k_size = 3
+    act_alpha = 0.2
+    dropout = 0.1
+    batch_size = 6
+    time_size = 64
+
+    equalizeds = [False, True]
+    spectrals = [False, True]
+    inits = ['kaiming_normal', 'xavier_uniform', 'orthogonal']
+    act_norms = ['batch', 'pixel', None]
+    separables = [False, True]
+    sample_rates = [32, 64]
+    initial_kernel_sizes = [None, 32]
+    is_residuals = [False, True]
+    deeps = [False, True]
+    group_sizes = [-1, 1, 3]
+    temporal_groups_per_windows = [1, 2]
+    conv_discs = [True, False]
+    sinc_kss = [0, 32]
+
+    x = torch.randn(batch_size, ch_in, time_size)
+    for equalized, spectral, init, act_norm, separable, sample_rate, initial_kernel_size, is_residual, deep, \
+        group_size, temporal_groups_per_window, conv_disc, sinc_ks in \
+            tqdm(itertools.product(equalizeds, spectrals, inits, act_norms, separables, sample_rates,
+                                   initial_kernel_sizes, is_residuals, deeps, group_sizes, temporal_groups_per_windows,
+                                   conv_discs, sinc_kss), total=13824):
+        layer_settings = dict(equalized=equalized, spectral=spectral, init=init, act_alpha=act_alpha,
+                              do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
+        current_conf = equalized, spectral, init, act_norm, separable, sample_rate, initial_kernel_size, \
+                       is_residual, deep, group_size, temporal_groups_per_window, conv_disc, sinc_ks
+        net = DBlock(ch_in, ch_out, ch_rgb, sample_rate, k_size, initial_kernel_size, is_residual,
+                     deep, group_size, temporal_groups_per_window, conv_disc, sinc_ks, **layer_settings)
+        o = net(x)
+        assert o.size() == (batch_size, ch_out if initial_kernel_size is None else 1, time_size), current_conf
+
+
 def main():
-    pass
+    # test_gblock()
+    test_dblock()
 
 
 if __name__ == '__main__':

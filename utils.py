@@ -212,9 +212,9 @@ def downsample_signal(signal, downsample_factor):
 def expand3d(signal):
     orig_dim = signal.dim()
     if orig_dim == 2:
-        return signal[None]
+        return signal.unsqueeze(2)
     if orig_dim == 1:
-        return signal[None, None]
+        return signal.unsqueeze(1).unsqueeze(2)
     return signal
 
 
