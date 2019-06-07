@@ -74,16 +74,18 @@ class MinibatchStddev(nn.Module):
     def forward(self, x):  # B, C, T
         if self.group_size < 0:
             return x
+        # make sure that B is divisible by G
         s = x.size()
         group_size = min(s[0], self.group_size)
         all_y = []
-        for i in range(s[2] // self.stride_size):
+        for i in range(int(np.ceil(s[2] / self.stride_size))):
             y = x[..., i * self.stride_size:(i + 1) * self.stride_size]
-            y = y.view(group_size, -1, s[1], self.stride_size)  # G,B//G,C,T
+            T = y.size(-1)
+            y = y.view(group_size, -1, s[1], T)  # G,B//G,C,T
             y = y - y.mean(dim=0, keepdim=True)  # G,B//G,C,T
             y = torch.sqrt((y ** 2).mean(dim=0))  # B//G,C,T
             y = y.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True)  # B//G,1,1
-            y = y.repeat((group_size, 1, self.stride_size))  # B,1,T
+            y = y.repeat((group_size, 1, T))  # B,1,T
             all_y.append(y)
         return torch.cat([x, torch.cat(all_y, dim=2)], dim=1)
 

@@ -2,7 +2,7 @@ import torch
 import itertools
 import numpy as np
 from torch import nn
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from torch.nn.utils import spectral_norm
 
 from cpc.cpc_network import SincEncoder
@@ -382,7 +382,7 @@ class Generator(nn.Module):
         for i in range(self.depth - 1):
             h, attention_map = self._do_layer(i, h, y, z)
             if save_rgb:
-                saved_rgbs.append(self.blocks[i].toRGB(h))
+                saved_rgbs.append(self.blocks[i].to_rgb(h))
             if attention_map is not None:
                 all_attention_maps[i] = attention_map
         h = resample_signal(h, self.progression_scale_down[self.depth - 1], self.progression_scale_up[self.depth - 1])
@@ -391,13 +391,13 @@ class Generator(nn.Module):
             saved_rgbs.append(ult)
         if self.alpha == 1.0:
             return self._wrap_output(ult, saved_rgbs, y), all_attention_maps
-        preult_rgb = self.blocks[self.depth - 2].toRGB(h) if self.depth > 1 else self.block0.to_rgb(h)
+        preult_rgb = self.blocks[self.depth - 2].to_rgb(h) if self.depth > 1 else self.block0.to_rgb(h)
         return self._wrap_output(preult_rgb * (1.0 - self.alpha) + ult * self.alpha, saved_rgbs, y), all_attention_maps
 
 
 class DBlock(nn.Module):
     def __init__(self, ch_in, ch_out, ch_rgb, sample_rate, k_size=3, initial_kernel_size=None, is_residual=False,
-                 deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, sinc_ks=0, **layer_settings):
+                 deep=False, group_size=4, temporal_groups_per_window=1, conv_disc=False, sinc=False, **layer_settings):
         super().__init__()
         is_last = initial_kernel_size is not None
         self.net = []
@@ -418,29 +418,30 @@ class DBlock(nn.Module):
         self.net = nn.Sequential(*self.net)
         from_rgb_layer_settings = dict(equalized=layer_settings['equalized'], spectral=layer_settings['spectral'],
                                        init=layer_settings['init'])
-        if sinc_ks == 0:
+        if sinc:
+            assert ch_in % ch_rgb == 0, 'ch_in must be divisible by ch_rgb when sinc_ks != 0'
+            self.from_rgb = SincEncoder(ch_rgb, is_shared=False, kernel_size=int(2 * sample_rate + 1),
+                                        num_kernels=ch_in // ch_rgb, sample_rate=sample_rate,
+                                        min_low_hz=0.01, min_band_hz=1.0)
+        else:
             self.from_rgb = GeneralConv(ch_rgb, ch_in, kernel_size=1, act_alpha=layer_settings['act_alpha'],
                                         **from_rgb_layer_settings)
-        else:
-            assert ch_in % ch_rgb == 0, 'ch_in must be divisible by ch_rgb when sinc_ks != 0'
-            self.from_rgb = SincEncoder(ch_rgb, is_shared=False, kernel_size=sinc_ks, num_kernels=ch_in // ch_rgb,
-                                        sample_rate=sample_rate, min_low_hz=0.01, min_band_hz=1.0)
-        if deep:
-            self.residual = ConcatResidual(ch_in, ch_out, **from_rgb_layer_settings)
-        else:
-            if is_residual and (not is_last or conv_disc):
-                self.residual = nn.Identity() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
-                                                                                  act_alpha=-1,
-                                                                                  **from_rgb_layer_settings)
+        self.residual = None
+        if not is_linear_last:
+            if deep:
+                self.residual = ConcatResidual(ch_in, ch_out, **from_rgb_layer_settings)
             else:
-                self.residual = None
+                if is_residual:
+                    self.residual = nn.Identity() if ch_in == ch_out else GeneralConv(ch_in, ch_out, kernel_size=1,
+                                                                                      act_alpha=-1,
+                                                                                      **from_rgb_layer_settings)
         self.deep = deep
 
     def forward(self, x, first=False):
         if first:
             x = self.from_rgb(x)
         h = self.net(x)
-        if self.deep:
+        if self.deep and self.residual is not None:
             return self.residual(h, x)
         if self.residual:
             h = h + self.residual(x)
@@ -451,7 +452,8 @@ class Discriminator(nn.Module):
     def __init__(self, initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
                  self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
                  equalized, init, act_alpha, num_classes, deep, spectral=False, dropout=0.2, act_norm=None,
-                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False, sinc_ks=0):
+                 group_size=4, temporal_groups_per_window=1, conv_only=False, input_to_all_layers=False,
+                 sinc=False, initial_sampling_rate=1.0):
         """
         NOTE we only support global conditioning(not temporal) for now
         :param initial_kernel_size:
@@ -494,9 +496,9 @@ class Discriminator(nn.Module):
                               do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
         block_settings = dict(ch_rgb=num_rgb_channels, k_size=kernel_size, is_residual=residual, conv_disc=conv_only,
                               group_size=group_size, temporal_groups_per_window=temporal_groups_per_window, deep=deep,
-                              sinc_ks=sinc_ks)
+                              sinc=sinc)
         last_block = DBlock(nf(1), nf(0), initial_kernel_size=initial_kernel_size,
-                            sample_rate=initial_kernel_size, **block_settings, **layer_settings)
+                            sample_rate=initial_sampling_rate, **block_settings, **layer_settings)
         dummy = []  # to make SA layers registered
         self.self_attention = dict()
         for layer in self_attention_layers:
@@ -508,7 +510,8 @@ class Discriminator(nn.Module):
         psdnp = np.array(progression_scale_down)
         signal_lens = [initial_kernel_size * np.sum(psunp[:i] / psdnp[:i]) for i in range(R + 1)]
         self.blocks = nn.ModuleList(
-            [DBlock(nf(i + 2), nf(i + 1), sample_rate=signal_lens[i + 1], **block_settings, **layer_settings) for i in
+            [DBlock(nf(i + 2), nf(i + 1), sample_rate=signal_lens[i + 1] * initial_sampling_rate / initial_kernel_size,
+                    **block_settings, **layer_settings) for i in
              range(R - 1, -1, -1)] + [last_block])
 
         if num_classes != 0:
@@ -529,7 +532,7 @@ class Discriminator(nn.Module):
             if self.alpha < 1.0 or self.input_to_all_layers:
                 x_lowres = resample_signal(x, self.progression_scale_up[self.depth - 1],
                                            self.progression_scale_down[self.depth - 1])
-                preult_rgb = self.blocks[-self.depth].fromRGB(x_lowres)
+                preult_rgb = self.blocks[-self.depth].from_rgb(x_lowres)
                 if self.input_to_all_layers:
                     h = (h * self.alpha + preult_rgb) / (1.0 + self.alpha)
                 else:
@@ -542,7 +545,7 @@ class Discriminator(nn.Module):
                 if self.input_to_all_layers:
                     x_lowres = resample_signal(x_lowres, self.progression_scale_up[i - 2],
                                                self.progression_scale_down[i - 2])
-                    h = (h + self.blocks[-i + 1].fromRGB(x_lowres)) / 2.0
+                    h = (h + self.blocks[-i + 1].from_rgb(x_lowres)) / 2.0
             if (i - 2) in self.self_attention:
                 h, attention_map = self.self_attention[i - 2](h)
                 if attention_map is not None:
@@ -684,29 +687,23 @@ def test_gblock():
         layer_settings = dict(z_to_bn_size=8 if z_to_bn else 0, equalized=equalized, spectral=spectral, init=init,
                               act_alpha=act_alpha, do=dropout, num_classes=num_classes, act_norm=act_norm, bias=True,
                               separable=separable)
-        current_conf = (initial_kernel_size, is_residual, deep, per_channel_noise, to_rgb_mode, z_to_bn,
-                        equalized, spectral, init, num_classes, act_norm, separable)
         net = GBlock(ch_in, ch_out, ch_rgb, k_size, initial_kernel_size, is_residual,
                      no_tanh, deep, per_channel_noise, to_rgb_mode, **layer_settings)
         x = torch.randn(5, ch_in, 7 if initial_kernel_size is None else 1)
-        try:
-            o = net(x, y=None if num_classes == 0 else torch.randn(5, num_classes, 1),
-                    z=torch.randn(5, 8) if z_to_bn else None, last=False)
-        except:
-            print(current_conf)
-            raise
-        assert o.size() == (5, ch_out, 7 if initial_kernel_size is None else initial_kernel_size), current_conf
+        o = net(x, y=None if num_classes == 0 else torch.randn(5, num_classes, 1),
+                z=torch.randn(5, 8) if z_to_bn else None, last=False)
+        assert o.size() == (5, ch_out, 7 if initial_kernel_size is None else initial_kernel_size)
 
 
 def test_dblock():
     ch_in = 32
     ch_out = 64
-    ch_rgb = 3
+    ch_rgb = 4
     k_size = 3
     act_alpha = 0.2
     dropout = 0.1
     batch_size = 6
-    time_size = 64
+    time_size = 32
 
     equalizeds = [False, True]
     spectrals = [False, True]
@@ -727,20 +724,131 @@ def test_dblock():
         group_size, temporal_groups_per_window, conv_disc, sinc_ks in \
             tqdm(itertools.product(equalizeds, spectrals, inits, act_norms, separables, sample_rates,
                                    initial_kernel_sizes, is_residuals, deeps, group_sizes, temporal_groups_per_windows,
-                                   conv_discs, sinc_kss), total=13824):
+                                   conv_discs, sinc_kss), total=1024 * 27):
         layer_settings = dict(equalized=equalized, spectral=spectral, init=init, act_alpha=act_alpha,
                               do=dropout, num_classes=0, act_norm=act_norm, bias=True, separable=separable)
-        current_conf = equalized, spectral, init, act_norm, separable, sample_rate, initial_kernel_size, \
-                       is_residual, deep, group_size, temporal_groups_per_window, conv_disc, sinc_ks
         net = DBlock(ch_in, ch_out, ch_rgb, sample_rate, k_size, initial_kernel_size, is_residual,
                      deep, group_size, temporal_groups_per_window, conv_disc, sinc_ks, **layer_settings)
         o = net(x)
-        assert o.size() == (batch_size, ch_out if initial_kernel_size is None else 1, time_size), current_conf
+        assert o.size() == (batch_size, ch_out, time_size if initial_kernel_size is None or conv_disc else 1), conv_disc
+
+
+def test_generator():
+    initial_kernel_size = 8
+    num_rgb_channels = 3
+    fmap_base = 64
+    fmap_max = 64
+    fmap_min = 4
+    kernel_size = 3
+    progression_scale_up = [2, 3, 4]
+    progression_scale_down = [1, 2, 3]
+    residual = True
+    separable = False
+    equalized = True
+    init = 'xavier_uniform'
+    act_alpha = 0.2
+    deep = False
+    z_distribution = 'normal'
+    spectral = False
+    latent_size = 256
+    no_tanh = False
+    per_channel_noise = False
+    normalize_latents = True
+    dropout = 0.2
+
+    self_attention_layerss = [[], [0], [1], [2]]
+    num_classess = [0, 10]
+    z_to_bns = [True, False]
+    to_rgb_modes = ['pggan', 'sngan', 'sagan', 'biggan']
+    split_zs = [False, True]
+    conv_onlys = [False, True]
+    shared_embedding_sizes = [0, 32]
+    rgb_generation_modes = ['residual', 'mean', 'pggan']
+    act_norms = ['batch', 'pixel', None]
+
+    for self_attention_layers, num_classes, z_to_bn, to_rgb_mode, split_z, conv_only, shared_embedding_size, \
+        rgb_generation_mode, act_norm in \
+            tqdm(itertools.product(self_attention_layerss, num_classess, z_to_bns, to_rgb_modes, split_zs, conv_onlys,
+                                   shared_embedding_sizes, rgb_generation_modes, act_norms),
+                 total=4 * 2 * 2 * 4 * 2 * 2 * 2 * 3 * 3):
+        net = Generator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                        self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                        equalized, init, act_alpha, num_classes, deep, z_distribution, spectral, latent_size, no_tanh,
+                        per_channel_noise, to_rgb_mode, z_to_bn, split_z, dropout, act_norm, conv_only,
+                        shared_embedding_size, normalize_latents, rgb_generation_mode)
+        if not conv_only:
+            z = torch.randn(5, latent_size)
+        else:
+            z = torch.randn(5, latent_size, 3)
+        if num_classes > 0:
+            y = torch.randn(5, num_classes)
+        else:
+            y = None
+        for d in range(3):
+            for a in [0.0, 0.5, 1.0]:
+                if d == 0 and a != 1.0:
+                    continue
+                net.depth = d
+                net.alpha = a
+                o = net(z, y)[0]['x']
+                assert o.size() == (5, num_rgb_channels,
+                                    {0: 1, 1: 2, 2: 3, 3: 4}[d] * (3 if conv_only else initial_kernel_size))
+
+
+def test_discriminator():
+    initial_kernel_size = 8
+    num_rgb_channels = 4
+    fmap_base = 64
+    fmap_max = 64
+    fmap_min = 4
+    kernel_size = 3
+    progression_scale_up = [2, 3, 4]
+    progression_scale_down = [1, 2, 3]
+    residual = True
+    separable = False
+    equalized = True
+    init = 'xavier_uniform'
+    act_alpha = 0.2
+    deep = False
+    dropout = 0.2
+    spectral = True
+    initial_sampling_rate = 1
+
+    self_attention_layerss = [[], [0], [1], [2]]
+    num_classess = [0, 10]
+    act_norms = ['batch', 'pixel', None]
+    group_sizes = [-1, 5]
+    temporal_groups_per_windows = [1, 2]
+    conv_onlys = [True, False]
+    input_to_all_layerss = [True, False]
+    sincs = [True, False]
+    for self_attention_layers, num_classes, act_norm, group_size, temporal_groups_per_window, conv_only, input_to_all_layers, sinc in tqdm(
+            itertools.product(self_attention_layerss, num_classess, act_norms, group_sizes, temporal_groups_per_windows,
+                              conv_onlys, input_to_all_layerss, sincs), total=4 * 2 * 3 * 2 * 2 * 2 * 2 * 2):
+        net = Discriminator(initial_kernel_size, num_rgb_channels, fmap_base, fmap_max, fmap_min, kernel_size,
+                            self_attention_layers, progression_scale_up, progression_scale_down, residual, separable,
+                            equalized, init, act_alpha, num_classes, deep, spectral, dropout, act_norm,
+                            group_size, temporal_groups_per_window, conv_only, input_to_all_layers, sinc,
+                            initial_sampling_rate)
+        y = torch.randn(5, num_classes) if num_classes > 0 else None
+        for d in range(3):
+            for a in [0.0, 0.5, 1.0]:
+                if d == 0 and a != 1.0:
+                    continue
+                net.depth = d
+                net.alpha = a
+                x_in = torch.randn(5, num_rgb_channels,
+                                   {0: 1, 1: 2, 2: 3, 3: 4}[d] * (3 if conv_only else initial_kernel_size))
+                o = net(x_in, y)[0]
+                assert o.size() == (5,), o.size()
 
 
 def main():
-    # test_gblock()
-    test_dblock()
+    with torch.no_grad():
+        # test_gblock()
+        # test_dblock()
+        # test_generator()
+        test_discriminator()
 
 
 if __name__ == '__main__':
